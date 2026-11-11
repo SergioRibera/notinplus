@@ -5,8 +5,8 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 
 use istmo_file_picker::{FileFilter, FilePickerClient, FilePickerError, PickConfig, SaveConfig};
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
 
 /// A file the user chose, read into memory.
 #[derive(Clone, Debug, PartialEq, Eq)]

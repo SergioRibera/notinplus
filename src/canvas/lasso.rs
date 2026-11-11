@@ -2,7 +2,7 @@
 //! delete it, or turn handwriting into text.
 
 use freya_engine::prelude::{Canvas, Color as SkColor, Paint, PaintStyle, PathBuilder, PathEffect};
-use notein_handwriting::Point;
+use notin_handwriting::Point;
 
 use super::Board;
 use crate::doc_op::DocOp;

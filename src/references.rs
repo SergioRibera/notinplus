@@ -4,12 +4,12 @@
 use freya::prelude::*;
 use freya_markdown_editor::document::{Block, BlockKind, Document, Inline};
 use freya_markdown_editor::markdown::Dialect;
-use notein_i18n::tr;
-use notein_plugin::bookmark::SourceRef;
-use notein_plugin::doc::DocMeta;
-use notein_plugin::kind::{KindColor, Quote, SearchQuery};
-use notein_ui_kit::theme::Palette;
-use notein_ui_kit::{Toast, ToastTone, Toasts};
+use notin_i18n::tr;
+use notin_plugin::bookmark::SourceRef;
+use notin_plugin::doc::DocMeta;
+use notin_plugin::kind::{KindColor, Quote, SearchQuery};
+use notin_ui_kit::theme::Palette;
+use notin_ui_kit::{Toast, ToastTone, Toasts};
 
 use crate::library::{ItemId, LibraryData, TabTarget};
 use crate::plugins::content::doc_id;
@@ -115,7 +115,7 @@ pub fn display(src: &SourceRef, data: Option<&LibraryData>) -> ChipDisplay {
                 name: &name,
                 updated_at: doc.map_or(0, |d| d.updated_at),
                 tint: doc.and_then(|d| d.color),
-                paper: doc.map_or_else(notein_plugin::create::Paper::default, |d| {
+                paper: doc.map_or_else(notin_plugin::create::Paper::default, |d| {
                     d.background.into()
                 }),
             };
@@ -157,11 +157,11 @@ pub struct Suggestion {
 #[must_use]
 #[sismo::function("references::suggestions")]
 pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
-    let needle = notein_plugin::fold(query.trim());
+    let needle = notin_plugin::fold(query.trim());
     let mut out: Vec<Suggestion> = data
         .map(|data| {
             data.live_items()
-                .filter(|i| needle.is_empty() || notein_plugin::fold(&i.name).contains(&needle))
+                .filter(|i| needle.is_empty() || notin_plugin::fold(&i.name).contains(&needle))
                 .take(SUGGESTED_DOCS)
                 .map(|item| Suggestion {
                     label: item.name.clone(),
@@ -254,7 +254,7 @@ pub fn quote(target: &SourceRef, data: Option<&LibraryData>) -> Option<Quote> {
         name: &name,
         updated_at: doc.map_or(0, |d| d.updated_at),
         tint: doc.and_then(|d| d.color),
-        paper: doc.map_or_else(notein_plugin::create::Paper::default, |d| {
+        paper: doc.map_or_else(notin_plugin::create::Paper::default, |d| {
             d.background.into()
         }),
     };

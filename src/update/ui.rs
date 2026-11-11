@@ -9,15 +9,15 @@ use freya::icons::lucide;
 use freya::prelude::*;
 use freya_markdown_editor::prelude::use_editor_controller;
 use istmo_installer::{InstallError, InstallerClient};
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Action, ActionEntry, ActionList, Button, Group, IconButton, ListRow, ModalController, Notice,
     NoticeTone, Popover, PopoverAlign, ProgressBar, Section, Sheet, SheetFooter, Tag, Text,
     TextRole, Toast, ToastTone, Toasts, Trailing, press_anchor,
 };
 
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
 
 use super::download::{self, Finish, Progress};
 use super::{Asset, CheckStatus, Device, INSTALLED, Release, UpdateFailure, Updates};
@@ -60,7 +60,7 @@ pub fn open_release(anchor: Option<Area>, release: &Arc<Release>) {
         framed,
     };
     match anchor {
-        Some(anchor) => Popover::new(anchor, card(!notein_ui_kit::width_class().is_compact()))
+        Some(anchor) => Popover::new(anchor, card(!notin_ui_kit::width_class().is_compact()))
             .width(440.0)
             .align(PopoverAlign::End)
             .estimated_height(520.0)

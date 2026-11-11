@@ -1,6 +1,6 @@
-# notein-relay — the always-on share relay, Linux server only.
+# notin-relay — the always-on share relay, Linux server only.
 #
-# Separate crane build from the desktop app: `-p notein-relay` resolves a
+# Separate crane build from the desktop app: `-p notin-relay` resolves a
 # much smaller feature set (no freya / skia / pdfium), so it neither needs
 # the prebuilt Skia nor reuses the app's dependency artifacts.
 {
@@ -10,7 +10,7 @@
   src,
 }:
 let
-  manifest = lib.importTOML ../tools/notein-relay/Cargo.toml;
+  manifest = lib.importTOML ../tools/notin-relay/Cargo.toml;
   pname = manifest.package.name;
   inherit (manifest.package) version;
 
@@ -67,7 +67,7 @@ let
     ];
   };
 
-  # `docker load < result` → `notein-relay:<version>`. Keypair + shares
+  # `docker load < result` → `notin-relay:<version>`. Keypair + shares
   # persist in the `/data` volume; set `--advertise <public host>` when the
   # container IP isn't what clients should dial.
   image = pkgs.dockerTools.buildLayeredImage {

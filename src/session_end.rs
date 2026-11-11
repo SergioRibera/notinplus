@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use notein_sync::Removal;
+use notin_sync::Removal;
 
 use crate::library::ItemId;
 

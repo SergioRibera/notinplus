@@ -2,10 +2,10 @@
 //! and settings.
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{IconButton, Tag, Text, TextRole, tokens, width_class};
+use notin_i18n::tr;
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{IconButton, Tag, Text, TextRole, tokens, width_class};
 
 use crate::sync::SyncSnapshot;
 
@@ -30,7 +30,7 @@ impl SyncState {
             || snapshot
                 .docs
                 .values()
-                .any(|s| *s == notein_sync::DocStatus::Pending);
+                .any(|s| *s == notin_sync::DocStatus::Pending);
         Some(if pending {
             Self::Syncing
         } else {
@@ -127,7 +127,7 @@ fn search_field(compact: bool) -> Rect {
         .a11y_focusable(true)
         .on_tap(|_| crate::screens::search::open(String::new()))
         .child(
-            notein_ui_kit::Icon::new(freya::icons::lucide::search())
+            notin_ui_kit::Icon::new(freya::icons::lucide::search())
                 .size(tokens::size::ICON_SM)
                 .color(p.t3),
         )
@@ -142,7 +142,7 @@ fn search_field(compact: bool) -> Rect {
             .lines(1)
             .fill(),
         )
-        .maybe_child((!compact).then(|| notein_ui_kit::Kbd::new("Ctrl K")))
+        .maybe_child((!compact).then(|| notin_ui_kit::Kbd::new("Ctrl K")))
 }
 
 impl Component for AppBar {

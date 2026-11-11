@@ -2,7 +2,7 @@
 //! [`LinkKind::Companion`] link, opened beside it.
 
 use freya::prelude::spawn_in_window;
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use crate::library::{
     BackgroundStyle, DocKind, ItemId, Library, LibraryError, LinkKind, NotFoundKind, Result,

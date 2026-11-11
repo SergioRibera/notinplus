@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use freya_engine::prelude::{Canvas, Paint, PaintStyle};
-use notein_handwriting::{Candidate, Point, Recognizer};
+use notin_handwriting::{Candidate, Point, Recognizer};
 
 use super::Board;
 use crate::brush::BrushKind;

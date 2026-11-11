@@ -2,10 +2,10 @@
 //! invitation does, and the lasting shares this device is in.
 
 use freya::prelude::*;
-use notein_ui_kit::{Group, ListRow, Segmented, Text, TextField, TextRole, Trailing};
+use notin_ui_kit::{Group, ListRow, Segmented, Text, TextField, TextRole, Trailing};
 
-use notein_i18n::tr;
-use notein_sync::ShareMode;
+use notin_i18n::tr;
+use notin_sync::ShareMode;
 
 use crate::settings::{ApprovePref, EntryRolePref, SettingsStore, TrashRetention};
 use crate::sync::ShareView;
@@ -74,8 +74,8 @@ fn share_row(share: &ShareView) -> ListRow {
             "who" => who,
             "count" => share.docs.len(),
         ))
-        .leading(notein_ui_kit::Leading::Element(
-            notein_ui_kit::Avatar::new(
+        .leading(notin_ui_kit::Leading::Element(
+            notin_ui_kit::Avatar::new(
                 crate::screens::collab::initials(&share.owner.name),
                 crate::screens::collab::person_color(share.owner.device),
             )
@@ -107,11 +107,11 @@ impl Component for Sessions {
             .width(Size::fill())
             .spacing(24.0)
             .child(
-                notein_ui_kit::Section::new(tr!("settings-sessions-you"))
+                notin_ui_kit::Section::new(tr!("settings-sessions-you"))
                     .child(Group::default().child(name_row(&snapshot, editing, draft))),
             )
             .child(
-                notein_ui_kit::Section::new(tr!("settings-sessions-defaults")).child(
+                notin_ui_kit::Section::new(tr!("settings-sessions-defaults")).child(
                     Group::default()
                         .child(
                             ListRow::new(tr!("collab-entry-role"))
@@ -172,14 +172,14 @@ impl Component for Sessions {
                 ),
             )
             .child(
-                notein_ui_kit::Section::new(tr!("settings-sessions-lasting"))
+                notin_ui_kit::Section::new(tr!("settings-sessions-lasting"))
                     .maybe_child(none_lasting.then(|| {
                         Text::new(tr!("settings-sessions-lasting-empty")).role(TextRole::Hint)
                     }))
                     .maybe_child((!none_lasting).then(|| Group::default().children(lasting))),
             )
             .child(
-                notein_ui_kit::Section::new(tr!("settings-sessions-now")).child(
+                notin_ui_kit::Section::new(tr!("settings-sessions-now")).child(
                     Group::default().child(
                         ListRow::new(tr!(
                             "settings-sessions-now-summary",

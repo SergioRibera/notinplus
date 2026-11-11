@@ -64,11 +64,11 @@ fi
 - **macOS**: \`.dmg\`, \`.pkg\` or the zipped \`.app\` (unsigned: right-click → Open the first time).
 - **Windows**: \`-setup.exe\` (NSIS) or \`.msi\`.
 
-### Relay server (\`notein-relay\`, Linux)
+### Relay server (\`notin-relay\`, Linux)
 
-- \`notein-relay_*.deb\` / \`notein-relay-*.rpm\`: installs and starts the \`notein-relay\` systemd service (UDP 7720, data in \`/var/lib/notein-relay\`).
-- \`notein-relay-*-linux.tar.gz\`: standalone binary.
-- Docker: \`docker run -p 7720:7720/udp -v relay:/data ghcr.io/sergioribera/notein-relay:${tag#v} --port 7720 --data /data --advertise <public-host>\`
+- \`notin-relay_*.deb\` / \`notin-relay-*.rpm\`: installs and starts the \`notin-relay\` systemd service (UDP 7720, data in \`/var/lib/notin-relay\`).
+- \`notin-relay-*-linux.tar.gz\`: standalone binary.
+- Docker: \`docker run -p 7720:7720/udp -v relay:/data ghcr.io/sergioribera/notin-relay:${tag#v} --port 7720 --data /data --advertise <public-host>\`
 EOF
 } > "$work/NOTES.md"
 

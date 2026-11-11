@@ -100,11 +100,11 @@ impl fmt::Display for DocError {
 
 impl std::error::Error for DocError {}
 
-impl notein_plugin::UserMessage for DocError {
+impl notin_plugin::UserMessage for DocError {
     fn user_message(&self) -> String {
         match self {
             Self::Store(_) | Self::Codec(_) | Self::Shape(_) => {
-                notein_i18n::tr!("errors-doc-damaged")
+                notin_i18n::tr!("errors-doc-damaged")
             }
         }
     }

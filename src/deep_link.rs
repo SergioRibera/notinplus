@@ -5,8 +5,8 @@
 //! shell's own actions ([`AppLink`]) only arrive from the system, such
 //! as the launcher shortcuts.
 
-use notein_plugin::SourceRef;
-pub use notein_plugin::link::{SCHEME, scan_links};
+use notin_plugin::SourceRef;
+pub use notin_plugin::link::{SCHEME, scan_links};
 
 use crate::library::ItemId;
 use crate::settings::EntryKey;
@@ -80,7 +80,7 @@ pub fn open(url: &str) {
     }
     match SourceRef::from_url(url) {
         Some(src) => {
-            crate::plugins::navigate::open(&src, notein_plugin::services::Placement::Preferred);
+            crate::plugins::navigate::open(&src, notin_plugin::services::Placement::Preferred);
         }
         None => log::warn!("deep link ignored: {url}"),
     }
@@ -137,7 +137,7 @@ pub fn use_launcher_shortcuts() {
 #[sismo::function("deep_link::launcher_shortcuts")]
 fn launcher_shortcuts(data: &crate::library::LibraryData) -> Vec<istmo_share::ShareTarget> {
     use istmo_share::ShareTarget;
-    use notein_i18n::tr;
+    use notin_i18n::tr;
 
     let create = crate::flows::create::favorite_entry().map(|entry| {
         let link = AppLink::Create(EntryKey::new(entry.plugin, entry.entry.id.to_string()));

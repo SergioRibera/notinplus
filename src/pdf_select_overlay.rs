@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use freya::prelude::*;
 use freya_engine::prelude::{Color as SkColor, Paint, PaintStyle, Rect as SkRect};
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use crate::active_boards;
 use crate::app::CanvasMount;
@@ -120,7 +120,7 @@ impl Component for PdfSelectOverlay {
 /// plain bookmark.
 #[sismo::function("pdf_select::show_bar")]
 pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
-    use notein_plugin::payload::Payload;
+    use notin_plugin::payload::Payload;
     let engine = PdfText::get();
     let Some(sel) = engine.selection(item) else {
         return;
@@ -169,23 +169,23 @@ pub(crate) fn show_bar(item: ItemId, mount: CanvasMount, at: (f32, f32)) {
     };
     let (color_mark, note_mark, plain_mark) = (mark.clone(), mark.clone(), mark);
     let quote = snippet;
-    crate::selection::show(notein_plugin::ui::SelectionMenu {
+    crate::selection::show(notin_plugin::ui::SelectionMenu {
         at,
         active: None,
         on_color: std::rc::Rc::new(move |rgb| color_mark(rgb, String::new())),
         on_note: Some(std::rc::Rc::new(move || {
-            let (tx, rx) = flume::bounded::<notein_plugin::services::AnnotationOutcome>(1);
+            let (tx, rx) = flume::bounded::<notin_plugin::services::AnnotationOutcome>(1);
             let note_mark = note_mark.clone();
             spawn_in_window(async move {
                 match rx.recv_async().await {
-                    Ok(notein_plugin::services::AnnotationOutcome::Saved { color, body }) => {
+                    Ok(notin_plugin::services::AnnotationOutcome::Saved { color, body }) => {
                         note_mark(color, body);
                     }
                     Ok(_) | Err(_) => clear(item),
                 }
             });
             crate::annotation::AnnotationPopover::open(
-                notein_plugin::services::AnnotationRequest {
+                notin_plugin::services::AnnotationRequest {
                     doc: crate::plugins::content::doc_id(item),
                     kind: crate::plugins::builtin::pdf::KIND.to_owned(),
                     title: tr!("misc-pdf-page", "page" => sel.start_page + 1),

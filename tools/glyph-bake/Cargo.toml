@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 authors = ["Sergio Ribera <contact@sergioribera.rs>"]
-description = "Offline baker for notein-handwriting: recognition templates from UJIpenchars2 and font glyph ink."
+description = "Offline baker for notin-handwriting: recognition templates from UJIpenchars2 and font glyph ink."
 repository = "https://github.com/SergioRibera/notinplus"
 publish = false
 
@@ -23,5 +23,5 @@ missing_panics_doc = "allow"
 redundant_pub_crate = "allow"
 
 [dependencies]
-notein-handwriting = { path = "../../crates/notein-handwriting" }
+notin-handwriting = { path = "../../crates/notin-handwriting" }
 ttf-parser = "0.25"

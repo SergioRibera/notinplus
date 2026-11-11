@@ -4,11 +4,11 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::bookmark::SourceRef;
-use notein_plugin::services::Placement;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_plugin::bookmark::SourceRef;
+use notin_plugin::services::Placement;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Button, EmptyState, Group, Lazy, ListRow, SearchField, Section, Segmented, Sheet, Tag, Text,
     TextRole, tokens,
 };
@@ -135,7 +135,7 @@ fn panel_head(mut tab: State<PanelTab>, query: State<String>) -> Rect {
 /// The document's marks, newest first, filtered by colour and `text`.
 #[sismo::function("mesa::panel_bookmarks")]
 fn bookmarks(
-    marks: Vec<notein_plugin::kind::Mark<Vec<u8>>>,
+    marks: Vec<notin_plugin::kind::Mark<Vec<u8>>>,
     text: &str,
     kind_id: &str,
     id: ItemId,
@@ -168,7 +168,7 @@ fn bookmarks(
                 .map_or(p.t3, |[r, g, b]| Color::from_rgb(r, g, b));
             let row = ListRow::new(mark.title.clone())
                 .subtitle(mark.snippet)
-                .leading(notein_ui_kit::Leading::Element(
+                .leading(notin_ui_kit::Leading::Element(
                     rect()
                         .width(Size::px(10.0))
                         .height(Size::px(10.0))
@@ -273,7 +273,7 @@ impl Component for PanelBody {
                                 folds,
                                 max_height: self
                                     .in_sheet
-                                    .then(|| notein_ui_kit::safe_frame().height() * 0.6),
+                                    .then(|| notin_ui_kit::safe_frame().height() * 0.6),
                             },
                         ),
                     )
@@ -293,7 +293,7 @@ impl Component for PanelBody {
             ScrollView::new()
                 .width(Size::fill())
                 .height(Size::flex(1.0))
-                .child(notein_ui_kit::ScrollContent::new(
+                .child(notin_ui_kit::ScrollContent::new(
                     rect()
                         .width(Size::fill())
                         .padding((0.0, 0.0, 24.0, 0.0))

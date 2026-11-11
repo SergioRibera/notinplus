@@ -1,10 +1,10 @@
 //! Settings › Notes.
 
 use freya::prelude::*;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{ChoiceCard, Group, ListRow, Section, Trailing, tokens};
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{ChoiceCard, Group, ListRow, Section, Trailing, tokens};
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use crate::settings::SettingsStore;
 

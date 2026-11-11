@@ -1,7 +1,7 @@
 //! What the library exposes to other devices: every record as a
 //! newest-wins blob, plus the tombstones that make deletions win.
 
-use notein_sync::{BlobHead, BlobKey, BlobKind};
+use notin_sync::{BlobHead, BlobKey, BlobKind};
 
 use super::error::Result;
 use super::graveyard::{Buried, Graveyard, Tombstone};

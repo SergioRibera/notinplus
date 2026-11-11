@@ -1,0 +1,45 @@
+[package]
+name = "notin-notes"
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.86"
+license = "MIT OR Apache-2.0"
+authors = ["Sergio Ribera <contact@sergioribera.rs>"]
+description = "Text notes plugin for notinplus: markdown documents with a heading outline and linkable sections."
+repository = "https://github.com/SergioRibera/notinplus"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# Conflicts with rustc's `unreachable_pub`, which this crate keeps on.
+redundant_pub_crate = "allow"
+
+[features]
+sismo = ["dep:sismo"]
+
+[dependencies]
+# Spans for the sismo profiler; off unless an app turns it on.
+sismo = { version = "0.1.1", default-features = false, optional = true }
+notin-sdk = { path = "../notin-sdk" }
+freya-markdown-editor = { path = "../freya-markdown-editor", default-features = false, features = ["toolbar"] }
+notin-ui-kit = { path = "../notin-ui-kit" }
+async-io = "2"
+log = "0.4"
+freya = { version = "=0.5.0-rc.13", features = ["icons", "icons-lucide"] }
+# Standalone icons crate: `creation_entries` needs SVG bytes.
+freya-icons = { version = "=0.4.0", features = ["lucide"] }
+bincode = { version = "2", features = ["derive", "std"] }
+
+[dev-dependencies]
+freya-testing = "=0.5.0-rc.13"
+freya-markdown-editor = { path = "../freya-markdown-editor" }
+
+[build-dependencies]
+notin-i18n = { path = "../notin-i18n", features = ["build"] }

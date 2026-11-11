@@ -248,7 +248,7 @@ impl Component for LibraryGate {
         match *gate.read() {
             Gate::Checking => rect()
                 .expanded()
-                .background(notein_ui_kit::palette().bg)
+                .background(notin_ui_kit::palette().bg)
                 .into_element(),
             Gate::Open => AppShell.into_element(),
             Gate::Stop(found) => crate::screens::incompatible::IncompatibleScreen {
@@ -328,8 +328,8 @@ impl Component for AppShell {
         let insets = *crate::hooks::provide_safe_area_root().read();
         // Share the measured window area with any descendant that
         // wants to clamp its own popup/overlay inside the viewport —
-        // see `notein_ui_kit::ViewportArea` + `clamp_popup_top`.
-        provide_context(notein_ui_kit::ViewportArea(area));
+        // see `notin_ui_kit::ViewportArea` + `clamp_popup_top`.
+        provide_context(notin_ui_kit::ViewportArea(area));
         // Share the global router context at AppShell scope so
         // sibling subtrees (`ModalPortal`, `HostOverlay`) see it via
         // `RouterContext::get()` / `::try_get()`. The actual Router
@@ -368,7 +368,7 @@ impl Component for AppShell {
         });
         rect()
             .expanded()
-            .background(notein_ui_kit::palette().bg)
+            .background(notin_ui_kit::palette().bg)
             .on_sized({
                 let mut area = area;
                 move |e: Event<SizedEventData>| area.set(e.area)
@@ -398,7 +398,7 @@ impl Component for AppShell {
                 crate::components::modal::provide_host_modal_chrome();
                 crate::components::ModalPortal::new(area)
             })
-            .child(notein_ui_kit::ToastHost::new(insets.bottom))
+            .child(notin_ui_kit::ToastHost::new(insets.bottom))
             .child(crate::follow::FollowFrame { top: insets.top })
     }
 }
@@ -720,7 +720,7 @@ pub(crate) fn canvas_chrome(
     // consume `PaneArea` to clamp against the pane's own bounds instead
     // of the full window.
     let pane_area_signal = use_state(Area::default);
-    provide_context(notein_ui_kit::PaneArea(pane_area_signal));
+    provide_context(notin_ui_kit::PaneArea(pane_area_signal));
     let Some(board) = state.active_board.read().clone() else {
         return rect();
     };

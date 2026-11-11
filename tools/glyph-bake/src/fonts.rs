@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use notein_handwriting::{FontInk, GlyphInk, Verb};
+use notin_handwriting::{FontInk, GlyphInk, Verb};
 use ttf_parser::{Face, OutlineBuilder, name_id};
 
 use crate::error::BakeError;

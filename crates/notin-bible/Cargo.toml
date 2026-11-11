@@ -1,0 +1,98 @@
+[package]
+name = "notin-bible"
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["Sergio Ribera <contact@sergioribera.rs>"]
+description = "Bible source + canvas plugin for notinplus (SQLite + FTS5 backed, custom reading UI)."
+repository = "https://github.com/SergioRibera/notinplus"
+
+[lib]
+# `rlib` keeps the in-process built-in path open; `cdylib` emits the
+# shared library the dynamic loader (libloading + manifest discovery)
+# dlopens at runtime. Both consumers compile against the same source so
+# the two paths cannot drift.
+crate-type = ["cdylib", "rlib"]
+
+[lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unsafe_code = "allow"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# Conflicts with rustc's `unreachable_pub`, which this crate keeps on.
+redundant_pub_crate = "allow"
+
+[features]
+sismo = ["dep:sismo"]
+default = []
+# Guarded import pipeline — pulls `reqwest` + `serde_json`. Off by
+# default so headless library bins (tests, CLIs) don't drag the HTTP
+# stack. Flip on in the host binary that bundles the plugin.
+importer = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:flate2", "dep:sha2"]
+# Freya rsx components. Off by default so library + import tests do not
+# drag the GPU stack. The host enables this to render the Bible viewer.
+ui = [
+    "importer",
+    "dep:freya",
+    "dep:freya-components",
+    "dep:freya-core",
+    "dep:freya-engine",
+    "dep:async-io",
+    "dep:notin-ui-kit",
+]
+
+[dependencies]
+# Spans for the sismo profiler; off unless an app turns it on.
+sismo = { version = "0.1.1", default-features = false, optional = true }
+freya-icons = { version = "=0.5.0-rc.13", features = ["lucide"] }
+notin-sdk = { path = "../notin-sdk" }
+notin-i18n = { path = "../notin-i18n" }
+notin-align = { path = "../notin-align" }
+# The pack format lives with its generator; path while the data repo is
+# unpublished, a git dependency pinned to a tag once it is.
+originals-format = { git = "https://github.com/biblionlabs/extra_data_source", rev = "5e6dca64597b5d83c4e5d4187bb6e4f9c9795566" }
+rkyv = { version = "0.8", features = ["bytecheck"] }
+self_cell = "1"
+unicode-normalization = "0.1"
+# `istmo-core` is pulled in strictly for its `path::data_dir()`
+# resolver so the plugin writes its DB + cache alongside every other
+# notein data file. The transport / runtime pieces are unused — the
+# core crate itself only depends on `bincode` + `flume` + a tiny set of
+# workspace crates, so there is no hidden weight.
+istmo-core = "0.1.1-alpha.4"
+rusqlite = { version = "0.37", features = ["bundled"] }
+regex = "1.12"
+bincode = { version = "2", features = ["derive", "std"] }
+log = "0.4"
+flume = { version = "0.11", features = ["async"] }
+quick-xml = "0.37"
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "blocking",
+    "rustls-tls",
+], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+flate2 = { version = "1", optional = true }
+sha2 = { version = "0.10", optional = true }
+
+freya = { version = "=0.5.0-rc.13", features = [
+    "router",
+    "icons",
+    "icons-lucide",
+], optional = true }
+freya-components = { version = "=0.5.0-rc.13", optional = true }
+freya-core = { version = "=0.5.0-rc.13", optional = true }
+freya-engine = { version = "=0.5.0-rc.13", optional = true }
+async-io = { version = "2", optional = true }
+notin-ui-kit = { path = "../notin-ui-kit", optional = true }
+
+[build-dependencies]
+notin-i18n = { path = "../notin-i18n", features = ["build"] }

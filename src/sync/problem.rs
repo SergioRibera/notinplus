@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_sync::{IdentityError, NetError, SyncError};
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_sync::{IdentityError, NetError, SyncError};
 
 use super::replica::ReplicaError;
 
@@ -123,17 +123,17 @@ fn identity_message(err: &IdentityError) -> String {
 mod tests {
     use std::sync::Arc;
 
-    use notein_i18n::Lang;
-    use notein_plugin::UserMessage;
+    use notin_i18n::Lang;
+    use notin_plugin::UserMessage;
 
     use super::{Recovery, SyncProblem};
 
     #[test]
     fn a_problem_clears_once_its_cause_recovers() {
-        let exchange = SyncProblem::Exchange(Arc::new(notein_sync::SyncError::Codec("x".into())));
+        let exchange = SyncProblem::Exchange(Arc::new(notin_sync::SyncError::Codec("x".into())));
         assert!(exchange.cleared_by(Recovery::Exchanged));
         assert!(!exchange.cleared_by(Recovery::TransportUp));
-        let network = SyncProblem::Network(Arc::new(notein_sync::NetError::Stopped));
+        let network = SyncProblem::Network(Arc::new(notin_sync::NetError::Stopped));
         assert!(network.cleared_by(Recovery::TransportUp));
         assert!(!network.cleared_by(Recovery::Exchanged));
         let outdated = SyncProblem::Outdated {

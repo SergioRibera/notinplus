@@ -7,9 +7,9 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_sync::{Blob, BlobHead, BlobKey, DocId, Replica, Version};
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_sync::{Blob, BlobHead, BlobKey, DocId, Replica, Version};
 
 use crate::active_boards;
 use crate::canvas::lock;

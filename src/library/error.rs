@@ -7,8 +7,8 @@ use std::io;
 
 use istmo::IstmoError;
 use istmo_data_store::DataStoreError;
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
 
 use super::model::{FolderId, ItemId, LinkId, TagId, WorkspaceId};
 
@@ -148,8 +148,8 @@ impl UserMessage for LibraryError {
 
 #[cfg(test)]
 mod tests {
-    use notein_i18n::Lang;
-    use notein_plugin::UserMessage;
+    use notin_i18n::Lang;
+    use notin_plugin::UserMessage;
 
     use super::{LibraryError, NotFoundKind};
     use crate::library::ItemId;

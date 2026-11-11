@@ -2,11 +2,11 @@
 
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use notein_i18n::{Lang, tr};
-use notein_plugin::UserMessage;
-use notein_plugin::catalog::{Failed, Origin, PluginCatalog};
-use notein_plugin::erased::ErasedKind;
-use notein_plugin::kind::KindInfo;
+use notin_i18n::{Lang, tr};
+use notin_plugin::UserMessage;
+use notin_plugin::catalog::{Failed, Origin, PluginCatalog};
+use notin_plugin::erased::ErasedKind;
+use notin_plugin::kind::KindInfo;
 
 use super::builtin::{CanvasPlugin, PdfPlugin};
 
@@ -15,17 +15,17 @@ static CATALOG: OnceLock<RwLock<PluginCatalog>> = OnceLock::new();
 #[sismo::function("plugins::catalog_init")]
 fn init() -> RwLock<PluginCatalog> {
     let mut catalog = PluginCatalog::default();
-    let builtins: [Arc<dyn notein_plugin::plugin::Plugin>; 3] = [
+    let builtins: [Arc<dyn notin_plugin::plugin::Plugin>; 3] = [
         Arc::new(CanvasPlugin),
         Arc::new(PdfPlugin),
-        Arc::new(notein_notes::NotesPlugin::default()),
+        Arc::new(notin_notes::NotesPlugin::default()),
     ];
     for plugin in builtins {
         if let Err(err) = catalog.add(plugin, Origin::Builtin) {
             log::error!("builtin plugin: {err}");
         }
     }
-    match notein_bible::BiblePlugin::open() {
+    match notin_bible::BiblePlugin::open() {
         Ok(bible) => {
             if let Err(err) = catalog.add(Arc::new(bible), Origin::Builtin) {
                 log::error!("builtin plugin: {err}");
@@ -52,7 +52,7 @@ fn init() -> RwLock<PluginCatalog> {
 
 /// The Bible's database could not be opened, so the builtin is missing.
 #[derive(Debug)]
-struct BibleUnavailable(notein_bible::db::DbError);
+struct BibleUnavailable(notin_bible::db::DbError);
 
 impl UserMessage for BibleUnavailable {
     fn user_message(&self) -> String {

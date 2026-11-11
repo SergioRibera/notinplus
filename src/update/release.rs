@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 use serde::Deserialize;
 
 /// The newest stable release, as `latest.json` describes it.

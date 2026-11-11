@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use notein_handwriting::{Line, Point};
+use notin_handwriting::{Line, Point};
 
 use crate::error::BakeError;
 

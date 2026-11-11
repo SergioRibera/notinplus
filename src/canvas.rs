@@ -33,7 +33,7 @@ use freya_canvas_bg::{
 use freya_engine::prelude::{
     BlendMode, Color as SkColor, Paint, PaintStyle, Path, PathBuilder, SaveLayerRec,
 };
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use crate::bookmark::{Bookmark, Rgba, SourceRef, StrokeAnchor, TimestampMs, WorldPoint};
 use crate::brush::{
@@ -310,7 +310,7 @@ pub struct Board {
     live_last: Option<Instant>,
     pointer_last: Option<Instant>,
     /// What other people are doing on this document right now.
-    remote: HashMap<notein_sync::DeviceId, RemoteHand>,
+    remote: HashMap<notin_sync::DeviceId, RemoteHand>,
     /// Bumped whenever the committed ink may paint differently.
     ink_rev: u64,
     /// Bumped whenever the background asks for a repaint.
@@ -3093,14 +3093,14 @@ impl Board {
     }
 
     /// Everyone else working on this document right now.
-    pub fn remote_hands(&self) -> impl Iterator<Item = (&notein_sync::DeviceId, &RemoteHand)> {
+    pub fn remote_hands(&self) -> impl Iterator<Item = (&notin_sync::DeviceId, &RemoteHand)> {
         self.remote.iter()
     }
 
     /// Apply what another device is doing: extend or finish its ghost
     /// stroke, move its pointer. Silent hands expire here too.
     #[sismo::function]
-    pub fn apply_live(&mut self, from: notein_sync::DeviceId, name: &str, message: LiveMessage) {
+    pub fn apply_live(&mut self, from: notin_sync::DeviceId, name: &str, message: LiveMessage) {
         let now = Instant::now();
         self.remote
             .retain(|_, hand| now.duration_since(hand.seen) < REMOTE_TTL);
@@ -3164,7 +3164,7 @@ impl Board {
 
     /// `from` is gone: its ghost ink and pointer go with it.
     #[sismo::function("canvas::forget_hand")]
-    pub fn forget_hand(&mut self, from: notein_sync::DeviceId) {
+    pub fn forget_hand(&mut self, from: notin_sync::DeviceId) {
         if self.remote.remove(&from).is_some() {
             self.notify();
         }
@@ -3275,7 +3275,7 @@ impl Board {
 }
 
 /// A stable, readable colour for a device, from its id.
-fn device_color(device: notein_sync::DeviceId) -> [u8; 4] {
+fn device_color(device: notin_sync::DeviceId) -> [u8; 4] {
     let [r, g, b] = crate::sync::presence::color(device);
     [r, g, b, 255]
 }
@@ -3368,7 +3368,7 @@ pub fn glide(board: &Arc<Mutex<Board>>, target: Viewport) {
         (guard.viewport(), guard.last_surface_size)
     };
     let far = (target.tx - from.tx).hypot(target.ty - from.ty) > 2.0 * sw.max(sh);
-    if far || notein_ui_kit::reduce_motion() {
+    if far || notin_ui_kit::reduce_motion() {
         lock(board).set_viewport(target);
         return;
     }
@@ -3882,7 +3882,7 @@ mod tests {
         assert!(!out.touched);
     }
 
-    fn ghost(b: &mut Board, from: notein_sync::DeviceId) {
+    fn ghost(b: &mut Board, from: notin_sync::DeviceId) {
         b.apply_live(
             from,
             "Ana",
@@ -3912,7 +3912,7 @@ mod tests {
     #[test]
     fn a_peer_that_leaves_takes_its_ghost_ink_and_pointer() {
         let mut b = Board::default();
-        let ana = notein_sync::DeviceId([1; 32]);
+        let ana = notin_sync::DeviceId([1; 32]);
         ghost(&mut b, ana);
         assert_eq!(b.remote_hands().count(), 1);
         b.forget_hand(ana);
@@ -3922,7 +3922,7 @@ mod tests {
     #[test]
     fn a_silent_hand_expires_without_another_message() {
         let mut b = Board::default();
-        let ana = notein_sync::DeviceId([1; 32]);
+        let ana = notin_sync::DeviceId([1; 32]);
         ghost(&mut b, ana);
         b.expire_hands();
         assert_eq!(b.remote_hands().count(), 1, "still fresh");

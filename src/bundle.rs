@@ -18,8 +18,8 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bincode::config::{self, Configuration};
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
 
 use crate::bookmark::SourceRef;
 use crate::doc::Doc;

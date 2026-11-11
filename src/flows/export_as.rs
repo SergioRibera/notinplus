@@ -8,20 +8,20 @@
 //! kind ([`DocumentKind::export_with`]); one file is saved as is, several
 //! are zipped. The bulk exports (bundle, readable zip) are untouched.
 //!
-//! [`DocumentKind::export_fields`]: notein_plugin::DocumentKind::export_fields
-//! [`DocumentKind::export_with`]: notein_plugin::DocumentKind::export_with
+//! [`DocumentKind::export_fields`]: notin_plugin::DocumentKind::export_fields
+//! [`DocumentKind::export_with`]: notin_plugin::DocumentKind::export_with
 
 use std::io::{Cursor, Write};
 use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::config::{ConfigError, ConfigField, ConfigSchema, ConfigValue};
-use notein_plugin::kind::{ExportFile, ExportValues};
-use notein_plugin::plugin::PluginSettings;
-use notein_plugin::{ErasedKind, UserMessage};
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_plugin::config::{ConfigError, ConfigField, ConfigSchema, ConfigValue};
+use notin_plugin::kind::{ExportFile, ExportValues};
+use notin_plugin::plugin::PluginSettings;
+use notin_plugin::{ErasedKind, UserMessage};
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Button, ModalController, Sheet, SheetFooter, TextField, Toast, ToastTone, Toasts,
 };
 

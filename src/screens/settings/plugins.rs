@@ -4,16 +4,16 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
-use notein_plugin::UserMessage;
-use notein_plugin::catalog::{Installed, Origin};
-use notein_plugin::loader::Review;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_plugin::UserMessage;
+use notin_plugin::catalog::{Installed, Origin};
+use notin_plugin::loader::Review;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Button, Group, Icon, ListRow, ModalController, Notice, NoticeTone, Section, Sheet, SheetFooter,
     Switch, Text, TextRole, Toast, Toasts, Trailing,
 };
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use super::schema::SchemaForm;
 use crate::plugins::dynamic::{self, Staged};
@@ -199,7 +199,7 @@ impl Detail {
     #[sismo::function("settings::plugins_settings_elsewhere")]
     fn settings_elsewhere(&self) -> Element {
         let section = match &*self.plugin.info.id {
-            notein_notes::KIND_ID => Some(super::Section::Notes),
+            notin_notes::KIND_ID => Some(super::Section::Notes),
             "io.notein.canvas" => Some(super::Section::Pen),
             _ => None,
         };
@@ -242,7 +242,7 @@ impl Detail {
             tr!("settings-plugins-tech-version", "version" => plugin.info.version.to_string()),
             tr!("settings-plugins-tech-author", "author" => plugin.info.author.to_string()),
             tr!("settings-plugins-tech-file", "file" => file),
-            tr!("settings-plugins-tech-sdk", "sdk" => notein_plugin::loader::SDK_ABI_VERSION.to_string()),
+            tr!("settings-plugins-tech-sdk", "sdk" => notin_plugin::loader::SDK_ABI_VERSION.to_string()),
         ];
         Group::default()
             .child(

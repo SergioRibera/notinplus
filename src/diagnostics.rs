@@ -7,8 +7,8 @@ pub mod ui;
 use std::path::PathBuf;
 
 use log::{LevelFilter, Log};
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
 
 use crate::persist::Persisted;
 

@@ -3,8 +3,8 @@
 use std::rc::Rc;
 
 use freya_markdown_editor::prelude::{EditorTheme, MarkdownEditor};
-use notein_plugin::doc::DocId;
-use notein_plugin::ui::{HostUi, SelectionMenu, Ui};
+use notin_plugin::doc::DocId;
+use notin_plugin::ui::{HostUi, SelectionMenu, Ui};
 
 use crate::library::model::ItemId;
 
@@ -22,7 +22,7 @@ impl HostUi for ShellUi {
     }
 
     fn editor_theme(&self) -> EditorTheme {
-        crate::editor::theme(&notein_ui_kit::palette())
+        crate::editor::theme(&notin_ui_kit::palette())
     }
 
     fn selection(&self, menu: SelectionMenu) {

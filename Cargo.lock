@@ -2790,7 +2790,7 @@ dependencies = [
  "freya-edit",
  "freya-engine",
  "freya-testing",
- "notein-i18n",
+ "notin-i18n",
  "sismo",
 ]
 
@@ -3349,7 +3349,7 @@ dependencies = [
 name = "glyph-bake"
 version = "0.1.0-alpha.1"
 dependencies = [
- "notein-handwriting",
+ "notin-handwriting",
  "ttf-parser",
 ]
 
@@ -5381,11 +5381,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 
 [[package]]
-name = "notein-align"
+name = "notin-align"
 version = "0.1.0-alpha.1"
 
 [[package]]
-name = "notein-bible"
+name = "notin-bible"
 version = "0.1.0-alpha.1"
 dependencies = [
  "async-io",
@@ -5399,10 +5399,10 @@ dependencies = [
  "freya-icons 0.5.0-rc.13",
  "istmo-core",
  "log",
- "notein-align",
- "notein-i18n",
- "notein-sdk",
- "notein-ui-kit",
+ "notin-align",
+ "notin-i18n",
+ "notin-sdk",
+ "notin-ui-kit",
  "originals-format",
  "quick-xml 0.37.5",
  "regex",
@@ -5418,7 +5418,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "notein-handwriting"
+name = "notin-handwriting"
 version = "0.1.0-alpha.1"
 dependencies = [
  "rkyv 0.8.18",
@@ -5426,7 +5426,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "notein-i18n"
+name = "notin-i18n"
 version = "0.1.0-alpha.1"
 dependencies = [
  "bincode 2.0.1",
@@ -5436,7 +5436,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "notein-notes"
+name = "notin-notes"
 version = "0.1.0-alpha.1"
 dependencies = [
  "async-io",
@@ -5446,14 +5446,14 @@ dependencies = [
  "freya-markdown-editor",
  "freya-testing",
  "log",
- "notein-i18n",
- "notein-sdk",
- "notein-ui-kit",
+ "notin-i18n",
+ "notin-sdk",
+ "notin-ui-kit",
  "sismo",
 ]
 
 [[package]]
-name = "notein-plugin"
+name = "notin-plugin"
 version = "0.1.0-alpha.1"
 dependencies = [
  "bincode 2.0.1",
@@ -5463,30 +5463,30 @@ dependencies = [
  "freya-markdown-editor",
  "libloading",
  "log",
- "notein-i18n",
+ "notin-i18n",
  "rkyv 0.8.18",
  "sismo",
  "uuid",
 ]
 
 [[package]]
-name = "notein-relay"
+name = "notin-relay"
 version = "0.1.0-alpha.1"
 dependencies = [
- "notein-sync",
+ "notin-sync",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "notein-sdk"
+name = "notin-sdk"
 version = "0.1.0-alpha.1"
 dependencies = [
- "notein-plugin",
+ "notin-plugin",
 ]
 
 [[package]]
-name = "notein-sync"
+name = "notin-sync"
 version = "0.1.0-alpha.1"
 dependencies = [
  "bincode 2.0.1",
@@ -5502,7 +5502,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "notein-ui-kit"
+name = "notin-ui-kit"
 version = "0.1.0-alpha.1"
 dependencies = [
  "async-io",
@@ -5511,7 +5511,7 @@ dependencies = [
  "freya-components",
  "freya-core",
  "freya-testing",
- "notein-i18n",
+ "notin-i18n",
  "sismo",
 ]
 
@@ -5554,13 +5554,13 @@ dependencies = [
  "jni 0.21.1",
  "log",
  "loro",
- "notein-bible",
- "notein-handwriting",
- "notein-i18n",
- "notein-notes",
- "notein-plugin",
- "notein-sync",
- "notein-ui-kit",
+ "notin-bible",
+ "notin-handwriting",
+ "notin-i18n",
+ "notin-notes",
+ "notin-plugin",
+ "notin-sync",
+ "notin-ui-kit",
  "pollster",
  "qrcode",
  "reqwest",

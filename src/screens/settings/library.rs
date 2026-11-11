@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{Group, ListRow, ModalController, Section, Segmented, Text, TextRole, tokens};
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{Group, ListRow, ModalController, Section, Segmented, Text, TextRole, tokens};
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use crate::flows::transfer::{self, ExportScope};
 use crate::library::{ItemId, LibraryData, bodies};

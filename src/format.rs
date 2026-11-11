@@ -2,7 +2,7 @@
 //! language.
 
 use chrono::{DateTime, Datelike, Local, TimeZone};
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 fn local(ms: u64) -> Option<DateTime<Local>> {
     Local.timestamp_millis_opt(i64::try_from(ms).ok()?).single()
@@ -85,7 +85,7 @@ pub fn now() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use notein_i18n::Lang;
+    use notin_i18n::Lang;
 
     use super::*;
 

@@ -159,7 +159,7 @@ pub enum BackgroundStyle {
     DotGrid,
 }
 
-impl From<BackgroundStyle> for notein_plugin::create::Paper {
+impl From<BackgroundStyle> for notin_plugin::create::Paper {
     fn from(style: BackgroundStyle) -> Self {
         match style {
             BackgroundStyle::Blank => Self::Blank,
@@ -806,7 +806,7 @@ pub struct Workspace {
     pub updated_at: u64,
     /// The device the mesa was made on; `None` when it was made before
     /// this device had a sync identity.
-    pub device: Option<notein_sync::DeviceId>,
+    pub device: Option<notin_sync::DeviceId>,
 }
 
 impl Workspace {

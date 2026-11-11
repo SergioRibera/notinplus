@@ -12,10 +12,10 @@ use freya_engine::prelude::{
     AlphaType, Color as SkColor, ColorType, ImageInfo, Paint, PaintStyle, RRect, Rect, SkData,
     SkImage, raster_from_data,
 };
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{Button, Sheet, SheetFooter, Spinner, Text, TextRole, tokens};
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{Button, Sheet, SheetFooter, Spinner, Text, TextRole, tokens};
 
 use capture::{Capture, Event};
 use frame::Picture;

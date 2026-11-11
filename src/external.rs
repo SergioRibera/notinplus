@@ -1,8 +1,8 @@
 //! Handing a URL to the operating system.
 
 use istmo_opener::{OpenError, OpenerClient};
-use notein_i18n::tr;
-use notein_ui_kit::{Toast, ToastTone, Toasts};
+use notin_i18n::tr;
+use notin_ui_kit::{Toast, ToastTone, Toasts};
 
 /// Open `url` (web page, `mailto:`, `file://` folder) with the system's
 /// default handler.

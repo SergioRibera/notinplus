@@ -5,17 +5,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use freya::prelude::*;
-use notein_plugin::UserMessage;
-use notein_plugin::config::{ConfigEnumOption, ConfigField, ConfigFieldKind, ConfigValue};
-use notein_plugin::plugin::PluginSettings;
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_plugin::UserMessage;
+use notin_plugin::config::{ConfigEnumOption, ConfigField, ConfigFieldKind, ConfigValue};
+use notin_plugin::plugin::PluginSettings;
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Action, ActionEntry, ActionList, Button, ButtonVariant, ColorWheel, Group, ListRow, Popover,
     PopoverAlign, PopoverSide, Segmented, Stepper, Switch, Text, TextField, TextRole, Trailing,
 };
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 /// Widest integer range drawn as a stepper; wider ranges get a field.
 const STEPPER_RANGE: i64 = 50;
@@ -262,13 +262,13 @@ impl FieldRow {
             .small()
             .icon(freya::icons::lucide::chevrons_up_down())
             .on_press(move |e: Event<PressEventData>| {
-                let anchor = notein_ui_kit::press_anchor(e.data());
+                let anchor = notin_ui_kit::press_anchor(e.data());
                 let entries = options.iter().map(|o| {
                     let set = set.clone();
                     let value = o.value.clone();
                     ActionEntry::Item(
                         Action::new(o.label.clone(), move |()| {
-                            notein_ui_kit::ModalController::get().close();
+                            notin_ui_kit::ModalController::get().close();
                             let mut error = error;
                             error.set(set(ConfigValue::String(value.clone())));
                         })
@@ -321,7 +321,7 @@ impl FieldRow {
             )
             .maybe_child(wheel_open().then(|| {
                 ColorWheel::new()
-                    .swatches(notein_ui_kit::theme::ACCENT_SWATCHES.to_vec())
+                    .swatches(notin_ui_kit::theme::ACCENT_SWATCHES.to_vec())
                     .allow_custom(true)
                     .initial(color)
                     .width(260.0)

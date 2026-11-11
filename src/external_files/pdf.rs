@@ -7,9 +7,9 @@ use std::rc::Rc;
 
 use freya::prelude::*;
 use freya_pdf::{PdfDocument, TocEntry};
-use notein_i18n::tr;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Lazy, Notice, NoticeTone, Spinner, TapExt, Text, TextRole, tokens, width_class,
 };
 
@@ -266,7 +266,7 @@ impl Component for Pages {
                     .on_sized(move |e: Event<SizedEventData>| {
                         viewport.set_if_modified(e.area.width());
                     })
-                    .child(notein_ui_kit::ScrollContent::new(
+                    .child(notin_ui_kit::ScrollContent::new(
                         rect()
                             .width(Size::fill())
                             .padding((0.0, 0.0, GAP, 0.0))
@@ -482,7 +482,7 @@ impl Component for Contents {
                 ScrollView::new()
                     .width(Size::fill())
                     .height(Size::flex(1.0))
-                    .child(notein_ui_kit::ScrollContent::new(
+                    .child(notin_ui_kit::ScrollContent::new(
                         rect().width(Size::fill()).children(rows),
                     )),
             )

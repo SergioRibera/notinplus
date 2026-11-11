@@ -18,8 +18,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::{NetFailure, UserMessage};
+use notin_i18n::tr;
+use notin_plugin::{NetFailure, UserMessage};
 
 pub use check::UpdateRecord;
 pub use release::{Asset, Device, Release};
@@ -300,8 +300,8 @@ pub(crate) fn use_preview_updates(newer: Option<Release>) {
 
 #[cfg(test)]
 mod tests {
-    use notein_i18n::Lang;
-    use notein_plugin::NetFailure;
+    use notin_i18n::Lang;
+    use notin_plugin::NetFailure;
 
     use super::*;
 

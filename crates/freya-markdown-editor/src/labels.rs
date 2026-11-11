@@ -2,7 +2,7 @@
 //! tooltips, menu entries, block captions and the `/` menu.
 //!
 //! The text comes from this crate's Fluent catalog (`locales/`) in the
-//! active [`notein_i18n::Lang`]. Hosts that need other wording build a
+//! active [`notin_i18n::Lang`]. Hosts that need other wording build a
 //! [`Labels`] from a function that matches on every [`Label`], so a
 //! label added here fails their build until they word it:
 //!
@@ -16,7 +16,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use notein_i18n::Lang;
+use notin_i18n::Lang;
 
 use crate::document::{Aggregate, BlockType, CalloutKind, HeadingLevel, Scope};
 

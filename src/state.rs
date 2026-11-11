@@ -5,9 +5,9 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_ui_kit::{Toast, ToastTone, Toasts};
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_ui_kit::{Toast, ToastTone, Toasts};
 
 use crate::library::{self, LibHandle, Library, LibraryData, LibraryError};
 

@@ -3,11 +3,11 @@
 //! person chooses to keep a copy, to start over, or to leave.
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::tokens::{size, space};
-use notein_ui_kit::{Button, ButtonSize, Icon, Notice, NoticeTone, Text, TextRole};
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::tokens::{size, space};
+use notin_ui_kit::{Button, ButtonSize, Icon, Notice, NoticeTone, Text, TextRole};
 
 use crate::library::formats::{self, Incompatible};
 
@@ -93,7 +93,7 @@ impl Component for IncompatibleScreen {
                 )
                 .child(
                     Button::new(tr!("incompatible-confirm-wipe"))
-                        .variant(notein_ui_kit::ButtonVariant::DangerFill)
+                        .variant(notin_ui_kit::ButtonVariant::DangerFill)
                         .size(ButtonSize::Large)
                         .full_width()
                         .loading(current == Step::Wiping)

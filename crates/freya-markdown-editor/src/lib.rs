@@ -10,7 +10,7 @@
 //!   images to custom visuals.
 //! - `MarkdownToolbar` (feature `toolbar`): a ready made formatting bar.
 
-notein_i18n::catalog!();
+notin_i18n::catalog!();
 
 mod controller;
 mod decorator;

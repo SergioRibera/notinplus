@@ -1,4 +1,4 @@
-//! Offline baker for `notein-handwriting`.
+//! Offline baker for `notin-handwriting`.
 
 mod error;
 mod eval;
@@ -9,7 +9,7 @@ mod uji;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use notein_handwriting::TemplateSet;
+use notin_handwriting::TemplateSet;
 
 use crate::error::BakeError;
 use crate::select::{Extraction, medoids};

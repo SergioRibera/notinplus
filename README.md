@@ -65,7 +65,7 @@
 - Pair your devices on the same network and keep the library in step.
 - Share a document, a notebook or a desk with other people: roles, entry
   approval and live editing with everyone's cursor.
-- An optional relay server, [`notein-relay`](tools/notein-relay), links
+- An optional relay server, [`notin-relay`](tools/notin-relay), links
   devices outside the local network. It stores and forwards sealed
   records it cannot read.
 
@@ -107,12 +107,12 @@ Prebuilt binaries are in the `cache.sergioribera.rs/main` binary cache
 
 ### Relay server
 
-The release also ships `notein-relay` as a `.deb` / `.rpm` that installs
+The release also ships `notin-relay` as a `.deb` / `.rpm` that installs
 a systemd service (UDP 7720), a standalone `.tar.gz`, and a container:
 
 ```sh
 docker run -p 7720:7720/udp -v relay:/data \
-  ghcr.io/sergioribera/notein-relay:<version> \
+  ghcr.io/sergioribera/notin-relay:<version> \
   --port 7720 --data /data --advertise <public-host>
 ```
 
@@ -147,7 +147,7 @@ nix build .#windows-bundles    # Windows, cross-built from Linux
 | `src/` | The app shell: Home, desks, settings, sync, update checks |
 | `crates/notein-*` | Library model, plugin SDK, sync, Bible, notes, handwriting, UI kit |
 | `crates/freya-*` | Freya components: markdown editor, PDF, math, diagrams, canvas backgrounds |
-| `tools/notein-relay` | The relay server |
+| `tools/notin-relay` | The relay server |
 | `android/`, `ios/` | Native projects (Gradle, xcodegen) |
 | `assets/brand/` | Logo, icons and the brand guide |
 

@@ -2,9 +2,9 @@
 
 use freya::icons::lucide;
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_ui_kit::{Button, Group, ListRow, Section, Toast, ToastTone, Toasts, Trailing};
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_ui_kit::{Button, Group, ListRow, Section, Toast, ToastTone, Toasts, Trailing};
 
 use super::{DiagnosticsSettings, MOBILE};
 use crate::persist::Persisted;

@@ -6,10 +6,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::services::Placement;
-use notein_ui_kit::theme::palette as theme;
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_plugin::services::Placement;
+use notin_ui_kit::theme::palette as theme;
+use notin_ui_kit::{
     Kbd, ListRow, Modal, ModalController, SearchField, Section, Text, TextRole, Trailing,
 };
 
@@ -374,7 +374,7 @@ impl Component for Palette {
                     .as_ref()
                     .and_then(|k| crate::plugins::kind_info(k))
                     .map(|info| {
-                        notein_ui_kit::Tag::new(
+                        notin_ui_kit::Tag::new(
                             tr!("mesa-palette-only-kind", "kinds" => info.plural.to_string()),
                         )
                         .dot(kind_color(&p, info.color))
@@ -384,7 +384,7 @@ impl Component for Palette {
                 ScrollView::new()
                     .width(Size::fill())
                     .height(Size::flex(1.0))
-                    .child(notein_ui_kit::ScrollContent::new(
+                    .child(notin_ui_kit::ScrollContent::new(
                         rect().width(Size::fill()).spacing(12.0).children(sections),
                     )),
             )
@@ -532,7 +532,7 @@ impl PaletteRows<'_> {
     fn section(&mut self, title: String, lines: &[Line]) -> Element {
         let rows: Vec<Element> = lines.iter().map(|l| self.row(l)).collect();
         Section::new(title)
-            .child(notein_ui_kit::Group::default().children(rows))
+            .child(notin_ui_kit::Group::default().children(rows))
             .into_element()
     }
 

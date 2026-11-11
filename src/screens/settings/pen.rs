@@ -2,13 +2,13 @@
 
 use freya::prelude::*;
 use freya_engine::prelude::{Color as SkColor, Paint, PaintStyle};
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Action, ActionEntry, ActionList, Button, ChoiceCard, Group, Icon, KindBadge, ListRow,
     ModalController, Section, Segmented, Sheet, Text, TextRole, Trailing, tokens,
 };
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use crate::ink_glyph::GlyphFont;
 use crate::references::kind_color;

@@ -19,9 +19,9 @@ use freya_markdown_editor::prelude::{
     Decorator, EditorColors, ImageContext, ImagePicker, ImageRequest,
 };
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader};
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_ui_kit::{Toast, ToastTone, Toasts};
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_ui_kit::{Toast, ToastTone, Toasts};
 
 use crate::canvas::Board;
 use crate::failure::NetFailureExt;
@@ -563,7 +563,7 @@ impl Component for AssetImage {
             self.item,
             images.resolve(&format!("{ASSETS_DIR}/{}", self.name)),
         );
-        let p = notein_ui_kit::palette();
+        let p = notin_ui_kit::palette();
         let placeholder = |icon: Bytes| {
             rect()
                 .width(Size::fill())

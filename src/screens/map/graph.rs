@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use crate::library::{ItemId, LibraryData, LinkKind, refs};
 

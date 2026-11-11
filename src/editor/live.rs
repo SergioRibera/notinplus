@@ -2,10 +2,10 @@
 
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::bookmark::SourceRef;
-use notein_plugin::services::Placement;
-use notein_ui_kit::theme::palette;
+use notin_i18n::tr;
+use notin_plugin::bookmark::SourceRef;
+use notin_plugin::services::Placement;
+use notin_ui_kit::theme::palette;
 
 use super::CloseOnNavigate;
 use crate::references::{self, QuoteLine};

@@ -4,9 +4,9 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{Button, Icon, Text, TextRole, tokens};
+use notin_i18n::tr;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{Button, Icon, Text, TextRole, tokens};
 
 use super::Ops;
 use crate::library::{LibraryData, PaneId, PaneTab, TabTarget, days_left};
@@ -26,13 +26,13 @@ enum Notice {
     },
     ReadOnly {
         owner: String,
-        share: notein_sync::ShareId,
+        share: notin_sync::ShareId,
     },
     /// A one-off session whose organizer closed the app without ending
     /// it: nothing moves until they are back.
     Paused {
         owner: String,
-        share: notein_sync::ShareId,
+        share: notin_sync::ShareId,
     },
 }
 

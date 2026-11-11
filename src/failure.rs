@@ -1,9 +1,9 @@
 //! App-side helpers for wording failures; the shared vocabulary
-//! ([`UserMessage`], [`NetFailure`]) lives in `notein-plugin`.
+//! ([`UserMessage`], [`NetFailure`]) lives in `notin-plugin`.
 
-use notein_plugin::NetFailure;
+use notin_plugin::NetFailure;
 #[cfg(doc)]
-use notein_plugin::UserMessage;
+use notin_plugin::UserMessage;
 
 /// What a `reqwest` failure means to the user.
 pub(crate) trait NetFailureExt {

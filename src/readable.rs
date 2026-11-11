@@ -12,9 +12,9 @@ use freya_engine::prelude::{
     raster_n32_premul,
 };
 use freya_pdf::write::{PAGE_GAP, PageImage, image_pdf, page_world_rects};
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_plugin::create::Paper;
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_plugin::create::Paper;
 
 use crate::doc::Doc;
 use crate::library::{ItemId, LibraryData, bodies};
@@ -327,7 +327,7 @@ pub(crate) fn canvas_pdf(item: ItemId, paper: [u8; 4], pattern: Paper) -> Option
 
 /// The marks of a document as a markdown list.
 #[sismo::function("readable::marks_markdown")]
-fn marks_markdown(marks: &[notein_plugin::kind::Mark<Vec<u8>>]) -> String {
+fn marks_markdown(marks: &[notin_plugin::kind::Mark<Vec<u8>>]) -> String {
     let mut out = format!("# {}\n\n", tr!("misc-export-bookmarks-heading"));
     for mark in marks {
         out.push_str("- **");

@@ -43,8 +43,8 @@ const SKETCH_DESK: WorkspaceId = WorkspaceId([0x23; 16]);
 const BIBLE_ID: &str = "spa_rv1960";
 
 /// Two people in the study with you.
-const ANA: (notein_sync::DeviceId, &str) = (notein_sync::DeviceId([0x2A; 32]), "Ana");
-const MARCO: (notein_sync::DeviceId, &str) = (notein_sync::DeviceId([0xC4; 32]), "Marco");
+const ANA: (notin_sync::DeviceId, &str) = (notin_sync::DeviceId([0x2A; 32]), "Ana");
+const MARCO: (notin_sync::DeviceId, &str) = (notin_sync::DeviceId([0xC4; 32]), "Marco");
 
 const NOTE_BODY: &str = "# Romans 8 — Life in the Spirit
 
@@ -159,7 +159,7 @@ fn items(study: &Folder, sermons: &Folder) -> Vec<Item> {
         real_item(
             NOTE,
             "Romans 8 — study notes",
-            notein_notes::kind::KIND,
+            notin_notes::kind::KIND,
             study.id,
             0,
         ),
@@ -167,21 +167,21 @@ fn items(study: &Folder, sermons: &Folder) -> Vec<Item> {
         real_item(
             BIBLE,
             "Reina-Valera 1960",
-            notein_bible::kind::KIND,
+            notin_bible::kind::KIND,
             ROOT_FOLDER,
             0,
         ),
         real_item(
             SERMON,
             "More than conquerors",
-            notein_notes::kind::KIND,
+            notin_notes::kind::KIND,
             sermons.id,
             1,
         ),
         real_item(
             GREEK,
             "Greek vocabulary",
-            notein_notes::kind::KIND,
+            notin_notes::kind::KIND,
             ROOT_FOLDER,
             2,
         ),
@@ -189,7 +189,7 @@ fn items(study: &Folder, sermons: &Folder) -> Vec<Item> {
         real_item(
             PRAYER,
             "Prayer list",
-            notein_notes::kind::KIND,
+            notin_notes::kind::KIND,
             ROOT_FOLDER,
             5,
         ),
@@ -197,7 +197,7 @@ fn items(study: &Folder, sermons: &Folder) -> Vec<Item> {
         real_item(
             OUTLINE,
             "Acts — reading plan",
-            notein_notes::kind::KIND,
+            notin_notes::kind::KIND,
             ROOT_FOLDER,
             9,
         ),
@@ -439,13 +439,13 @@ fn bible_ready() {
         let source = std::env::var_os("NOTEIN_README_BIBLE")
             .map(PathBuf::from)
             .expect("NOTEIN_README_BIBLE: an app Bible folder with originals installed");
-        let target = notein_bible::Db::default_path()
+        let target = notin_bible::Db::default_path()
             .parent()
             .expect("bible folder")
             .to_path_buf();
         copy_dir(&source, &target);
-        let db = notein_bible::Db::open_default().expect("open bible db");
-        db.save_setting("originals", &notein_plugin::config::ConfigValue::Bool(true))
+        let db = notin_bible::Db::open_default().expect("open bible db");
+        db.save_setting("originals", &notin_plugin::config::ConfigValue::Bool(true))
             .expect("originals on");
         assert!(
             db.list_bibles()
@@ -454,9 +454,9 @@ fn bible_ready() {
                 .any(|b| b.id == BIBLE_ID),
             "{BIBLE_ID} is not installed in NOTEIN_README_BIBLE"
         );
-        let store = notein_bible::originals::Store::open(&notein_bible::originals::dir())
+        let store = notin_bible::originals::Store::open(&notin_bible::originals::dir())
             .expect("original packs");
-        notein_bible::originals::align::run(&db, &store, BIBLE_ID).expect("align");
+        notin_bible::originals::align::run(&db, &store, BIBLE_ID).expect("align");
     });
 }
 
@@ -476,7 +476,7 @@ fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
 
 /// Book id of Romans.
 fn romans() -> String {
-    let db = notein_bible::Db::open_default().expect("open bible db");
+    let db = notin_bible::Db::open_default().expect("open bible db");
     db.list_books(BIBLE_ID)
         .expect("books")
         .into_iter()
@@ -498,9 +498,9 @@ fn content_ready() {
         write_note(OUTLINE, OUTLINE_BODY);
         bodies::write_doc(SKETCH, &sketch()).expect("write sketch");
         bodies::write_doc(JOURNEYS, &journeys()).expect("write journeys");
-        let state = notein_bible::state::BibleViewerState::new(BIBLE_ID, romans(), 8);
-        let bytes = notein_bible::state::BibleSnapshot::from_state(&state).encode();
-        bodies::write_plugin_snapshot(BIBLE, notein_bible::kind::KIND, &bytes).expect("snapshot");
+        let state = notin_bible::state::BibleViewerState::new(BIBLE_ID, romans(), 8);
+        let bytes = notin_bible::state::BibleSnapshot::from_state(&state).encode();
+        bodies::write_plugin_snapshot(BIBLE, notin_bible::kind::KIND, &bytes).expect("snapshot");
     });
 }
 
@@ -579,7 +579,7 @@ fn sketch_loaded() {
 /// screen settled.
 fn shoot(name: &str, size: (f32, f32), body: fn() -> Element, presses: &[(f64, f64)]) {
     content_ready();
-    let app = shell_with(library, body, size, notein_ui_kit::Gutters::default());
+    let app = shell_with(library, body, size, notin_ui_kit::Gutters::default());
     let (mut runner, ()) = TestingRunner::new(app, size.into(), |_| (), 1.0);
     runner.poll_n(Duration::from_millis(40), 12);
     runner.sync_and_update();
@@ -606,8 +606,8 @@ fn shoot(name: &str, size: (f32, f32), body: fn() -> Element, presses: &[(f64, f
 }
 
 fn english() {
-    notein_i18n::Lang::En.make_current();
-    crate::plugins::catalog::set_lang(notein_i18n::Lang::En);
+    notin_i18n::Lang::En.make_current();
+    crate::plugins::catalog::set_lang(notin_i18n::Lang::En);
 }
 
 fn readme_home() -> Element {
@@ -634,7 +634,7 @@ fn bible() -> Element {
     use_hook(english);
     crate::plugins::faces::render(
         BIBLE,
-        &crate::library::DocKind::plugin(notein_bible::kind::KIND),
+        &crate::library::DocKind::plugin(notin_bible::kind::KIND),
         None,
     )
 }

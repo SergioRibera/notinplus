@@ -110,7 +110,7 @@ pub mod desktop_data_store;
 /// Matches [`istmo_pen::PenConfig::window_id`].
 pub const WINDOW_ID: u64 = 1;
 
-notein_i18n::catalog!();
+notin_i18n::catalog!();
 
 use istmo::plugins::{DeepLinks, Documents, SafeArea, SystemInfo};
 use istmo_camera::CameraClient;

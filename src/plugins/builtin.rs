@@ -6,9 +6,9 @@ pub mod pdf;
 
 use std::sync::{Arc, OnceLock};
 
-use notein_i18n::tr;
-use notein_plugin::info::PluginInfo;
-use notein_plugin::plugin::{Plugin, Registrar};
+use notin_i18n::tr;
+use notin_plugin::info::PluginInfo;
+use notin_plugin::plugin::{Plugin, Registrar};
 
 use crate::plugins::faces::{CanvasFace, PdfFace};
 

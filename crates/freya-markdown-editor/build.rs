@@ -1,3 +1,3 @@
 fn main() {
-    notein_i18n::build::emit();
+    notin_i18n::build::emit();
 }

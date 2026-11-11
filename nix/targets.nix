@@ -53,7 +53,7 @@
     };
   };
 
-  # notein-relay, Linux only. `dockerArch` is the OCI platform the image
+  # notin-relay, Linux only. `dockerArch` is the OCI platform the image
   # is pushed under; the per-arch images are joined into one manifest.
   server = {
     x86_64-linux = {

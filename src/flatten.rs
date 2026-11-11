@@ -10,7 +10,7 @@ use freya_canvas_bg::{
     Rect as WorldRect, RedrawHandle,
 };
 use freya_engine::prelude::{Canvas, Color as SkColor, Paint, Rect, SkData, SkImage};
-use notein_plugin::create::Paper;
+use notin_plugin::create::Paper;
 
 use crate::doc::Doc;
 use crate::image_box::ImageBox;

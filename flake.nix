@@ -196,7 +196,7 @@
           inherit (notinplus) src;
         };
 
-        # notein-relay: `.#relay`, `.#relay-bundles` (deb/rpm/tar.gz with a
+        # notin-relay: `.#relay`, `.#relay-bundles` (deb/rpm/tar.gz with a
         # systemd unit) and `.#relay-image` (OCI tarball for `docker load`).
         relay = import ./nix/relay.nix {
           inherit pkgs lib craneLib;

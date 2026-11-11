@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
-use notein_ui_kit::theme::palette;
+use notin_ui_kit::theme::palette;
 
 use super::view::{Mode, SaveState, ViewState};
 use super::{FileKind, Session};
@@ -128,7 +128,7 @@ impl Component for TextBody {
                     super::in_main_window(move || {
                         crate::plugins::navigate::open(
                             &crate::bookmark::SourceRef::from_link(&url),
-                            notein_plugin::services::Placement::Preferred,
+                            notin_plugin::services::Placement::Preferred,
                         );
                     });
                 })
@@ -147,14 +147,14 @@ impl Component for TextBody {
                         MarkdownToolbar::new(controller)
                             .theme(crate::editor::theme(&palette()))
                             .mode_toggle(false)
-                            .popup_area(notein_ui_kit::safe_frame()),
+                            .popup_area(notin_ui_kit::safe_frame()),
                     )
             }))
             .child(
                 ScrollView::new()
                     .width(Size::fill())
                     .height(Size::flex(1.))
-                    .child(notein_ui_kit::ScrollContent::new(
+                    .child(notin_ui_kit::ScrollContent::new(
                         rect()
                             .width(Size::fill())
                             .cross_align(Alignment::Center)

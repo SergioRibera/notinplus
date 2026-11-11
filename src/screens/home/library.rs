@@ -4,10 +4,10 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     ActionEntry, Button, EmptyState, IconButton, ListRow, Popover, PopoverAlign, PopoverSide, Tag,
     Text, TextRole, tokens, width_class,
 };
@@ -83,7 +83,7 @@ fn breadcrumb(data: &LibraryData, browse: Browse) -> Rect {
                 )
                 .into_element();
             let sep = (i > 0).then(|| {
-                notein_ui_kit::Icon::new(freya::icons::lucide::chevron_right())
+                notin_ui_kit::Icon::new(freya::icons::lucide::chevron_right())
                     .size(14.0)
                     .color(p.t3)
                     .into_element()
@@ -129,14 +129,14 @@ fn sort_button(sort: SortOrder, mut area: State<Area>) -> Rect {
             let entries = SortOrder::ALL.iter().map(|order| {
                 let order = *order;
                 ActionEntry::Item(
-                    notein_ui_kit::Action::new(order.label(), move |()| {
-                        notein_ui_kit::ModalController::get().close();
+                    notin_ui_kit::Action::new(order.label(), move |()| {
+                        notin_ui_kit::ModalController::get().close();
                         SettingsStore::get().update(|s| s.library.sort = order);
                     })
                     .checked(order == sort),
                 )
             });
-            Popover::new(anchor, notein_ui_kit::ActionList::new(entries).width(200.0))
+            Popover::new(anchor, notin_ui_kit::ActionList::new(entries).width(200.0))
                 .width(200.0)
                 .estimated_height(170.0)
                 .side(PopoverSide::Below)
@@ -268,7 +268,7 @@ impl Component for LibraryBar {
                     .height(Size::px(CHIPS))
                     .show_scrollbar(false)
                     .child(
-                        notein_ui_kit::ScrollContent::new(
+                        notin_ui_kit::ScrollContent::new(
                             rect()
                                 .horizontal()
                                 .height(Size::px(CHIPS))
@@ -349,8 +349,8 @@ fn doc_menu(
         entries.insert(
             0,
             ActionEntry::Item(
-                notein_ui_kit::Action::new(tr!("home-select"), move |()| {
-                    notein_ui_kit::ModalController::get().close();
+                notin_ui_kit::Action::new(tr!("home-select"), move |()| {
+                    notin_ui_kit::ModalController::get().close();
                     let mut selection = selection;
                     selection.write().start_with_item(id);
                 })
@@ -503,7 +503,7 @@ impl ShelfRow {
         match checked {
             Selecting::No => row.chevron(),
             Selecting::Selected | Selecting::Unselected => row.leading(
-                notein_ui_kit::Leading::Check(checked == Selecting::Selected),
+                notin_ui_kit::Leading::Check(checked == Selecting::Selected),
             ),
         }
     }
@@ -529,7 +529,7 @@ impl ShelfRow {
         match checked {
             Selecting::No => row.kind(icon, tint),
             Selecting::Selected | Selecting::Unselected => row.leading(
-                notein_ui_kit::Leading::Check(checked == Selecting::Selected),
+                notin_ui_kit::Leading::Check(checked == Selecting::Selected),
             ),
         }
     }
@@ -614,7 +614,7 @@ impl Component for EmptyShelf {
                     .primary()
                     .icon(lucide::plus())
                     .on_press(move |e: Event<PressEventData>| {
-                        let anchor = notein_ui_kit::press_anchor(e.data());
+                        let anchor = notin_ui_kit::press_anchor(e.data());
                         crate::flows::create::open_menu(
                             anchor,
                             crate::flows::create::Context {
@@ -694,8 +694,8 @@ impl Component for PinnedRow {
                                 entries.insert(
                                     0,
                                     ActionEntry::Item(
-                                        notein_ui_kit::Action::new(label, move |()| {
-                                            notein_ui_kit::ModalController::get().close();
+                                        notin_ui_kit::Action::new(label, move |()| {
+                                            notin_ui_kit::ModalController::get().close();
                                             crate::state::edit(
                                                 crate::state::LibraryEdit::ReorderPinned,
                                                 async move |lib| lib.move_pin(index, to).await,
@@ -735,7 +735,7 @@ impl Component for PinnedRow {
                     .height(Size::px(super::card::card_height(self.card)))
                     .show_scrollbar(false)
                     .child(
-                        notein_ui_kit::ScrollContent::new(
+                        notin_ui_kit::ScrollContent::new(
                             rect().horizontal().spacing(12.0).children(cards),
                         )
                         .width(Size::auto()),

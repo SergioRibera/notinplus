@@ -5,8 +5,8 @@
 //! and the store writes the file and re-applies the appearance.
 
 use freya::prelude::*;
-use notein_i18n::{Lang, tr};
-use notein_ui_kit::theme::{Appearance, TextSize, ThemeChoice, ThemeHandle, ThemeKind};
+use notin_i18n::{Lang, tr};
+use notin_ui_kit::theme::{Appearance, TextSize, ThemeChoice, ThemeHandle, ThemeKind};
 
 use crate::ink_glyph::GlyphFont;
 use crate::persist::Persisted;
@@ -362,20 +362,20 @@ impl EntryRolePref {
     pub const ALL: [Self; 3] = [Self::Viewer, Self::Editor, Self::CoOrganizer];
 
     #[must_use]
-    pub const fn role(self) -> notein_sync::Role {
+    pub const fn role(self) -> notin_sync::Role {
         match self {
-            Self::Viewer => notein_sync::Role::Viewer,
-            Self::Editor => notein_sync::Role::Editor,
-            Self::CoOrganizer => notein_sync::Role::CoOrganizer,
+            Self::Viewer => notin_sync::Role::Viewer,
+            Self::Editor => notin_sync::Role::Editor,
+            Self::CoOrganizer => notin_sync::Role::CoOrganizer,
         }
     }
 
     #[must_use]
-    pub const fn of(role: notein_sync::Role) -> Self {
+    pub const fn of(role: notin_sync::Role) -> Self {
         match role {
-            notein_sync::Role::Viewer => Self::Viewer,
-            notein_sync::Role::Editor => Self::Editor,
-            notein_sync::Role::CoOrganizer | notein_sync::Role::Owner => Self::CoOrganizer,
+            notin_sync::Role::Viewer => Self::Viewer,
+            notin_sync::Role::Editor => Self::Editor,
+            notin_sync::Role::CoOrganizer | notin_sync::Role::Owner => Self::CoOrganizer,
         }
     }
 
@@ -406,9 +406,9 @@ impl ApprovePref {
 
     /// Whether a share of `mode` (a folder counts as permanent) asks.
     #[must_use]
-    pub const fn for_mode(self, mode: notein_sync::ShareMode) -> bool {
+    pub const fn for_mode(self, mode: notin_sync::ShareMode) -> bool {
         match self {
-            Self::ByKind => matches!(mode, notein_sync::ShareMode::Permanent),
+            Self::ByKind => matches!(mode, notin_sync::ShareMode::Permanent),
             Self::Always => true,
             Self::Never => false,
         }
@@ -475,7 +475,7 @@ impl Settings {
         };
         PEN_DOUBLE_TAP.store(code, std::sync::atomic::Ordering::Relaxed);
         let lang = self.appearance.interface_lang();
-        if lang != notein_i18n::Lang::current() {
+        if lang != notin_i18n::Lang::current() {
             lang.make_current();
             crate::plugins::catalog::set_lang(lang);
         }
@@ -541,7 +541,7 @@ pub fn use_settings_root() -> SettingsStore {
         settings.publish();
         settings
     });
-    let theme = notein_ui_kit::theme::use_theme_root(move || state.peek().appearance.into());
+    let theme = notin_ui_kit::theme::use_theme_root(move || state.peek().appearance.into());
     use_hook(move || {
         let store = SettingsStore { state, theme };
         provide_context_for_scope_id(store, ScopeId::ROOT);

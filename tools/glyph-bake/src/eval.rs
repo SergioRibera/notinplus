@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use notein_handwriting::{Candidate, Recognizer};
+use notin_handwriting::{Candidate, Recognizer};
 
 use crate::select::{Extraction, medoids};
 use crate::uji::Sample;

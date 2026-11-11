@@ -14,10 +14,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use freya::prelude::*;
 use freya::router::RouterContext;
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{Button, EmptyState, Skeleton, WidthClass, tokens, width_class};
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{Button, EmptyState, Skeleton, WidthClass, tokens, width_class};
 
 use self::app_bar::AppBar;
 use self::fab::Fab;
@@ -137,8 +137,8 @@ impl Component for Failed {
                     .icon(freya::icons::lucide::copy())
                     .on_press(move |_| {
                         if freya::clipboard::Clipboard::set(details.clone()).is_ok() {
-                            notein_ui_kit::Toasts::get()
-                                .show(notein_ui_kit::Toast::new(tr!("home-failed-details-copied")));
+                            notin_ui_kit::Toasts::get()
+                                .show(notin_ui_kit::Toast::new(tr!("home-failed-details-copied")));
                         }
                     }),
             )
@@ -361,11 +361,11 @@ impl Component for BottomActions {
             conf.on_creation(OnCreation::Finish);
             conf.on_change(OnChange::Rerun);
             AnimNum::new(0.0, 1.0)
-                .time(notein_ui_kit::tokens::motion::BASE)
+                .time(notin_ui_kit::tokens::motion::BASE)
                 .ease(Ease::Out)
                 .function(Function::Cubic)
         });
-        let rest = if notein_ui_kit::reduce_motion() {
+        let rest = if notin_ui_kit::reduce_motion() {
             0.0
         } else {
             1.0 - motion.get().value()
@@ -498,7 +498,7 @@ impl Component for Loaded {
                     .padding((8.0, pad, 0.0, pad))
                     .child(AppBar { trash }),
             )
-            .child(notein_ui_kit::ScrollContent::new(scroll).height(Size::flex(1.0)))
+            .child(notin_ui_kit::ScrollContent::new(scroll).height(Size::flex(1.0)))
             .child(BottomActions {
                 selection,
                 folder,
@@ -512,7 +512,7 @@ impl Component for Loaded {
 /// (settings) work as in a mesa.
 #[sismo::function("home::on_key")]
 fn on_key(e: &Event<KeyboardEventData>, mut selection: State<Selection>, folder: FolderId) {
-    if notein_ui_kit::ModalController::get().is_open() {
+    if notin_ui_kit::ModalController::get().is_open() {
         return;
     }
     let command = e.modifiers.ctrl() || e.modifiers.meta();

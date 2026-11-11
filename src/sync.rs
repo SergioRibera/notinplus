@@ -11,14 +11,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use notein_sync::{
+use notin_sync::{
     Action, BlobKey, BlobKind, DeviceId, DeviceProfile, DocId, DocStatus, DriverEvent, Invite,
     JoinFailure, LanConfig, LanNode, Member, NetEvent, PairFailure, PairingCode, PairingOffer,
     Path as ReachPath, PeerInfo, RelayAddr, Removal, Role, Share, ShareBook, ShareEdit, ShareId,
     ShareMode, SyncDriver, TrustedDevice,
 };
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use crate::library::{FolderId, ItemId, Library, bodies};
 use crate::session_end::SessionEnd;
@@ -729,7 +729,7 @@ pub fn start() {
         return;
     }
     let spawned = std::thread::Builder::new()
-        .name("notein-sync".into())
+        .name("notin-sync".into())
         .spawn(move || run(&rx));
     if let Err(err) = spawned {
         publish(SyncSnapshot {
@@ -857,7 +857,7 @@ struct Transport {
 }
 
 impl Transport {
-    fn start(profile: &DeviceProfile) -> Result<LanNode, notein_sync::NetError> {
+    fn start(profile: &DeviceProfile) -> Result<LanNode, notin_sync::NetError> {
         LanNode::start(LanConfig::new(profile.key().clone(), profile.name()))
     }
 
@@ -902,7 +902,7 @@ impl Service {
         if self.outdated.insert(from) {
             log::warn!(
                 "sync: {name} speaks protocol {version}, this build speaks {}",
-                notein_sync::PROTOCOL_VERSION
+                notin_sync::PROTOCOL_VERSION
             );
         }
         self.error = Some(SyncProblem::Outdated { name, version });
@@ -1748,7 +1748,7 @@ impl Service {
                 self.recovered(Recovery::Exchanged);
                 self.perform(actions);
             }
-            Err(notein_sync::SyncError::Version(version)) => self.report_outdated(from, version),
+            Err(notin_sync::SyncError::Version(version)) => self.report_outdated(from, version),
             Err(err) => {
                 log::error!("sync: {err}");
                 self.error = Some(SyncProblem::Exchange(Arc::new(err)));
@@ -1763,7 +1763,7 @@ impl Service {
         self.on_net(NetEvent::Stopped(reason.to_owned()));
         self.transport.lost(Instant::now());
         self.error = Some(SyncProblem::Network(Arc::new(
-            notein_sync::NetError::Stopped,
+            notin_sync::NetError::Stopped,
         )));
     }
 
@@ -1808,14 +1808,14 @@ impl Service {
 
 /// The sync service: commands from the app and network events, with
 /// local changes debounced, a periodic tick, and lost devices dialed
-/// again every [`notein_sync::driver::SUPERVISE`].
+/// again every [`notin_sync::driver::SUPERVISE`].
 fn run(cmds: &flume::Receiver<Cmd>) {
     let Some(mut service) = Service::start() else {
         return;
     };
     publish(service.snapshot());
-    let mut next_tick = Instant::now() + notein_sync::driver::TICK;
-    let mut next_supervise = Instant::now() + notein_sync::driver::SUPERVISE;
+    let mut next_tick = Instant::now() + notin_sync::driver::TICK;
+    let mut next_supervise = Instant::now() + notin_sync::driver::SUPERVISE;
     let mut pending_change: Option<Instant> = None;
     loop {
         let now = Instant::now();
@@ -1871,7 +1871,7 @@ fn run(cmds: &flume::Receiver<Cmd>) {
         }
         if next_tick <= now {
             sismo::scope!("sync::tick");
-            next_tick = now + notein_sync::driver::TICK;
+            next_tick = now + notin_sync::driver::TICK;
             // A member's request to bring documents in is lost when the
             // owner is out of reach; asking again each tick gets them in
             // once it is back.
@@ -1890,7 +1890,7 @@ fn run(cmds: &flume::Receiver<Cmd>) {
         }
         if next_supervise <= now {
             sismo::scope!("sync::supervise");
-            next_supervise = now + notein_sync::driver::SUPERVISE;
+            next_supervise = now + notin_sync::driver::SUPERVISE;
             let actions = service.driver.supervise(now);
             service.perform(actions);
         }
@@ -1904,7 +1904,7 @@ fn run(cmds: &flume::Receiver<Cmd>) {
 /// Refresh the replica's doc list so statuses cover every document.
 #[sismo::function("sync::remember_announced")]
 fn remember_announced(service: &Service) {
-    let docs = notein_sync::Replica::docs(service.driver.engine().replica());
+    let docs = notin_sync::Replica::docs(service.driver.engine().replica());
     service.driver.with_replica(|r| r.remember(&docs));
 }
 

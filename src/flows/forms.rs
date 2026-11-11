@@ -4,10 +4,10 @@
 use std::rc::Rc;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Button, ButtonVariant, ColorWheel, Group, IconButton, ListRow, ModalController, Section, Sheet,
     SheetFooter, Tag, TextField, Trailing, tokens,
 };
@@ -443,7 +443,7 @@ impl Component for ChoiceList {
                 let id = id.clone();
                 let selected = current.as_deref() == Some(id.as_str());
                 ListRow::new(text.clone())
-                    .leading(notein_ui_kit::Leading::Check(selected))
+                    .leading(notin_ui_kit::Leading::Check(selected))
                     .selected(selected)
                     .on_press(move |_| values.write().choice = Some(id.clone()))
                     .into_element()
@@ -597,7 +597,7 @@ pub async fn resolve_tags(lib: &mut crate::library::Library, names: &[String]) -
             Some(id) => Some(id),
             None => lib
                 .create_tag(name, {
-                    let c = notein_ui_kit::auto_color(name);
+                    let c = notin_ui_kit::auto_color(name);
                     [c.r(), c.g(), c.b(), c.a()]
                 })
                 .await

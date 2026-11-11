@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
-use notein_plugin::{Peer, Presence};
-use notein_sync::DeviceId;
+use notin_plugin::{Peer, Presence};
+use notin_sync::DeviceId;
 
 use super::live::LiveMessage;
 use crate::library::ItemId;

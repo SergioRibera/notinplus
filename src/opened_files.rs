@@ -13,9 +13,9 @@ use std::path::Path;
 
 use freya::prelude::{Platform, WinitPlatformExt, spawn_in_window};
 use istmo::plugins::{Documents, OpenedDocument};
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_ui_kit::{Toast, ToastTone, Toasts};
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_ui_kit::{Toast, ToastTone, Toasts};
 
 use crate::files::Picked;
 

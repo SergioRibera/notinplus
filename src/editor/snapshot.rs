@@ -1,7 +1,7 @@
 //! "Insert as image": a place in another document, pictured as it looks
 //! now and kept in this one.
 //!
-//! The pictures come from the source's kind ([`notein_plugin::kind::DocumentKind::snapshot`])
+//! The pictures come from the source's kind ([`notin_plugin::kind::DocumentKind::snapshot`])
 //! and are stored like any image added to the item, so they travel with
 //! it. They are copies: the source may change, the pictures stay.
 
@@ -9,11 +9,11 @@ use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
 use freya_markdown_editor::prelude::EditorController;
-use notein_i18n::tr;
-use notein_plugin::DocId;
-use notein_plugin::bookmark::SourceRef;
-use notein_plugin::kind::Snapshot;
-use notein_ui_kit::{Toast, ToastTone, Toasts};
+use notin_i18n::tr;
+use notin_plugin::DocId;
+use notin_plugin::bookmark::SourceRef;
+use notin_plugin::kind::Snapshot;
+use notin_ui_kit::{Toast, ToastTone, Toasts};
 
 use super::images::{ItemImages, report_add_failure};
 use crate::canvas::Board;

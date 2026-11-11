@@ -2,8 +2,8 @@
 //! any document through the catalog.
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::face::{CoverRequest, Face, FaceContext, FaceRequest, PaneKey};
+use notin_i18n::tr;
+use notin_plugin::face::{CoverRequest, Face, FaceContext, FaceRequest, PaneKey};
 
 use super::builtin::{canvas::CanvasKind, pdf::PdfKind};
 use super::content::{SnapshotStore, doc_id};
@@ -32,7 +32,7 @@ pub fn view_slot(key: PaneKey) -> ViewSlot {
     }
 }
 
-const fn item_of<K: notein_plugin::kind::DocumentKind>(ctx: &FaceContext<K>) -> ItemId {
+const fn item_of<K: notin_plugin::kind::DocumentKind>(ctx: &FaceContext<K>) -> ItemId {
     ItemId(ctx.doc.0)
 }
 
@@ -69,7 +69,7 @@ struct MissingFace {
 impl Component for MissingFace {
     #[sismo::function("plugins::missing_face")]
     fn render(&self) -> impl IntoElement {
-        notein_ui_kit::EmptyState::new(freya::icons::lucide::puzzle(), tr!("plugins-missing-title"))
+        notin_ui_kit::EmptyState::new(freya::icons::lucide::puzzle(), tr!("plugins-missing-title"))
             .body(tr!("plugins-missing-body", "kind" => self.kind.as_str()))
     }
 }
@@ -121,7 +121,7 @@ impl Face for PdfFace {
 #[sismo::function("plugins::faces_cover_paper")]
 fn cover_paper(cover: &CoverRequest) -> Color {
     cover.tint.map_or_else(
-        || notein_ui_kit::palette().paper,
+        || notin_ui_kit::palette().paper,
         |c| Color::from_argb(c[3], c[0], c[1], c[2]),
     )
 }
@@ -129,7 +129,7 @@ fn cover_paper(cover: &CoverRequest) -> Color {
 /// A page with a heading and a highlighted line.
 #[sismo::function("plugins::faces_pdf_cover")]
 fn pdf_cover(cover: &CoverRequest) -> Element {
-    let p = notein_ui_kit::palette();
+    let p = notin_ui_kit::palette();
     let w = cover.width;
     let lines = rect()
         .position(Position::new_absolute().top(44.0).left(w * 0.12))
@@ -183,7 +183,7 @@ pub(crate) trait Apply: Clone + 'static {
 /// opened it, then those sent while it is on screen.
 #[sismo::function("plugins::faces_use_jumps")]
 pub(crate) fn use_jumps(kind: &'static str, item: ItemId, target: impl Apply) {
-    use notein_plugin::services::HostServices;
+    use notin_plugin::services::HostServices;
     use_hook(move || {
         let doc = doc_id(item);
         let host = super::host::shell();
@@ -221,7 +221,7 @@ pub(crate) fn use_jumps(kind: &'static str, item: ItemId, target: impl Apply) {
 /// keystroke.
 #[sismo::function("plugins::faces_use_board_history")]
 pub(crate) fn use_board_history(kind: &'static str, item: ItemId, mount: CanvasMount) {
-    use notein_plugin::services::{HistoryStep, HostServices};
+    use notin_plugin::services::{HistoryStep, HostServices};
     let pane = match mount {
         CanvasMount::Item { slot, .. } => slot.map(pane_key),
         CanvasMount::Ephemeral(_) => None,
@@ -258,7 +258,7 @@ struct CanvasTarget {
 
 impl Apply for CanvasTarget {
     fn apply(&self, anchor: &[u8]) -> bool {
-        use notein_plugin::payload::Payload;
+        use notin_plugin::payload::Payload;
         let Some(board) = crate::active_boards::get(self.mount) else {
             return false;
         };

@@ -277,7 +277,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # notein-relay: deb/rpm/tar.gz (systemd unit included) go into the
+  # notin-relay: deb/rpm/tar.gz (systemd unit included) go into the
   # release; the per-arch OCI images are pushed as `<version>-<arch>` and
   # joined into one multi-arch tag by server-image.
   server:
@@ -337,7 +337,7 @@ jobs:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/notein-relay"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/notin-relay"
           gunzip -c "$(readlink -f result-image)" > "$RUNNER_TEMP/image.tar"
           nix run nixpkgs#crane -- auth login ghcr.io -u "$GITHUB_ACTOR" -p "$TOKEN"
           nix run nixpkgs#crane -- push "$RUNNER_TEMP/image.tar" "$image:$TAG"
@@ -372,7 +372,7 @@ jobs:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/notein-relay"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/notin-relay"
           nix run nixpkgs#crane -- auth login ghcr.io -u "$GITHUB_ACTOR" -p "$TOKEN"
           manifests=()
           for arch in $(jq -r '.server[].dockerArch' <<<"$MATRIX"); do
@@ -456,11 +456,11 @@ jobs:
           - **macOS**: \`.dmg\`, \`.pkg\` or the zipped \`.app\` (unsigned: right-click → Open the first time).
           - **Windows**: \`-setup.exe\` (NSIS) or \`.msi\`.
 
-          ### Relay server (\`notein-relay\`, Linux)
+          ### Relay server (\`notin-relay\`, Linux)
 
-          - \`notein-relay_*.deb\` / \`notein-relay-*.rpm\`: installs and starts the \`notein-relay\` systemd service (UDP 7720, data in \`/var/lib/notein-relay\`).
-          - \`notein-relay-*-linux.tar.gz\`: standalone binary.
-          - Docker: \`docker run -p 7720:7720/udp -v relay:/data ghcr.io/sergioribera/notein-relay:${TAG#v} --port 7720 --data /data --advertise <public-host>\`
+          - \`notin-relay_*.deb\` / \`notin-relay-*.rpm\`: installs and starts the \`notin-relay\` systemd service (UDP 7720, data in \`/var/lib/notin-relay\`).
+          - \`notin-relay-*-linux.tar.gz\`: standalone binary.
+          - Docker: \`docker run -p 7720:7720/udp -v relay:/data ghcr.io/sergioribera/notin-relay:${TAG#v} --port 7720 --data /data --advertise <public-host>\`
           EOF
           } > NOTES.md
           head -60 NOTES.md

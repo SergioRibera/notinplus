@@ -5,10 +5,10 @@
 use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     BarItem, Icon, IconButton, Popover, PopoverAlign, PopoverSide, Segmented, SelectionBar, Text,
     TextRole, Toast, Toasts, tokens, width_class,
 };
@@ -154,7 +154,7 @@ impl Tool {
 }
 
 fn anchor(e: &Event<PressEventData>) -> Area {
-    notein_ui_kit::press_anchor(e.data())
+    notin_ui_kit::press_anchor(e.data())
 }
 
 /// Live state the chrome reads, kept in step with the board by its
@@ -569,11 +569,11 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
         .into_iter()
         .map(|t| {
             let board = Arc::clone(board);
-            notein_ui_kit::ListRow::new(t.label())
+            notin_ui_kit::ListRow::new(t.label())
                 .icon(t.icon())
                 .selected(*state.tool.peek() == t)
                 .on_press(move |_| {
-                    notein_ui_kit::ModalController::get().close();
+                    notin_ui_kit::ModalController::get().close();
                     t.activate(&board);
                 })
                 .into_element()
@@ -581,20 +581,20 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
         .chain([
             {
                 let board = Arc::clone(board);
-                notein_ui_kit::ListRow::new(tr!("ink-redo"))
+                notin_ui_kit::ListRow::new(tr!("ink-redo"))
                     .icon(lucide::redo_2())
                     .enabled(*state.can_redo.peek())
                     .on_press(move |_| {
-                        notein_ui_kit::ModalController::get().close();
+                        notin_ui_kit::ModalController::get().close();
                         lock(&board).redo();
                     })
                     .into_element()
             },
             {
                 let board = Arc::clone(board);
-                notein_ui_kit::ListRow::new(tr!("ink-handwriting"))
+                notin_ui_kit::ListRow::new(tr!("ink-handwriting"))
                     .icon(lucide::signature())
-                    .trailing(notein_ui_kit::Trailing::Switch {
+                    .trailing(notin_ui_kit::Trailing::Switch {
                         on: *state.handwriting.peek(),
                         on_toggle: EventHandler::new(move |on| lock(&board).set_handwriting(on)),
                     })
@@ -602,7 +602,7 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
             },
             {
                 let board = Arc::clone(board);
-                notein_ui_kit::ListRow::new(tr!("ink-layers"))
+                notin_ui_kit::ListRow::new(tr!("ink-layers"))
                     .icon(lucide::layers())
                     .chevron()
                     .on_press(move |_| {
@@ -616,8 +616,8 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
             },
         ])
         .collect();
-    notein_ui_kit::Sheet::titled(tr!("ink-tools-title"))
-        .child(notein_ui_kit::Group::default().children(rows))
+    notin_ui_kit::Sheet::titled(tr!("ink-tools-title"))
+        .child(notin_ui_kit::Group::default().children(rows))
         .open();
 }
 
@@ -906,7 +906,7 @@ impl Component for ColorPopover {
             .map(|c| color(*c))
             .collect();
         rect().padding(12.0).child(
-            notein_ui_kit::ColorWheel::new()
+            notin_ui_kit::ColorWheel::new()
                 .swatches(swatches)
                 .allow_custom(true)
                 .initial(color(current))
@@ -976,14 +976,14 @@ impl Component for LassoBar {
         // the window, kept inside the pane.
         let (x0, y0, x1, y1) = self.bounds;
         let mask = self.mask;
-        let pane = try_consume_context::<notein_ui_kit::PaneArea>()
-            .map(notein_ui_kit::PaneArea::get)
+        let pane = try_consume_context::<notin_ui_kit::PaneArea>()
+            .map(notin_ui_kit::PaneArea::get)
             .unwrap_or_default();
         let selection = Area::new(
             (pane.min_x() + x0, pane.min_y() + y0 - 8.0).into(),
             (x1 - x0, y1 - y0 + 16.0).into(),
         );
-        let floating = notein_ui_kit::Floating::new(
+        let floating = notin_ui_kit::Floating::new(
             selection,
             rect()
                 .on_sized(move |e: Event<SizedEventData>| mask.publish(e.area))
@@ -1082,7 +1082,7 @@ impl Layers {
             Arc::clone(&self.board),
             Arc::clone(&self.board),
         );
-        notein_ui_kit::ListRow::new(layer.name.clone())
+        notin_ui_kit::ListRow::new(layer.name.clone())
             .subtitle(tr!("ink-layer-strokes", "count" => layer.stroke_count))
             .selected(active)
             .dense(true)
@@ -1090,7 +1090,7 @@ impl Layers {
                 lock(&pick).set_active_layer(id);
                 bump();
             })
-            .trailing(notein_ui_kit::Trailing::Element(
+            .trailing(notin_ui_kit::Trailing::Element(
                 rect()
                     .horizontal()
                     .spacing(2.0)
@@ -1136,7 +1136,7 @@ impl Layers {
             .horizontal()
             .spacing(8.0)
             .child(
-                notein_ui_kit::Button::new(tr!("ink-layer-new"))
+                notin_ui_kit::Button::new(tr!("ink-layer-new"))
                     .tonal()
                     .small()
                     .icon(freya::icons::lucide::plus())
@@ -1146,7 +1146,7 @@ impl Layers {
                     }),
             )
             .child(
-                notein_ui_kit::Button::new(tr!("ink-layer-delete"))
+                notin_ui_kit::Button::new(tr!("ink-layer-delete"))
                     .ghost()
                     .small()
                     .on_press(move |_| {
@@ -1182,7 +1182,7 @@ impl Component for Layers {
             .width(Size::fill())
             .padding(8.0)
             .spacing(8.0)
-            .child(notein_ui_kit::Group::default().children(rows))
+            .child(notin_ui_kit::Group::default().children(rows))
             .child(self.actions(bump))
             .child(
                 Text::new(tr!("ink-layer-hint"))
@@ -1235,7 +1235,7 @@ impl Component for PinNotes {
 
 impl PinNotes {
     fn open(&self, id: crate::ids::BookmarkId) {
-        use notein_plugin::services::{AnnotationOutcome, AnnotationRequest};
+        use notin_plugin::services::{AnnotationOutcome, AnnotationRequest};
         let guard = lock(&self.board);
         let Some(bookmark) = guard.doc().bookmark(id).cloned() else {
             return;
@@ -1244,7 +1244,7 @@ impl PinNotes {
         let (sx, sy) = guard.world_to_screen(world.x, world.y);
         drop(guard);
         let quote = bookmark.refs.iter().find_map(|r| match r {
-            notein_plugin::bookmark::SourceRef::Plugin { selection, .. } => selection.clone(),
+            notin_plugin::bookmark::SourceRef::Plugin { selection, .. } => selection.clone(),
             _ => None,
         });
         let (tx, rx) = flume::bounded::<AnnotationOutcome>(1);
@@ -1282,7 +1282,7 @@ impl PinNotes {
         crate::annotation::AnnotationPopover::open(
             AnnotationRequest {
                 doc: self.item.map_or(
-                    notein_plugin::doc::DocId([0; 16]),
+                    notin_plugin::doc::DocId([0; 16]),
                     crate::plugins::content::doc_id,
                 ),
                 kind: crate::plugins::builtin::canvas::KIND.to_owned(),

@@ -66,17 +66,17 @@ async-lock = "3"
 uuid = { version = "1", features = ["v4"] }
 tar = { version = "0.4", default-features = false }
 zstd = "0.13"
-notein-plugin = { version = "0.1.0-alpha.1", path = "crates/notein-plugin", features = ["sismo"] }
-notein-ui-kit = { path = "crates/notein-ui-kit", features = ["sismo"] }
-notein-sync = { path = "crates/notein-sync", features = ["sismo"] }
+notin-plugin = { version = "0.1.0-alpha.1", path = "crates/notin-plugin", features = ["sismo"] }
+notin-ui-kit = { path = "crates/notin-ui-kit", features = ["sismo"] }
+notin-sync = { path = "crates/notin-sync", features = ["sismo"] }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 freya-markdown-editor = { path = "crates/freya-markdown-editor", features = ["sismo"] }
 freya-markdown-math = { path = "crates/freya-markdown-math", optional = true, features = ["sismo"] }
 freya-markdown-diagrams = { path = "crates/freya-markdown-diagrams", optional = true, features = ["sismo"] }
-notein-bible = { path = "crates/notein-bible", features = ["ui", "importer", "sismo"] }
-notein-notes = { path = "crates/notein-notes", features = ["sismo"] }
-notein-handwriting = { path = "crates/notein-handwriting", features = ["sismo"] }
-notein-i18n = { path = "crates/notein-i18n" }
+notin-bible = { path = "crates/notin-bible", features = ["ui", "importer", "sismo"] }
+notin-notes = { path = "crates/notin-notes", features = ["sismo"] }
+notin-handwriting = { path = "crates/notin-handwriting", features = ["sismo"] }
+notin-i18n = { path = "crates/notin-i18n" }
 loro = "1.16.2"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
@@ -120,7 +120,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 
 [build-dependencies]
 istmo-build = "0.1.1-alpha.5"
-notein-i18n = { path = "crates/notein-i18n", features = ["build"] }
+notin-i18n = { path = "crates/notin-i18n", features = ["build"] }
 
 [patch.crates-io]
 # istmo.documents (open files from the system, single instance) and

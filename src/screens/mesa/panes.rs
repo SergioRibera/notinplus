@@ -4,9 +4,9 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{Button, EmptyState, tokens};
+use notin_i18n::tr;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{Button, EmptyState, tokens};
 
 use super::Ops;
 use super::header::{PaneHeader, TabDrag};
@@ -50,7 +50,7 @@ impl Component for Panes {
             can_close,
             next: None,
         };
-        if notein_ui_kit::width_class().is_compact()
+        if notin_ui_kit::width_class().is_compact()
             && let Some(pane) = focused.and_then(|f| leaves.iter().find(|p| p.id == f))
         {
             return Leaf {
@@ -198,7 +198,7 @@ impl Component for Split {
                     .center()
                     .a11y_role(AccessibilityRole::Splitter)
                     .on_pointer_enter(move |e: Event<PointerEventData>| {
-                        hovered.set(notein_ui_kit::is_mouse(&e));
+                        hovered.set(notin_ui_kit::is_mouse(&e));
                     })
                     .on_pointer_leave(move |_| hovered.set(false))
                     .on_pointer_down(move |e: Event<PointerEventData>| {

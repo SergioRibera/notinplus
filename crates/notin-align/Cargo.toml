@@ -1,0 +1,24 @@
+[package]
+name = "notin-align"
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.86"
+license = "MIT OR Apache-2.0"
+authors = ["Sergio Ribera <contact@sergioribera.rs>"]
+description = "Statistical word alignment between original-language verses (lemma ids) and a translation's tokens, for the Bible originals feature."
+repository = "https://github.com/SergioRibera/notinplus"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# Conflicts with rustc's `unreachable_pub`, which this crate keeps on.
+redundant_pub_crate = "allow"
+
+[dependencies]

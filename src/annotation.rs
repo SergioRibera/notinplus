@@ -11,13 +11,13 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::services::{
+use notin_i18n::tr;
+use notin_plugin::services::{
     AnnotationDone, AnnotationOutcome, AnnotationPreview, AnnotationRequest,
 };
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Button, ButtonVariant, ColorWheel, Icon, IconButton, ModalController, Popover, PopoverAlign,
     PopoverSide, Sheet, SheetFooter, SidePanel, Spacer, tokens, width_class,
 };
@@ -278,7 +278,7 @@ impl Component for AnnotationSidebar {
                     .child(
                         ScrollView::new()
                             .expanded()
-                            .child(notein_ui_kit::ScrollContent::new(
+                            .child(notin_ui_kit::ScrollContent::new(
                                 rect()
                                     .width(Size::fill())
                                     .padding((12.0, 12.0, 16.0, 16.0))

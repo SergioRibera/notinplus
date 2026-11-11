@@ -3,11 +3,11 @@
 use std::borrow::Cow;
 
 use freya::prelude::*;
-use notein_ui_kit::{
+use notin_ui_kit::{
     Button, Group, ListRow, Section, Sheet, Text, TextRole, Toast, Toasts, Trailing,
 };
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 /// Shown as is in every language.
 const APP_NAME: &str = "NotIn Plus";

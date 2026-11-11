@@ -19,11 +19,11 @@ use std::sync::{Arc, Mutex};
 
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::bookmark::SourceRef;
-use notein_plugin::services::Placement;
-use notein_ui_kit::theme::{Palette, palette};
-use notein_ui_kit::{Lazy, RefChip, tokens};
+use notin_i18n::tr;
+use notin_plugin::bookmark::SourceRef;
+use notin_plugin::services::Placement;
+use notin_ui_kit::theme::{Palette, palette};
+use notin_ui_kit::{Lazy, RefChip, tokens};
 
 use crate::deep_link;
 use crate::references::{self, Insert};
@@ -123,7 +123,7 @@ pub fn configure_with(editor: MarkdownEditor, sink: SnapshotSink) -> MarkdownEdi
     let editor = editor
         .theme(theme(&palette()))
         // Menus stay in what the system bars and the keyboard leave visible.
-        .popup_area(notein_ui_kit::safe_frame())
+        .popup_area(notin_ui_kit::safe_frame())
         .syntax_reveal(show_marks())
         // Long notes build their blocks as they scroll into view and drop
         // them again once they scroll away: every mounted text block
@@ -189,7 +189,7 @@ fn suggestion(found: references::Suggestion, sink: &SnapshotSink) -> Suggestion 
         } => {
             let (kind, doc, anchor) = (
                 plugin_id.clone(),
-                notein_plugin::DocId(*item),
+                notin_plugin::DocId(*item),
                 anchor.clone(),
             );
             SuggestionAction::Run(SuggestionRun::new(move |controller| {
@@ -237,7 +237,7 @@ fn quote_suggestion(found: references::Suggestion) -> Suggestion {
         } = &target
             && let Some(kind) = crate::plugins::kind(plugin_id)
         {
-            kind.cited(notein_plugin::DocId(*item), anchor);
+            kind.cited(notin_plugin::DocId(*item), anchor);
         }
         let markdown = if live {
             references::live_quote_markdown(&quote, &target)

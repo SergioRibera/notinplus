@@ -4,9 +4,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use notein_i18n::Lang;
-use notein_plugin::doc::{DocId, DocMeta};
-use notein_plugin::face::RawStore;
+use notin_i18n::Lang;
+use notin_plugin::doc::{DocId, DocMeta};
+use notin_plugin::face::RawStore;
 
 use crate::library::{Item, ItemId, bodies};
 

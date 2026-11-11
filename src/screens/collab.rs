@@ -7,14 +7,14 @@ mod session;
 mod sessions;
 
 use freya::prelude::*;
-use notein_sync::{DeviceId, Removal, Role, ShareMode};
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_sync::{DeviceId, Removal, Role, ShareMode};
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Button, ModalController, Notice, NoticeTone, ProgressBar, Sheet, SheetFooter, Text, TextRole,
     Toast, Toasts,
 };
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 pub use create::{ShareTarget, share};
 pub use session::{session, session_for};
@@ -36,7 +36,7 @@ pub fn initials(name: &str) -> String {
 /// A stable colour per device, for its avatar.
 #[must_use]
 pub fn person_color(device: DeviceId) -> Color {
-    let swatches = notein_ui_kit::theme::ACCENT_SWATCHES;
+    let swatches = notin_ui_kit::theme::ACCENT_SWATCHES;
     let hash = device.0.iter().fold(0usize, |h, b| {
         h.wrapping_mul(31).wrapping_add(usize::from(*b))
     });
@@ -115,9 +115,9 @@ pub fn invitation(link: String) {
                         .spacing(10.0)
                         .padding((8.0, 0.0))
                         .child(
-                            notein_ui_kit::Avatar::new(
+                            notin_ui_kit::Avatar::new(
                                 initials(&owner),
-                                notein_ui_kit::theme::ACCENT_SWATCHES[0],
+                                notin_ui_kit::theme::ACCENT_SWATCHES[0],
                             )
                             .size(56.0),
                         )
@@ -135,7 +135,7 @@ pub fn invitation(link: String) {
                                 .horizontal()
                                 .spacing(6.0)
                                 .child(
-                                    notein_ui_kit::Tag::new(match mode {
+                                    notin_ui_kit::Tag::new(match mode {
                                         ShareMode::Session => tr!("collab-mode-session"),
                                         ShareMode::Permanent => {
                                             tr!("collab-mode-permanent-copy")
@@ -143,7 +143,7 @@ pub fn invitation(link: String) {
                                     })
                                     .icon(freya::icons::lucide::users()),
                                 )
-                                .child(notein_ui_kit::Tag::new(
+                                .child(notin_ui_kit::Tag::new(
                                     tr!("collab-invite-as", "role" => role_label(role)),
                                 )),
                         ),
@@ -204,10 +204,10 @@ struct Joining;
 
 /// Why the join did not work, and Got it.
 #[sismo::function("collab::join_failed")]
-fn join_failed(failure: notein_sync::JoinFailure) -> Element {
+fn join_failed(failure: notin_sync::JoinFailure) -> Element {
     let why = match failure {
-        notein_sync::JoinFailure::Refused => tr!("collab-join-refused"),
-        notein_sync::JoinFailure::Unreachable => tr!("collab-join-unreachable"),
+        notin_sync::JoinFailure::Refused => tr!("collab-join-refused"),
+        notin_sync::JoinFailure::Unreachable => tr!("collab-join-unreachable"),
     };
     rect()
         .width(Size::fill())
@@ -274,7 +274,7 @@ fn join_progress(snapshot: &SyncSnapshot, joined: Option<&ShareView>) -> (String
             let done = view
                 .docs
                 .iter()
-                .filter(|d| snapshot.docs.get(d) == Some(&notein_sync::DocStatus::Synced))
+                .filter(|d| snapshot.docs.get(d) == Some(&notin_sync::DocStatus::Synced))
                 .count();
             (view.title.clone(), done, view.docs.len())
         },
@@ -331,7 +331,7 @@ impl Component for Joining {
                     .horizontal()
                     .cross_align(Alignment::Center)
                     .spacing(8.0)
-                    .child(notein_ui_kit::Spinner::default())
+                    .child(notin_ui_kit::Spinner::default())
                     .child(
                         Text::new(if title.is_empty() {
                             tr!("collab-joining")
@@ -533,7 +533,7 @@ fn show_notice(notice: ShareNotice) {
         ShareNotice::Refused { title, .. } => {
             toasts.show(
                 Toast::new(tr!("collab-toast-refused", "title" => title.as_str()))
-                    .tone(notein_ui_kit::ToastTone::Error),
+                    .tone(notin_ui_kit::ToastTone::Error),
             );
         }
         ShareNotice::AlreadyIn { share, title } => {

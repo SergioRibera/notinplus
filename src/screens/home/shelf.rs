@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 use freya::prelude::Bytes;
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use super::card::{DocCardData, FolderCardData, Thumb};
 use crate::library::{FolderId, Item, ItemId, LibraryData};

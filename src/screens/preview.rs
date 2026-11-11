@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use freya::prelude::*;
 use freya_testing::prelude::*;
-use notein_ui_kit::TapExt;
+use notin_ui_kit::TapExt;
 
 use crate::library::{
     DocKind, Folder, FolderId, Item, ItemId, LibraryData, LibraryIndex, Link, LinkId, LinkIndex,
@@ -86,11 +86,11 @@ pub(crate) fn demo() -> LibraryData {
     let clases = folder("Clases", [0x5F, 0xB3, 0x8A, 0xFF]);
     let romanos = item("Comentario de Romanos", pdf::KIND, ROOT_FOLDER, 0);
     let cuaderno = item("Cuaderno de Romanos", canvas::KIND, ROOT_FOLDER, 0);
-    let biblia = item("Biblia", notein_bible::kind::KIND, ROOT_FOLDER, 1);
-    let plan = item("Plan de lectura", notein_notes::kind::KIND, ROOT_FOLDER, 2);
+    let biblia = item("Biblia", notin_bible::kind::KIND, ROOT_FOLDER, 1);
+    let plan = item("Plan de lectura", notin_notes::kind::KIND, ROOT_FOLDER, 2);
     let sermon = item(
         "Sermón del domingo",
-        notein_notes::kind::KIND,
+        notin_notes::kind::KIND,
         ROOT_FOLDER,
         4,
     );
@@ -102,7 +102,7 @@ pub(crate) fn demo() -> LibraryData {
         30,
     );
     let inside = item("Efesios 6", canvas::KIND, estudio.id, 3);
-    let efesios = item("Notas de Efesios", notein_notes::kind::KIND, estudio.id, 5);
+    let efesios = item("Notas de Efesios", notin_notes::kind::KIND, estudio.id, 5);
     let griego = item("Léxico de Efesios", pdf::KIND, estudio.id, 6);
     let mut layout = PaneLayout::Split {
         orientation: SplitOrientation::Horizontal,
@@ -136,7 +136,7 @@ pub(crate) fn demo() -> LibraryData {
     clase.named = true;
     clase.pinned = true;
     // Made on the tablet.
-    clase.device = Some(notein_sync::DeviceId([9; 32]));
+    clase.device = Some(notin_sync::DeviceId([9; 32]));
     if let PaneLayout::Leaf(pane) = &mut clase.layout {
         pane.tabs = vec![tab(sermon.id), tab(plan.id)];
     }
@@ -183,7 +183,7 @@ fn out(name: &str) -> PathBuf {
 fn shell(
     body: fn() -> Element,
     size: (f32, f32),
-    gutters: notein_ui_kit::Gutters,
+    gutters: notin_ui_kit::Gutters,
 ) -> impl Fn() -> Element {
     shell_with(demo, body, size, gutters)
 }
@@ -193,23 +193,23 @@ fn shell_with(
     library: fn() -> LibraryData,
     body: fn() -> Element,
     size: (f32, f32),
-    gutters: notein_ui_kit::Gutters,
+    gutters: notin_ui_kit::Gutters,
 ) -> impl Fn() -> Element {
     move || {
         let area = use_state(move || Area::new((0.0, 0.0).into(), size.into()));
         let covered = use_memo(move || gutters);
-        use_provide_context(move || notein_ui_kit::ModalChrome {
+        use_provide_context(move || notin_ui_kit::ModalChrome {
             gutters: Some(covered),
             ..Default::default()
         });
         let _settings = crate::settings::use_settings_root();
         use_hook(|| {
-            if let Some(mut theme) = notein_ui_kit::theme::try_theme() {
+            if let Some(mut theme) = notin_ui_kit::theme::try_theme() {
                 theme.update(|a| a.reduce_motion = true);
             }
             // The fonts the app bundles at launch.
-            for face in notein_bible::fonts::FACES {
-                Platform::get().load_font(notein_bible::fonts::FAMILY, Bytes::from_static(face));
+            for face in notin_bible::fonts::FACES {
+                Platform::get().load_font(notin_bible::fonts::FAMILY, Bytes::from_static(face));
             }
         });
         crate::update::use_preview_updates(PREVIEW_RELEASE.with(|r| r.borrow().clone()));
@@ -217,7 +217,7 @@ fn shell_with(
         crate::screens::home::use_browse_root();
         rect()
             .expanded()
-            .background(notein_ui_kit::palette().bg)
+            .background(notin_ui_kit::palette().bg)
             .child(body())
             .child(crate::selection::StickySelection)
             .child(crate::components::ModalPortal::new(area))
@@ -248,7 +248,7 @@ fn sandbox() {
 }
 
 fn render(name: &str, size: (f32, f32), body: fn() -> Element) {
-    render_covered(name, size, notein_ui_kit::Gutters::default(), body);
+    render_covered(name, size, notin_ui_kit::Gutters::default(), body);
 }
 
 /// [`render`] with the window edges `gutters` covered, as by the system
@@ -256,7 +256,7 @@ fn render(name: &str, size: (f32, f32), body: fn() -> Element) {
 fn render_covered(
     name: &str,
     size: (f32, f32),
-    gutters: notein_ui_kit::Gutters,
+    gutters: notin_ui_kit::Gutters,
     body: fn() -> Element,
 ) {
     sandbox();
@@ -421,11 +421,11 @@ fn library_failed_phone() {
 
 fn long_sheet() -> Element {
     use_hook(|| {
-        notein_ui_kit::Sheet::titled("Muchas opciones")
+        notin_ui_kit::Sheet::titled("Muchas opciones")
             .children(
-                (0..30).map(|i| notein_ui_kit::ListRow::new(format!("Opción {i}")).into_element()),
+                (0..30).map(|i| notin_ui_kit::ListRow::new(format!("Opción {i}")).into_element()),
             )
-            .footer(notein_ui_kit::Button::new("Listo").primary())
+            .footer(notin_ui_kit::Button::new("Listo").primary())
             .open();
     });
     rect().into_element()
@@ -435,7 +435,7 @@ fn edge_popover() -> Element {
     use_hook(|| {
         let entries = (0..8)
             .map(|i| {
-                notein_ui_kit::ActionEntry::Item(notein_ui_kit::Action::new(
+                notin_ui_kit::ActionEntry::Item(notin_ui_kit::Action::new(
                     format!("Acción {i}"),
                     |()| {},
                 ))
@@ -446,7 +446,7 @@ fn edge_popover() -> Element {
     rect().into_element()
 }
 
-const KEYBOARD: notein_ui_kit::Gutters = notein_ui_kit::Gutters {
+const KEYBOARD: notin_ui_kit::Gutters = notin_ui_kit::Gutters {
     top: 24.0,
     right: 0.0,
     bottom: 380.0,
@@ -462,18 +462,18 @@ fn overlays_stay_in_the_visible_window() {
 
 fn selection_menu() -> Element {
     use_hook(|| {
-        crate::selection::show(notein_plugin::ui::SelectionMenu {
+        crate::selection::show(notin_plugin::ui::SelectionMenu {
             at: (420.0, 320.0),
             active: Some(1),
             on_color: std::rc::Rc::new(|_| {}),
             on_note: Some(std::rc::Rc::new(|| {})),
-            reference: Some(notein_plugin::bookmark::SourceRef::Plugin {
+            reference: Some(notin_plugin::bookmark::SourceRef::Plugin {
                 plugin_id: "bible".to_owned(),
                 item: [1; 16],
                 anchor: Vec::new(),
                 selection: None,
             }),
-            document: Some(notein_plugin::DocId([1; 16])),
+            document: Some(notin_plugin::DocId([1; 16])),
             extra: Vec::new(),
             caption: None,
             sticky: false,
@@ -485,18 +485,18 @@ fn selection_menu() -> Element {
 
 fn sticky_selection_menu() -> Element {
     use_hook(|| {
-        crate::selection::show(notein_plugin::ui::SelectionMenu {
+        crate::selection::show(notin_plugin::ui::SelectionMenu {
             at: (420.0, 320.0),
             active: None,
             on_color: std::rc::Rc::new(|_| {}),
             on_note: Some(std::rc::Rc::new(|| {})),
-            reference: Some(notein_plugin::bookmark::SourceRef::Plugin {
+            reference: Some(notin_plugin::bookmark::SourceRef::Plugin {
                 plugin_id: "bible".to_owned(),
                 item: [1; 16],
                 anchor: Vec::new(),
                 selection: None,
             }),
-            document: Some(notein_plugin::DocId([1; 16])),
+            document: Some(notin_plugin::DocId([1; 16])),
             extra: vec![(
                 "Compartir".into(),
                 freya::icons::lucide::share_2(),
@@ -529,8 +529,8 @@ fn selection_menu_hugs_its_actions() {
 fn annotation_popover() -> Element {
     use_hook(|| {
         crate::annotation::AnnotationPopover::open(
-            notein_plugin::services::AnnotationRequest {
-                doc: notein_plugin::DocId::default(),
+            notin_plugin::services::AnnotationRequest {
+                doc: notin_plugin::DocId::default(),
                 kind: "bible".to_owned(),
                 title: "Verso 16".to_owned(),
                 quote: Some(
@@ -606,9 +606,9 @@ fn bible_john_3() -> Element {
         // The catalog opens the database first; a second connection made
         // while it still creates the tables finds it locked.
         drop(crate::plugins::catalog());
-        let db = &notein_bible::Db::open_default().expect("open bible db");
+        let db = &notin_bible::Db::open_default().expect("open bible db");
         if db.list_bibles().unwrap_or_default().is_empty() {
-            notein_bible::import::osis::import_osis_xml(db, "spa_rv1960", JOHN_3.as_bytes())
+            notin_bible::import::osis::import_osis_xml(db, "spa_rv1960", JOHN_3.as_bytes())
                 .expect("seed John 3");
             let books = db.list_books("spa_rv1960").expect("books");
             let id = |osis: &str| {
@@ -617,7 +617,7 @@ fn bible_john_3() -> Element {
                     .find(|b| b.book_id.eq_ignore_ascii_case(osis) || b.name == osis)
                     .map_or_else(|| osis.to_owned(), |b| b.book_id.clone())
             };
-            let conn = rusqlite::Connection::open(notein_bible::db::Db::default_path())
+            let conn = rusqlite::Connection::open(notin_bible::db::Db::default_path())
                 .expect("open bible db");
             for (book, chapter, verse) in [("Rom", 5, 8), ("1John", 4, 9), ("John", 3, 14)] {
                 conn.execute(
@@ -629,14 +629,14 @@ fn bible_john_3() -> Element {
                 .expect("seed cross-reference");
             }
         }
-        let state = notein_bible::state::BibleViewerState::new("spa_rv1960", "John", 3);
-        let bytes = notein_bible::state::BibleSnapshot::from_state(&state).encode();
-        crate::library::bodies::write_plugin_snapshot(BIBLE_ITEM, notein_bible::kind::KIND, &bytes)
+        let state = notin_bible::state::BibleViewerState::new("spa_rv1960", "John", 3);
+        let bytes = notin_bible::state::BibleSnapshot::from_state(&state).encode();
+        crate::library::bodies::write_plugin_snapshot(BIBLE_ITEM, notin_bible::kind::KIND, &bytes)
             .expect("snapshot");
     });
     crate::plugins::faces::render(
         BIBLE_ITEM,
-        &crate::library::DocKind::plugin(notein_bible::kind::KIND),
+        &crate::library::DocKind::plugin(notin_bible::kind::KIND),
         None,
     )
 }
@@ -646,7 +646,7 @@ const BIBLE_ITEM: crate::library::ItemId = crate::library::ItemId([7; 16]);
 /// [`render`] after pressing `at`, once the screen settled.
 fn render_after_press(name: &str, size: (f32, f32), at: (f64, f64), body: fn() -> Element) {
     sandbox();
-    let app = shell(body, size, notein_ui_kit::Gutters::default());
+    let app = shell(body, size, notin_ui_kit::Gutters::default());
     let (mut runner, ()) = TestingRunner::new(app, size.into(), |_| (), 1.0);
     runner.poll_n(Duration::from_millis(40), 12);
     runner.sync_and_update();
@@ -691,12 +691,12 @@ fn book_grid_sheet() -> Element {
                     .width(Size::px(72.0))
                     .height(Size::px(72.0))
                     .center()
-                    .background(notein_ui_kit::palette().s3)
+                    .background(notin_ui_kit::palette().s3)
                     .on_tap(|_| SHEET_PRESSES.set(SHEET_PRESSES.get() + 1))
                     .child(label().text(i.to_string()))
                     .into_element()
             }));
-        notein_ui_kit::Sheet::titled("Libros").child(grid).open();
+        notin_ui_kit::Sheet::titled("Libros").child(grid).open();
     });
     rect().into_element()
 }
@@ -705,7 +705,7 @@ fn book_grid_sheet() -> Element {
 fn sheet_scrolls_by_touch_without_pressing() {
     sandbox();
     let size = (390.0, 844.0);
-    let app = shell(book_grid_sheet, size, notein_ui_kit::Gutters::default());
+    let app = shell(book_grid_sheet, size, notin_ui_kit::Gutters::default());
     let (mut runner, ()) = TestingRunner::new(app, size.into(), |_| (), 1.0);
     runner.poll_n(Duration::from_millis(40), 12);
     runner.sync_and_update();
@@ -738,7 +738,7 @@ fn sheet_scrolls_by_touch_without_pressing() {
 fn phone_sheet() -> TestingRunner {
     sandbox();
     let size = (390.0, 844.0);
-    let app = shell(book_grid_sheet, size, notein_ui_kit::Gutters::default());
+    let app = shell(book_grid_sheet, size, notin_ui_kit::Gutters::default());
     let (mut runner, ()) = TestingRunner::new(app, size.into(), |_| (), 1.0);
     runner.poll_n(Duration::from_millis(40), 12);
     runner.sync_and_update();
@@ -763,7 +763,7 @@ fn finger_drag(runner: &mut TestingRunner, from: (f64, f64), by: f64, steps: u32
 }
 
 fn open_modals(runner: &TestingRunner) -> usize {
-    runner.run_in(|| notein_ui_kit::ModalController::get().depth())
+    runner.run_in(|| notin_ui_kit::ModalController::get().depth())
 }
 
 #[test]
@@ -817,7 +817,7 @@ fn sheet_follows_a_finger_on_its_content_only_from_the_top() {
 fn tall_home() -> TestingRunner {
     sandbox();
     let size = (390.0, 1700.0);
-    let app = shell(home, size, notein_ui_kit::Gutters::default());
+    let app = shell(home, size, notin_ui_kit::Gutters::default());
     let (mut runner, ()) = TestingRunner::new(app, size.into(), |_| (), 1.0);
     runner.poll_n(Duration::from_millis(40), 12);
     runner.sync_and_update();

@@ -5,11 +5,11 @@ use std::sync::{PoisonError, RwLock, RwLockReadGuard};
 
 use bincode::{Decode, Encode};
 use freya::icons::lucide;
-use notein_i18n::tr;
-use notein_plugin::config::{ConfigEnumOption, ConfigField, ConfigValue};
-use notein_plugin::create::{Created, CreationEntry, CreationError, CreationFlow, CreationRequest};
-use notein_plugin::doc::{DocId, DocMeta};
-use notein_plugin::kind::{
+use notin_i18n::tr;
+use notin_plugin::config::{ConfigEnumOption, ConfigField, ConfigValue};
+use notin_plugin::create::{Created, CreationEntry, CreationError, CreationFlow, CreationRequest};
+use notin_plugin::doc::{DocId, DocMeta};
+use notin_plugin::kind::{
     ChipView, DocumentKind, ExportError, ExportFile, ExportValues, Hit, IndexReport, KindColor,
     KindInfo, Mark, OutlineIcon, OutlineNode, SearchQuery, SelectionSupport,
 };
@@ -103,7 +103,7 @@ impl Iterator for MarkHits<'_> {
         while let Some((doc, name, marks)) = self.index.docs.get(self.doc) {
             while let Some(mark) = marks.get(self.mark) {
                 self.mark += 1;
-                if notein_plugin::fold(&mark.body).contains(&self.needle) {
+                if notin_plugin::fold(&mark.body).contains(&self.needle) {
                     return Some(Hit {
                         doc: Some(*doc),
                         anchor: CanvasAnchor {
@@ -509,7 +509,7 @@ pub fn after_save(item: crate::library::ItemId, content: &CanvasContent, snapsho
     crate::plugins::content::write(
         item,
         KIND,
-        &notein_plugin::payload::Payload::to_bytes(content),
+        &notin_plugin::payload::Payload::to_bytes(content),
     );
     crate::plugins::content::index_blocking(item);
     if !due {
@@ -559,7 +559,7 @@ mod tests {
             name: "Mapa",
             updated_at: 0,
             tint: None,
-            paper: notein_plugin::create::Paper::default(),
+            paper: notin_plugin::create::Paper::default(),
         };
         kind.index(meta, &content, None);
         let query = SearchQuery::new("ADOP", 10);

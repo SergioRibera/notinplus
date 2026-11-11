@@ -14,9 +14,9 @@ let
   # last, in the package derivation itself.
   groups = [
     [
-      "notein-i18n"
-      "notein-align"
-      "notein-handwriting"
+      "notin-i18n"
+      "notin-align"
+      "notin-handwriting"
       "istmo-installer"
       "freya-canvas-bg"
       "freya-pdf"
@@ -25,14 +25,14 @@ let
       "freya-markdown-editor"
       "freya-markdown-math"
       "freya-markdown-diagrams"
-      "notein-sync"
-      "notein-ui-kit"
+      "notin-sync"
+      "notin-ui-kit"
     ]
     [
-      "notein-plugin"
-      "notein-sdk"
-      "notein-notes"
-      "notein-bible"
+      "notin-plugin"
+      "notin-sdk"
+      "notin-notes"
+      "notin-bible"
     ]
   ];
 

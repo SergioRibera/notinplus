@@ -3,10 +3,10 @@
 
 use std::path::{Path, PathBuf};
 
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_plugin::catalog::{Failed, Origin, PluginCatalog};
-use notein_plugin::loader::{self, Loaded, LoaderError};
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_plugin::catalog::{Failed, Origin, PluginCatalog};
+use notin_plugin::loader::{self, Loaded, LoaderError};
 
 /// Overrides the plugin folder (development).
 pub const PLUGIN_DIR_ENV: &str = "NOTINPLUS_PLUGIN_DIR";
@@ -83,7 +83,7 @@ pub fn inspect(folder: &Path) -> Result<Loaded, LoaderError> {
 pub enum InstallError {
     Load(LoaderError),
     Copy(std::io::Error),
-    Catalog(notein_plugin::catalog::CatalogError),
+    Catalog(notin_plugin::catalog::CatalogError),
     Package(zip::result::ZipError),
     NoManifest,
 }

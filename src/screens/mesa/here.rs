@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
-use notein_plugin::{Peer, Presence};
-use notein_sync::DeviceId;
-use notein_ui_kit::Avatar;
-use notein_ui_kit::theme::palette;
+use notin_plugin::{Peer, Presence};
+use notin_sync::DeviceId;
+use notin_ui_kit::Avatar;
+use notin_ui_kit::theme::palette;
 
 use crate::library::ItemId;
 use crate::sync::presence::{self, DocPresence};

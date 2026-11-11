@@ -5,9 +5,9 @@ use std::rc::Rc;
 
 use freya::icons::lucide;
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_ui_kit::theme::{Palette, palette};
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_ui_kit::theme::{Palette, palette};
+use notin_ui_kit::{
     Action, ActionEntry, ActionList, Button, IconButton, Notice, NoticeTone, Segmented, Tag, Text,
     TextRole, Toast, ToastHost, ToastTone, Toasts, tokens, width_class,
 };
@@ -62,12 +62,12 @@ impl Component for WindowRoot {
         crate::state::use_library_root();
         crate::screens::home::use_browse_root();
         let lang = use_memo(move || settings.read().appearance.interface_lang());
-        let gutters = use_memo(notein_ui_kit::Gutters::default);
-        use_provide_context(move || notein_ui_kit::ModalChrome {
+        let gutters = use_memo(notin_ui_kit::Gutters::default);
+        use_provide_context(move || notin_ui_kit::ModalChrome {
             gutters: Some(gutters),
             ..Default::default()
         });
-        provide_context(notein_ui_kit::ViewportArea(area));
+        provide_context(notin_ui_kit::ViewportArea(area));
         rect()
             .expanded()
             .background(palette().bg)
@@ -379,7 +379,7 @@ impl ExternalView {
             .child(
                 IconButton::new(lucide::ellipsis(), tr!("external-files-more")).on_press(
                     move |e: Event<PressEventData>| {
-                        menu(&menu_session, notein_ui_kit::press_anchor(e.data()));
+                        menu(&menu_session, notin_ui_kit::press_anchor(e.data()));
                     },
                 ),
             )

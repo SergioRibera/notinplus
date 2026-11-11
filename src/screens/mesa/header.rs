@@ -4,11 +4,11 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::services::HeaderPress;
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{Icon, IconButton, Text, TextRole, tokens};
+use notin_i18n::tr;
+use notin_plugin::services::HeaderPress;
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{Icon, IconButton, Text, TextRole, tokens};
 
 use super::Ops;
 use crate::components::drag_drop::{DragZone, DropZone};
@@ -81,7 +81,7 @@ fn menu_for(tab: &PaneTab, data: &Arc<LibraryData>, at: CursorPoint) {
 }
 
 fn anchor(e: &Event<PressEventData>) -> CursorPoint {
-    notein_ui_kit::press_point(e.data())
+    notin_ui_kit::press_point(e.data())
 }
 
 /// The header of pane `pane`.
@@ -286,7 +286,7 @@ impl PaneHeader {
             .height(Size::px(tokens::size::TAB_BAR))
             .show_scrollbar(false)
             .child(
-                notein_ui_kit::ScrollContent::new(
+                notin_ui_kit::ScrollContent::new(
                     rect()
                         .height(Size::fill())
                         .horizontal()

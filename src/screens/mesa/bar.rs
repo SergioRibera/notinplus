@@ -4,10 +4,10 @@
 use std::sync::Arc;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{Avatar, Button, IconButton, Kbd, Text, TextRole, tokens, width_class};
+use notin_i18n::tr;
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{Avatar, Button, IconButton, Kbd, Text, TextRole, tokens, width_class};
 
 use super::{Focus, MesaUi};
 use crate::library::{ItemId, LibraryData, PaneTab, WorkspaceId};
@@ -16,7 +16,7 @@ use crate::library::{ItemId, LibraryData, PaneTab, WorkspaceId};
 const AVATARS: usize = 3;
 
 fn anchor(e: &Event<PressEventData>) -> CursorPoint {
-    notein_ui_kit::press_point(e.data())
+    notin_ui_kit::press_point(e.data())
 }
 
 /// People sharing any document of the mesa, online first.
@@ -99,7 +99,7 @@ impl MesaBar {
                     ),
             )
             .child(
-                notein_ui_kit::Icon::new(freya::icons::lucide::chevron_down())
+                notin_ui_kit::Icon::new(freya::icons::lucide::chevron_down())
                     .size(14.0)
                     .color(p.t3),
             )
@@ -123,7 +123,7 @@ impl MesaBar {
             .a11y_focusable(true)
             .on_tap(self.open_palette())
             .child(
-                notein_ui_kit::Icon::new(freya::icons::lucide::search())
+                notin_ui_kit::Icon::new(freya::icons::lucide::search())
                     .size(14.0)
                     .color(p.t3),
             )
@@ -180,7 +180,7 @@ impl MesaBar {
                                 .child(
                                     Avatar::new(
                                         initials,
-                                        notein_ui_kit::theme::ACCENT_SWATCHES[(i + 1) % 8],
+                                        notin_ui_kit::theme::ACCENT_SWATCHES[(i + 1) % 8],
                                     )
                                     .size(28.0)
                                     .presence(*online),

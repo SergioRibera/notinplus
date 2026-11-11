@@ -1,11 +1,11 @@
 //! Opening references: chips, search results, outline rows and marks
 //! all end here.
 
-use notein_i18n::tr;
-use notein_plugin::bookmark::SourceRef;
-use notein_plugin::payload::Payload;
-use notein_plugin::services::Placement;
-use notein_ui_kit::{Toast, ToastTone, Toasts};
+use notin_i18n::tr;
+use notin_plugin::bookmark::SourceRef;
+use notin_plugin::payload::Payload;
+use notin_plugin::services::Placement;
+use notin_ui_kit::{Toast, ToastTone, Toasts};
 
 use super::builtin::canvas::{self, CanvasAnchor};
 use super::content::doc_id;

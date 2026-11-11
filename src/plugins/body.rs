@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use notein_plugin::services::TextBody;
+use notin_plugin::services::TextBody;
 
 use crate::doc::{BodyView, Doc};
 use crate::library::{ItemId, bodies};
@@ -155,7 +155,7 @@ impl TextBody for SharedBody {
     }
 }
 
-impl notein_plugin::services::Records for SharedBody {
+impl notin_plugin::services::Records for SharedBody {
     #[sismo::function("body::records")]
     fn entries(&self) -> Vec<(String, Vec<u8>)> {
         open_docs::lock(&self.doc).records()

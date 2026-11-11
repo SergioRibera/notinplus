@@ -2,8 +2,8 @@
 //! on them in place of the + button.
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_ui_kit::{BarItem, SelectionBar};
+use notin_i18n::tr;
+use notin_ui_kit::{BarItem, SelectionBar};
 
 use super::card::Selecting;
 use crate::flows;

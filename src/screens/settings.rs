@@ -13,12 +13,12 @@ pub(crate) mod schema;
 mod sessions;
 
 use freya::prelude::*;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     IconButton, ListRow, Modal, ModalController, SearchField, Text, TextRole, tokens, width_class,
 };
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 pub use devices::{open_link_sheet, open_pairing};
 
@@ -187,7 +187,7 @@ fn section_list(
         .width(Size::fill())
         .spacing(10.0)
         .child(SearchField::new(query, tr!("settings-search-placeholder")).height(38.0))
-        .child(notein_ui_kit::Group::default().children(nav))
+        .child(notin_ui_kit::Group::default().children(nav))
         .maybe_child(none.then(|| {
             Text::new(tr!("settings-search-empty", "query" => text.trim())).role(TextRole::Hint)
         }))
@@ -265,7 +265,7 @@ fn phone_layout(
             ScrollView::new()
                 .width(Size::fill())
                 .height(Size::flex(1.0))
-                .child(notein_ui_kit::ScrollContent::new(
+                .child(notin_ui_kit::ScrollContent::new(
                     rect()
                         .width(Size::fill())
                         .padding((8.0, 0.0, 32.0, 0.0))
@@ -284,7 +284,7 @@ fn wide_layout(section: Section, mut sub: State<Option<Subpage>>, list: Rect) ->
         .as_ref()
         .map_or_else(|| section.label(), |p| p.title.clone());
     // Tall enough to browse, never past the system bars or the keyboard.
-    let window = notein_ui_kit::safe_frame().height();
+    let window = notin_ui_kit::safe_frame().height();
     let height = (window * 0.82).clamp(420.0, 760.0).min(window - 32.0);
     // The panes sit 1px inside the frame so neither covers its border.
     let inner = tokens::radius::XL - 1.0;
@@ -345,7 +345,7 @@ fn wide_layout(section: Section, mut sub: State<Option<Subpage>>, list: Rect) ->
                     ScrollView::new()
                         .width(Size::fill())
                         .height(Size::flex(1.0))
-                        .child(notein_ui_kit::ScrollContent::new(
+                        .child(notin_ui_kit::ScrollContent::new(
                             rect()
                                 .width(Size::fill())
                                 .padding((4.0, 24.0, 32.0, 24.0))

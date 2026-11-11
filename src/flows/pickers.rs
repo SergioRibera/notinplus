@@ -5,10 +5,10 @@
 use std::rc::Rc;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Button, EmptyState, Group, ListRow, ModalController, SearchField, Section, Sheet, SheetFooter,
     Tag, Toast, Toasts, Trailing,
 };
@@ -97,7 +97,7 @@ fn link(from: ItemId, to: ItemId, kind: LinkKind) {
                 log::error!("link: {err}");
                 Toasts::get().show(
                     Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-pickers-link-failed"), "detail" => err.user_message()))
-                        .tone(notein_ui_kit::ToastTone::Error),
+                        .tone(notin_ui_kit::ToastTone::Error),
                 );
             }
         }
@@ -244,16 +244,16 @@ fn create_named(name: &str, purpose: Purpose) -> Element {
 }
 
 #[sismo::function("flows::create_quick")]
-pub fn create_quick(entry: notein_plugin::catalog::CatalogEntry, name: String, purpose: Purpose) {
+pub fn create_quick(entry: notin_plugin::catalog::CatalogEntry, name: String, purpose: Purpose) {
     spawn_in_window(traced!("task::flows::create_quick", async move {
         let Some(kind) = crate::plugins::kind(&entry.kind) else {
             return;
         };
         let Ok(created) = kind.create(
             &entry.entry.id,
-            notein_plugin::create::CreationRequest {
+            notin_plugin::create::CreationRequest {
                 name: &name,
-                ..notein_plugin::create::CreationRequest::default()
+                ..notin_plugin::create::CreationRequest::default()
             },
         ) else {
             return;
@@ -476,7 +476,7 @@ pub fn folder_picker(items: Vec<ItemId>, folders: Vec<FolderId>) {
 /// The create entries a name is enough for, in the catalog's order.
 #[must_use]
 #[sismo::function("flows::named_entries")]
-pub fn named_entries() -> Vec<notein_plugin::catalog::CatalogEntry> {
+pub fn named_entries() -> Vec<notin_plugin::catalog::CatalogEntry> {
     crate::plugins::catalog()
         .entries()
         .into_iter()

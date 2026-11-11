@@ -3,10 +3,10 @@
 //! place inside a document (see `Presence::followed`).
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_sync::DeviceId;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::tokens;
+use notin_i18n::tr;
+use notin_sync::DeviceId;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::tokens;
 
 use crate::library::ItemId;
 use crate::sync::presence;

@@ -40,7 +40,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use istmo::Runtime;
 use istmo_data_store::{DataStoreClient, DataStoreConfig};
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 /// How long a deletion marker is kept: ninety days, longer than any
 /// device is expected to stay away.
@@ -1910,7 +1910,7 @@ impl LibraryData {
 mod tests {
     use super::*;
     use graveyard::Graveyard;
-    use notein_sync::{BlobKey, BlobKind};
+    use notin_sync::{BlobKey, BlobKind};
 
     // Direct index tests — sidesteps the DataStoreClient dep so the
     // core invariants can be exercised without a live runtime.
@@ -2044,7 +2044,7 @@ mod tests {
             focused_pane: Some(right),
             created_at: 10,
             updated_at: 20,
-            device: Some(notein_sync::DeviceId([7; 32])),
+            device: Some(notin_sync::DeviceId([7; 32])),
         });
         idx.active = Some(a);
         let bytes = bincode::encode_to_vec(&idx, config::standard()).unwrap();

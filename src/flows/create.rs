@@ -4,13 +4,13 @@
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_plugin::catalog::CatalogEntry;
-use notein_plugin::create::{CreationFlow, CreationRequest, ImportedFile};
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_plugin::catalog::CatalogEntry;
+use notin_plugin::create::{CreationFlow, CreationRequest, ImportedFile};
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Action, ActionEntry, ActionList, Button, Group, Icon, ListRow, ModalController, Popover,
     PopoverAlign, PopoverSide, ProgressBar, Sheet, SheetFooter, Text, TextRole, Toast, ToastTone,
     Toasts, tokens, width_class,
@@ -361,7 +361,7 @@ impl Component for Tile {
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt(info.label.to_string())
             .on_pointer_enter(move |e: Event<PointerEventData>| {
-                hover.set(notein_ui_kit::is_mouse(&e));
+                hover.set(notin_ui_kit::is_mouse(&e));
             })
             .on_pointer_leave(move |_| hover.set(false))
             .on_tap(move |_| {
@@ -583,8 +583,8 @@ fn choose(
     entry: &CatalogEntry,
     context: &Context,
     title: String,
-    options: Vec<notein_plugin::create::CreationChoice>,
-    more: Option<notein_plugin::create::CreationChoice>,
+    options: Vec<notin_plugin::create::CreationChoice>,
+    more: Option<notin_plugin::create::CreationChoice>,
     named: bool,
 ) {
     let mut sheet = Sheet::titled(title).kind(
@@ -656,7 +656,7 @@ fn import_sheet(
     let Some(kind) = crate::plugins::kind(&entry.kind) else {
         return;
     };
-    let file = notein_plugin::create::ImportedFile {
+    let file = notin_plugin::create::ImportedFile {
         name: &picked.name,
         bytes: &picked.bytes,
     };
@@ -707,8 +707,8 @@ fn import_error(entry: &CatalogEntry, context: Context, file: &str, why: &str) {
     let entry = entry.clone();
     Sheet::titled(tr!("flows-create-import-kind", "kind" => entry.entry.label.to_string()))
         .child(
-            notein_ui_kit::Notice::new(
-                notein_ui_kit::NoticeTone::Danger,
+            notin_ui_kit::Notice::new(
+                notin_ui_kit::NoticeTone::Danger,
                 tr!("flows-create-read-failed", "file" => file.to_owned()),
             )
             .detail(why.to_owned()),
@@ -958,7 +958,7 @@ pub fn replace_attachment(item: ItemId, kind_id: String) {
             }
         };
         let old = content::read(item, &kind_id).unwrap_or_else(|| kind.empty_content());
-        let file = notein_plugin::create::ImportedFile {
+        let file = notin_plugin::create::ImportedFile {
             name: &picked.name,
             bytes: &picked.bytes,
         };
@@ -997,8 +997,8 @@ fn replace_failed(item: ItemId, kind_id: String, file: &str, why: &str) {
     );
     Sheet::titled(title)
         .child(
-            notein_ui_kit::Notice::new(
-                notein_ui_kit::NoticeTone::Danger,
+            notin_ui_kit::Notice::new(
+                notin_ui_kit::NoticeTone::Danger,
                 tr!("flows-create-read-failed", "file" => file.to_owned()),
             )
             .detail(why.to_owned()),
@@ -1110,14 +1110,14 @@ impl Component for MesaForm {
             .width(Size::fill())
             .spacing(16.0)
             .child(
-                notein_ui_kit::TextField::new(self.name)
+                notin_ui_kit::TextField::new(self.name)
                     .label(tr!("common-name"))
                     .placeholder(tr!("flows-create-desk-name-hint"))
                     .auto_focus(true),
             )
             .child(
-                notein_ui_kit::Section::new(tr!("flows-create-desk-start")).child(
-                    notein_ui_kit::Segmented::new(
+                notin_ui_kit::Section::new(tr!("flows-create-desk-start")).child(
+                    notin_ui_kit::Segmented::new(
                         [
                             tr!("flows-create-desk-start-empty"),
                             tr!("flows-create-desk-start-open"),
@@ -1140,7 +1140,7 @@ impl Component for MesaForm {
                 ),
             )
             .maybe_child((current == StartWith::Pick && recent.is_empty()).then(|| {
-                notein_ui_kit::EmptyState::new(
+                notin_ui_kit::EmptyState::new(
                     freya::icons::lucide::files(),
                     tr!("flows-create-desk-empty"),
                 )
@@ -1151,7 +1151,7 @@ impl Component for MesaForm {
                 Group::default().children(recent.into_iter().map(|(id, name)| {
                     let on = chosen.contains(&id);
                     ListRow::new(name)
-                        .leading(notein_ui_kit::Leading::Check(on))
+                        .leading(notin_ui_kit::Leading::Check(on))
                         .on_press(move |_| {
                             let mut list = picked.write();
                             if let Some(at) = list.iter().position(|x| *x == id) {

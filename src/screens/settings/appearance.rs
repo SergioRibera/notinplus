@@ -1,14 +1,14 @@
 //! Ajustes › Apariencia: theme, accent, text size and motion.
 
 use freya::prelude::*;
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::{ACCENT_SWATCHES, Palette, ThemeKind, palette, try_theme};
-use notein_ui_kit::{
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::{ACCENT_SWATCHES, Palette, ThemeKind, palette, try_theme};
+use notin_ui_kit::{
     Button, ColorWheel, Group, Icon, ListRow, ModalController, Notice, NoticeTone, Popover,
     PopoverAlign, Section, Segmented, Text, TextRole, Trailing, tokens,
 };
 
-use notein_i18n::{Lang, tr};
+use notin_i18n::{Lang, tr};
 
 use crate::settings::{SettingsStore, TextSizePref, ThemePref};
 
@@ -181,7 +181,7 @@ fn accent_swatch(
         .maybe_child(chosen.then(|| {
             Icon::new(freya::icons::lucide::check())
                 .size(16.0)
-                .color(notein_ui_kit::theme::on_color(fill))
+                .color(notin_ui_kit::theme::on_color(fill))
         }))
         .into_element()
 }

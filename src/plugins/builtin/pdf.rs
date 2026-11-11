@@ -6,18 +6,18 @@ use std::sync::{PoisonError, RwLock, RwLockReadGuard};
 use bincode::{Decode, Encode};
 use freya::icons::lucide;
 use freya_pdf::{PdfDocument, TocEntry};
-use notein_i18n::tr;
-use notein_plugin::config::{ConfigEnumOption, ConfigField, ConfigValue};
-use notein_plugin::create::{
+use notin_i18n::tr;
+use notin_plugin::config::{ConfigEnumOption, ConfigField, ConfigValue};
+use notin_plugin::create::{
     Created, CreationEntry, CreationError, CreationRequest, ImportPreview, ImportedFile,
 };
-use notein_plugin::doc::{DocId, DocMeta};
-use notein_plugin::kind::{
+use notin_plugin::doc::{DocId, DocMeta};
+use notin_plugin::kind::{
     Attachment, ChipView, DocumentKind, ExportError, ExportFile, ExportValues, Hit, IndexReport,
     KindColor, KindInfo, Mark, OutlineIcon, OutlineNode, Quote, SearchQuery, SelectionSupport,
     Snapshot,
 };
-use notein_plugin::text::Folded;
+use notin_plugin::text::Folded;
 
 /// Kind id stored with every PDF.
 pub const KIND: &str = "io.notein.pdf";
@@ -426,7 +426,7 @@ impl PdfKind {
             }
             for section in sections(&doc.contents, count) {
                 let title = section.section.as_deref().unwrap_or_default();
-                if notein_plugin::fold(title).contains(&needle) {
+                if notin_plugin::fold(title).contains(&needle) {
                     out.push(Hit {
                         doc: Some(doc.id),
                         title: title.to_owned(),
@@ -970,8 +970,8 @@ impl DocumentKind for PdfKind {
 
 /// Option keys and values of the export sheet, and the page picker.
 mod export {
-    use notein_i18n::tr;
-    use notein_plugin::kind::ExportError;
+    use notin_i18n::tr;
+    use notin_plugin::kind::ExportError;
 
     pub(super) const FORMAT: &str = "format";
     pub(super) const PDF: &str = "pdf";
@@ -1045,7 +1045,7 @@ mod tests {
 
     #[test]
     fn names_drop_the_extension() {
-        notein_i18n::Lang::Es.make_current();
+        notin_i18n::Lang::Es.make_current();
         assert_eq!(
             name_from_file("Comentario_Romanos.pdf"),
             "Comentario_Romanos"
@@ -1058,7 +1058,7 @@ mod tests {
     #[test]
     fn snippets_keep_context_around_the_match() {
         let text = "La adopción no es una metáfora legal fría sino un acto de amor.";
-        let s = snippet(text, &notein_plugin::fold("metáfora")).expect("found");
+        let s = snippet(text, &notin_plugin::fold("metáfora")).expect("found");
         assert!(s.contains("metáfora"));
         assert!(snippet(text, "tribunal").is_none());
     }
@@ -1078,7 +1078,7 @@ mod tests {
     }
 
     fn indexed() -> PdfKind {
-        notein_i18n::Lang::Es.make_current();
+        notin_i18n::Lang::Es.make_current();
         let kind = PdfKind::default();
         kind.store_text(
             DocId([3; 16]),
@@ -1167,7 +1167,7 @@ mod tests {
             name,
             updated_at: 0,
             tint: None,
-            paper: notein_plugin::create::Paper::default(),
+            paper: notin_plugin::create::Paper::default(),
         };
         let quote = kind.quote(meta, &PdfAnchor::pages(0, 1)).expect("indexed");
         assert_eq!(quote.body, "Prólogo\nuno\n\nel tribunal cierra");

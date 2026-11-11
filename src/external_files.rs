@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use freya::prelude::*;
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 pub use recents::{Recent, reopen, use_recents};
 pub use view::ExternalView;
@@ -289,7 +289,7 @@ fn launch_window(session: Session) {
     let mut window = WindowConfig::new_app(view::ExternalWindow { session })
         .with_size(960.0, 760.0)
         .with_min_size(360.0, 420.0)
-        .with_background(notein_ui_kit::palette().bg)
+        .with_background(notin_ui_kit::palette().bg)
         .with_app_id(env!("ISTMO_APP_BUNDLE_ID"))
         .with_on_close(move |_, _| {
             closing.flush();
@@ -334,7 +334,7 @@ impl Component for ExternalOverlay {
             .width(Size::fill())
             .height(Size::fill())
             .layer(Layer::Overlay)
-            .background(notein_ui_kit::palette().bg)
+            .background(notin_ui_kit::palette().bg)
             .child(rect().expanded().key(key).child(ExternalView { session }))
             .into_element()
     }

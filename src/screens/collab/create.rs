@@ -2,15 +2,15 @@
 //! Opening it on something already shared goes to that session instead.
 
 use freya::prelude::*;
-use notein_sync::{Role, ShareMode};
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_sync::{Role, ShareMode};
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Button, Group, Icon, ListRow, ModalController, Notice, NoticeTone, Section, Segmented, Sheet,
     SheetFooter, Text, TextRole, Trailing, tokens,
 };
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use crate::library::{FolderId, ItemId, LibraryData, WorkspaceId};
 use crate::settings::{EntryRolePref, SettingsStore};

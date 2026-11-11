@@ -7,10 +7,10 @@
 use std::rc::Rc;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::ui::SelectionMenu;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{BarItem, Modal, ModalController, SelectionBar, width_class};
+use notin_i18n::tr;
+use notin_plugin::ui::SelectionMenu;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{BarItem, Modal, ModalController, SelectionBar, width_class};
 
 use crate::library::ItemId;
 
@@ -195,7 +195,7 @@ impl Component for Bar {
         // or under it when the top of the window is too close.
         let (x, y) = self.menu.at;
         let line = Area::new((x, y - 8.0).into(), (1.0, 28.0).into());
-        notein_ui_kit::Floating::new(line, bar)
+        notin_ui_kit::Floating::new(line, bar)
             .above()
             .centered()
             .into_element()

@@ -18,8 +18,8 @@ use freya::icons::lucide::{check, external_link, grip, image_plus, rotate_cw, tr
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
 use istmo::plugins::EdgeInsets;
-use notein_i18n::tr;
-use notein_ui_kit::TapExt;
+use notin_i18n::tr;
+use notin_ui_kit::TapExt;
 
 use crate::canvas::{
     Board, InkCache, PaintPass, SceneText, SurfaceBounds, TextLayerView, TextScene, lock,
@@ -102,7 +102,7 @@ impl TextEditorSlot {
 /// Theme for a box whose body colour is `color` (RGBA) at viewport `scale`.
 #[sismo::function("canvas_text::theme")]
 fn canvas_theme(color: [u8; 4], scale: f32) -> EditorTheme {
-    let base = crate::editor::theme(&notein_ui_kit::palette());
+    let base = crate::editor::theme(&notin_ui_kit::palette());
     let mut theme = base.clone().zoomed(TEXT_BASE_SIZE / base.body_size * scale);
     let [r, g, b, a] = color;
     let text = Color::from_argb(a, r, g, b);
@@ -163,7 +163,7 @@ impl Component for CanvasLayers {
     #[sismo::function("canvas_text::layers_render")]
     fn render(&self) -> impl IntoElement {
         let board = Arc::clone(&self.board);
-        let accent = notein_ui_kit::palette().accent;
+        let accent = notin_ui_kit::palette().accent;
         lock(&board).set_lasso_accent([accent.r(), accent.g(), accent.b()]);
         let scene = use_state({
             let board = Arc::clone(&board);
@@ -493,9 +493,9 @@ impl Component for CanvasTextBox {
 /// text mode is on, none otherwise.
 fn outline(editing: bool, outlined: bool) -> Option<(f32, Color)> {
     if editing {
-        Some((2.0, notein_ui_kit::palette().accent))
+        Some((2.0, notin_ui_kit::palette().accent))
     } else if outlined {
-        Some((1.0, notein_ui_kit::palette().accent.with_a(90)))
+        Some((1.0, notin_ui_kit::palette().accent.with_a(90)))
     } else {
         None
     }
@@ -899,12 +899,12 @@ fn handle_dot(
         })
         .center()
         .corner_radius(HANDLE * 0.5)
-        .background(notein_ui_kit::palette().s2)
+        .background(notin_ui_kit::palette().s2)
         .border(
             Border::new()
                 .width(1.5)
                 .alignment(BorderAlignment::Inner)
-                .fill(notein_ui_kit::palette().accent),
+                .fill(notin_ui_kit::palette().accent),
         )
         .cursor(match handle {
             Handle::Move => CursorIcon::Move,
@@ -925,7 +925,7 @@ fn handle_dot(
         })
         .maybe_child(icon.map(|icon| {
             SvgViewer::new(icon)
-                .color(notein_ui_kit::palette().accent)
+                .color(notin_ui_kit::palette().accent)
                 .width(Size::px(HANDLE * 0.55))
                 .height(Size::px(HANDLE * 0.55))
         }))
@@ -951,12 +951,12 @@ pub fn text_toolbar(
         editor.toolbar_mask.clear();
         return rect().into_element();
     }
-    let mut theme = crate::editor::theme(&notein_ui_kit::palette());
+    let mut theme = crate::editor::theme(&notin_ui_kit::palette());
     theme.fonts.insert(0, FONT_FAMILY.into());
     // Menus must stay above the bar: below it there is only the soft
     // keyboard. Around it, what the system bars leave of the window.
     let bar = *area.read();
-    let frame = notein_ui_kit::safe_frame();
+    let frame = notin_ui_kit::safe_frame();
     let popup_area = Area::new(
         frame.origin,
         (frame.width(), (bar.max_y() - frame.min_y()).max(0.)).into(),
@@ -978,7 +978,7 @@ pub fn text_toolbar(
                 .width(Size::px(1.))
                 .height(Size::px(18.))
                 .margin((0., 4.))
-                .background(notein_ui_kit::palette().line),
+                .background(notin_ui_kit::palette().line),
         )
         .child(
             MarkdownToolbar::new(controller)
@@ -998,7 +998,7 @@ pub fn text_toolbar(
         .width(Size::fill())
         .layer(Layer::Overlay)
         .padding((6., 8.))
-        .background(notein_ui_kit::palette().s2)
+        .background(notin_ui_kit::palette().s2)
         .border(
             Border::new()
                 .width(BorderWidth {
@@ -1008,7 +1008,7 @@ pub fn text_toolbar(
                     left: 0.,
                 })
                 .alignment(BorderAlignment::Inner)
-                .fill(notein_ui_kit::palette().line),
+                .fill(notin_ui_kit::palette().line),
         )
         .on_sized(move |event: Event<SizedEventData>| {
             editor.toolbar_mask.publish(event.area);
@@ -1075,7 +1075,7 @@ impl Component for ImageBar {
         let selection = selected.read().clone();
         let has_selection = selection.is_some();
         let source = selection.and_then(|(_, source)| source);
-        let p = notein_ui_kit::palette();
+        let p = notin_ui_kit::palette();
         let add_board = Arc::clone(&board);
         let done_board = Arc::clone(&board);
         let delete_board = Arc::clone(&board);
@@ -1111,7 +1111,7 @@ impl Component for ImageBar {
             .cross_align(Alignment::center())
             .spacing(6.)
             .maybe_child(item.map(|item| {
-                notein_ui_kit::Button::new(tr!("canvas-image-add"))
+                notin_ui_kit::Button::new(tr!("canvas-image-add"))
                     .icon(image_plus())
                     .on_press(move |_| ItemImages::new(item).add_to_canvas(Arc::clone(&add_board)))
             }))
@@ -1124,13 +1124,13 @@ impl Component for ImageBar {
                 }))
             })
             .maybe_child(source.map(|url| {
-                notein_ui_kit::Button::new(tr!("canvas-image-source"))
+                notin_ui_kit::Button::new(tr!("canvas-image-source"))
                     .icon(external_link())
                     .on_press(move |_| {
                         sismo::scope!("canvas_text::open_image_source");
                         crate::plugins::navigate::open(
-                            &notein_plugin::bookmark::SourceRef::from_link(&url),
-                            notein_plugin::services::Placement::Preferred,
+                            &notin_plugin::bookmark::SourceRef::from_link(&url),
+                            notin_plugin::services::Placement::Preferred,
                         );
                     })
             }))
@@ -1194,7 +1194,7 @@ impl Component for SideScroll {
                 .height(Size::px(3.))
                 .margin((0., 0., 0., current / max * (track - width)))
                 .corner_radius(2.)
-                .background(notein_ui_kit::palette().t2)
+                .background(notin_ui_kit::palette().t2)
         });
         rect()
             .width(Size::fill())
@@ -1256,7 +1256,7 @@ fn toolbar_action(icon: Bytes, on_press: impl Fn() + 'static) -> Element {
         .on_tap(move |_| on_press())
         .child(
             SvgViewer::new(icon)
-                .color(notein_ui_kit::palette().t1)
+                .color(notin_ui_kit::palette().t1)
                 .width(Size::px(16.))
                 .height(Size::px(16.)),
         )

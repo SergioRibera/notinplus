@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_ui_kit::{Toast, ToastTone, Toasts};
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_ui_kit::{Toast, ToastTone, Toasts};
 
 use super::{ExternalFile, FileKind};
 use crate::persist::Persisted;

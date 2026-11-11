@@ -170,7 +170,7 @@ fn load_pdf_background(
 /// navigation can resolve back to this bundle + page.
 fn pdf_anchor_source(item: ItemId) -> AnchorSourceRef {
     Arc::new(move |att| {
-        use notein_plugin::payload::Payload;
+        use notin_plugin::payload::Payload;
         sismo::scope!("pdf_face::anchor_source");
         let anchor = crate::plugins::builtin::pdf::PdfAnchor::page(
             u32::try_from(att.page.0).unwrap_or(u32::MAX),
@@ -196,7 +196,7 @@ struct PageTarget {
 impl crate::plugins::faces::Apply for PageTarget {
     #[sismo::function("pdf_face::jump")]
     fn apply(&self, anchor: &[u8]) -> bool {
-        use notein_plugin::payload::Payload;
+        use notin_plugin::payload::Payload;
         let Ok(anchor) = crate::plugins::builtin::pdf::PdfAnchor::from_bytes(anchor) else {
             return true;
         };

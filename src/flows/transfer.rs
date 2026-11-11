@@ -6,11 +6,11 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Button, Group, ListRow, ModalController, Notice, NoticeTone, ProgressBar, Section, Segmented,
     Sheet, SheetFooter, Tag, Text, TextRole, Toast, ToastTone, Toasts, Trailing, tokens,
 };
@@ -152,7 +152,7 @@ fn purpose_card(
                 .horizontal()
                 .cross_align(Alignment::Center)
                 .spacing(8.0)
-                .child(notein_ui_kit::Icon::new(icon).size(16.0).color(if on {
+                .child(notin_ui_kit::Icon::new(icon).size(16.0).color(if on {
                     p.accent_text
                 } else {
                     p.t1
@@ -672,7 +672,7 @@ pub async fn review_bundle(picked: crate::files::Picked) {
     {
         let reading = Sheet::default().without_close().child(
             ListRow::new(tr!("flows-transfer-reviewing", "name" => picked.name.clone())).leading(
-                notein_ui_kit::Leading::Element(notein_ui_kit::Spinner::default().into_element()),
+                notin_ui_kit::Leading::Element(notin_ui_kit::Spinner::default().into_element()),
             ),
         );
         // Over whatever asked for it (Settings stays underneath).

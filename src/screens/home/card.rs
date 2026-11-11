@@ -6,10 +6,10 @@ use std::collections::HashSet;
 use std::sync::atomic::AtomicU64;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::face::CoverRequest;
-use notein_ui_kit::theme::{Palette, palette};
-use notein_ui_kit::{Icon, tokens, use_press_gesture};
+use notin_i18n::tr;
+use notin_plugin::face::CoverRequest;
+use notin_ui_kit::theme::{Palette, palette};
+use notin_ui_kit::{Icon, tokens, use_press_gesture};
 
 use crate::library::{BackgroundStyle, Rgba};
 use crate::references::kind_color;
@@ -413,7 +413,7 @@ impl Component for DocCard {
             .a11y_role(AccessibilityRole::Button)
             .a11y_alt(self.data.name.clone())
             .on_pointer_enter(move |e: Event<PointerEventData>| {
-                hovering.set(notein_ui_kit::is_mouse(&e));
+                hovering.set(notin_ui_kit::is_mouse(&e));
             })
             .on_pointer_leave(move |_| hovering.set(false))
             .child(self.cover(hovering()))

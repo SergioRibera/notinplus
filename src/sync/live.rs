@@ -6,7 +6,7 @@
 
 use std::sync::Mutex;
 
-use notein_sync::DeviceId;
+use notin_sync::DeviceId;
 
 use crate::brush::{BrushPreset, InkPoint};
 use crate::ids::StrokeId;

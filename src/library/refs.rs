@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use bincode::config::{self, Configuration};
-use notein_plugin::SourceRef;
+use notin_plugin::SourceRef;
 
 use super::bodies;
 use super::model::ItemId;
@@ -330,7 +330,7 @@ pub fn rebuild<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use notein_plugin::BookmarkId;
+    use notin_plugin::BookmarkId;
 
     fn item(seed: u8) -> ItemId {
         ItemId([seed; 16])
@@ -338,7 +338,7 @@ mod tests {
 
     fn plugin_ref(to: ItemId) -> SourceRef {
         SourceRef::Plugin {
-            plugin_id: notein_notes::kind::KIND.into(),
+            plugin_id: notin_notes::kind::KIND.into(),
             item: to.0,
             anchor: Vec::new(),
             selection: None,

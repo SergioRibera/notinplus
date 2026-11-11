@@ -349,7 +349,7 @@ fn spawn_policy_worker(id: ItemId, board: Weak<Mutex<Board>>) {
 }
 
 fn spawn_view_worker(key: prefs::ViewKey, board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
-    use notein_plugin::Presence as _;
+    use notin_plugin::Presence as _;
     spawn(traced!("task::route::view_worker", async move {
         let presence = crate::sync::presence::open(key.item);
         // Say where this board looks right away, not only once it moves,
@@ -469,7 +469,7 @@ fn decode_view(bytes: &[u8]) -> Option<(f32, f32, f32)> {
 /// While this device follows someone looking at `item`, show what they
 /// see. Ends with the board.
 fn spawn_follow_worker(item: ItemId, board: std::sync::Weak<Mutex<Board>>) {
-    use notein_plugin::Presence as _;
+    use notin_plugin::Presence as _;
     spawn(traced!("task::route::follow_worker", async move {
         let presence = crate::sync::presence::open(item);
         let changes = presence.changes();

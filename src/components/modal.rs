@@ -1,4 +1,4 @@
-//! Shim — `Modal` + friends moved to `notein-ui-kit`.
+//! Shim — `Modal` + friends moved to `notin-ui-kit`.
 //!
 //! The host adds a thin wrapper installing the shell's safe-area insets and
 //! pen-mask sink into `ModalChrome` context so modals inside the main app
@@ -7,8 +7,8 @@
 
 use freya::prelude::*;
 
-use notein_ui_kit::Gutters;
-pub use notein_ui_kit::{Modal, ModalChrome, ModalController, ModalPlacement, ModalPortal};
+use notin_ui_kit::Gutters;
+pub use notin_ui_kit::{Modal, ModalChrome, ModalController, ModalPlacement, ModalPortal};
 
 use crate::hooks::use_safe_area_insets;
 use crate::ui_mask::{UiRegion, publish_mask, set as set_mask};

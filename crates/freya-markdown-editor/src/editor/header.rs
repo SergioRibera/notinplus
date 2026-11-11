@@ -10,7 +10,7 @@ use std::time::Duration;
 use freya::clipboard::Clipboard;
 use freya::icons::lucide;
 use freya::prelude::*;
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use crate::controller::EditorController;
 use crate::document::{BlockId, CalloutKind};

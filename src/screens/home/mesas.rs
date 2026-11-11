@@ -2,9 +2,9 @@
 //! arrangement of open documents.
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_ui_kit::theme::{Palette, palette};
-use notein_ui_kit::{Button, Icon, IconButton, TapExt, Text, TextRole, tokens, use_press_gesture};
+use notin_i18n::tr;
+use notin_ui_kit::theme::{Palette, palette};
+use notin_ui_kit::{Button, Icon, IconButton, TapExt, Text, TextRole, tokens, use_press_gesture};
 
 use crate::library::{LibraryData, PaneLayout, SplitOrientation, Workspace, WorkspaceId};
 use crate::references::kind_color;
@@ -261,7 +261,7 @@ impl Component for MesaCard {
             .a11y_alt(self.data.workspace_title(id))
             .a11y_focusable(true)
             .on_pointer_enter(move |e: Event<PointerEventData>| {
-                hovering.set(notein_ui_kit::is_mouse(&e));
+                hovering.set(notin_ui_kit::is_mouse(&e));
             })
             .on_pointer_leave(move |_| hovering.set(false))
             .child(
@@ -365,7 +365,7 @@ impl Component for MesaRow {
             .a11y_alt(title.clone())
             .a11y_focusable(true)
             .on_pointer_enter(move |e: Event<PointerEventData>| {
-                hovering.set(notein_ui_kit::is_mouse(&e));
+                hovering.set(notin_ui_kit::is_mouse(&e));
             })
             .on_pointer_leave(move |_| hovering.set(false))
             .child(
@@ -431,7 +431,7 @@ impl Component for ExternalRow {
             .a11y_alt(self.recent.name.clone())
             .a11y_focusable(true)
             .on_pointer_enter(move |e: Event<PointerEventData>| {
-                hovering.set(notein_ui_kit::is_mouse(&e));
+                hovering.set(notin_ui_kit::is_mouse(&e));
             })
             .on_pointer_leave(move |_| hovering.set(false))
             .on_tap(move |_| crate::external_files::reopen(&recent))
@@ -456,7 +456,7 @@ impl Component for ExternalRow {
                     .lines(1)
                     .fill(),
             )
-            .child(notein_ui_kit::Tag::new(tr!("external-files-pill")))
+            .child(notin_ui_kit::Tag::new(tr!("external-files-pill")))
             .child(
                 Text::new(crate::format::ago(
                     self.recent.opened_at,

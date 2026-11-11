@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::services::Placement;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_plugin::services::Placement;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Kbd, ListRow, Modal, ModalController, Notice, NoticeTone, ProgressBar, SearchField, Section,
     Text, TextRole, tokens, width_class,
 };
@@ -46,7 +46,7 @@ enum Line {
     Place(PlaceMatch),
     Recent(String),
     /// Make a document of this entry, named after what was typed.
-    Create(Box<notein_plugin::catalog::CatalogEntry>, String),
+    Create(Box<notin_plugin::catalog::CatalogEntry>, String),
 }
 
 impl Line {
@@ -199,7 +199,7 @@ impl Component for SearchPanel {
                 ScrollView::new()
                     .width(Size::fill())
                     .height(Size::flex(1.0))
-                    .child(notein_ui_kit::ScrollContent::new(
+                    .child(notin_ui_kit::ScrollContent::new(
                         rect().width(Size::fill()).spacing(14.0).children(sections),
                     )),
             )
@@ -261,7 +261,7 @@ fn field_row(query: State<String>, compact: bool) -> Rect {
             ),
         )
         .maybe_child(compact.then(|| {
-            notein_ui_kit::Button::new(tr!("common-cancel"))
+            notin_ui_kit::Button::new(tr!("common-cancel"))
                 .ghost()
                 .on_press(|_| ModalController::get().close())
         }))
@@ -336,8 +336,8 @@ impl Rows<'_> {
             .into_element()
     }
 
-    fn rows<'l>(&mut self, lines: impl Iterator<Item = &'l Line>) -> notein_ui_kit::Group {
-        notein_ui_kit::Group::default().children(lines.map(|l| self.row(l)).collect::<Vec<_>>())
+    fn rows<'l>(&mut self, lines: impl Iterator<Item = &'l Line>) -> notin_ui_kit::Group {
+        notin_ui_kit::Group::default().children(lines.map(|l| self.row(l)).collect::<Vec<_>>())
     }
 
     /// Recent searches and documents, for the empty field.
@@ -447,7 +447,7 @@ pub(crate) fn overlay_frame(top: f32) -> Rect {
     let compact = width_class().is_compact();
     let size = *Platform::get().current_window().root_size.read();
     // What the system bars and the keyboard leave of the window.
-    let frame = notein_ui_kit::safe_frame();
+    let frame = notin_ui_kit::safe_frame();
     let pad = tokens::space::MD;
     let panel = if compact {
         // The whole screen, its content kept off the bars and the keyboard.

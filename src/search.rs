@@ -1,9 +1,9 @@
 //! Unified search: documents by name and tag, and places inside them
 //! from every kind's own search.
 
-use notein_i18n::tr;
-use notein_plugin::bookmark::SourceRef;
-use notein_plugin::kind::{KindColor, SearchQuery};
+use notin_i18n::tr;
+use notin_plugin::bookmark::SourceRef;
+use notin_plugin::kind::{KindColor, SearchQuery};
 
 use crate::library::{ItemId, LibraryData, ROOT_FOLDER};
 use crate::persist::Persisted;

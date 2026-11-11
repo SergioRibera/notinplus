@@ -2,13 +2,13 @@
 //! sheet reached from Home, Settings and the mesa bar.
 
 use freya::prelude::*;
-use notein_sync::ShareMode;
-use notein_ui_kit::{
+use notin_sync::ShareMode;
+use notin_ui_kit::{
     Avatar, Button, EmptyState, Group, Leading, ListRow, ModalController, Section, Sheet,
     SheetFooter, Tag, Trailing,
 };
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use crate::sync::{PendingJoinView, RecentShare, ShareView, SyncSnapshot};
 
@@ -39,7 +39,7 @@ struct Sessions;
 /// The state tag of a share, in words and a colour.
 #[sismo::function("collab::state_tag")]
 pub(super) fn state_tag(view: &ShareView, snapshot: &SyncSnapshot) -> Tag {
-    let p = notein_ui_kit::theme::palette();
+    let p = notin_ui_kit::theme::palette();
     let (text, dot) = state_of(view, snapshot);
     Tag::new(text).dot(dot.unwrap_or(p.t3))
 }
@@ -48,8 +48,8 @@ pub(super) fn state_tag(view: &ShareView, snapshot: &SyncSnapshot) -> Tag {
 /// out of reach.
 #[sismo::function("collab::state_of")]
 pub(super) fn state_of(view: &ShareView, snapshot: &SyncSnapshot) -> (String, Option<Color>) {
-    use notein_sync::Path;
-    let p = notein_ui_kit::theme::palette();
+    use notin_sync::Path;
+    let p = notin_ui_kit::theme::palette();
     if view.paused() {
         return (
             tr!("collab-state-paused", "owner" => view.owner.name.as_str()),
@@ -132,7 +132,7 @@ fn pending_row(join: &PendingJoinView) -> ListRow {
         .leading(Leading::Element(
             Avatar::new(
                 super::initials(&join.owner),
-                notein_ui_kit::theme::ACCENT_SWATCHES[2],
+                notin_ui_kit::theme::ACCENT_SWATCHES[2],
             )
             .into_element(),
         ))
@@ -175,7 +175,7 @@ fn recent_row(recent: &RecentShare, now: u64) -> ListRow {
         .leading(Leading::Element(
             Avatar::new(
                 super::initials(&recent.owner),
-                notein_ui_kit::theme::ACCENT_SWATCHES[4],
+                notin_ui_kit::theme::ACCENT_SWATCHES[4],
             )
             .into_element(),
         ))
@@ -186,7 +186,7 @@ fn recent_row(recent: &RecentShare, now: u64) -> ListRow {
                 .spacing(4.0)
                 .child(action)
                 .child(
-                    notein_ui_kit::IconButton::new(lucide::x(), tr!("common-remove"))
+                    notin_ui_kit::IconButton::new(lucide::x(), tr!("common-remove"))
                         .on_press(move |_| crate::sync::forget_recent(id)),
                 )
                 .into_element(),

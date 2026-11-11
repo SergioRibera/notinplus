@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use freya_engine::prelude::{Path, PathBuilder};
-use notein_handwriting::{FontInk, PathCmd};
+use notin_handwriting::{FontInk, PathCmd};
 
 /// Globally unique glyph identifier.
 #[istmo::message]
@@ -188,7 +188,7 @@ impl InkGlyph {
     #[sismo::function("ink_glyph::path")]
     pub fn path(&self) -> Option<Path> {
         let ink = self.font.ink()?.glyph(self.glyph)?;
-        let world = |point: notein_handwriting::Point| (point.x + self.x, point.y + self.y);
+        let world = |point: notin_handwriting::Point| (point.x + self.x, point.y + self.y);
         let mut builder = PathBuilder::new();
         for cmd in ink.commands(self.scale) {
             match cmd {

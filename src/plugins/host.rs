@@ -9,15 +9,15 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::bookmark::SourceRef;
-use notein_plugin::doc::DocId;
-use notein_plugin::face::RawStore;
-use notein_plugin::services::{
+use notin_i18n::tr;
+use notin_plugin::bookmark::SourceRef;
+use notin_plugin::doc::DocId;
+use notin_plugin::face::RawStore;
+use notin_plugin::services::{
     AnnotationDone, AnnotationPreview, AnnotationRequest, HeaderPress, HistoryRequest, Host,
     HostServices, HostToast, Jump, Placement, Progress, Share, TextBody, ToastTone as HostTone,
 };
-use notein_ui_kit::{Toast, ToastId, ToastTone, Toasts};
+use notin_ui_kit::{Toast, ToastId, ToastTone, Toasts};
 
 /// Something the UI thread must do for a plugin.
 enum HostEvent {
@@ -239,7 +239,7 @@ impl HostServices for ShellHost {
         super::body::SharedBody::open(crate::library::ItemId(doc.0))
     }
 
-    fn records(&self, doc: DocId) -> Arc<dyn notein_plugin::Records> {
+    fn records(&self, doc: DocId) -> Arc<dyn notin_plugin::Records> {
         super::body::SharedBody::open(crate::library::ItemId(doc.0))
     }
 
@@ -251,7 +251,7 @@ impl HostServices for ShellHost {
     }
 
     #[sismo::function("plugins::host_presence")]
-    fn presence(&self, doc: DocId) -> Arc<dyn notein_plugin::Presence> {
+    fn presence(&self, doc: DocId) -> Arc<dyn notin_plugin::Presence> {
         crate::sync::presence::open(crate::library::ItemId(doc.0))
     }
 }

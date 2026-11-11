@@ -5,15 +5,15 @@
 use std::time::Instant;
 
 use freya::prelude::*;
-use notein_sync::{DeviceId, Member, Role, ShareId, ShareMode};
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_sync::{DeviceId, Member, Role, ShareId, ShareMode};
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Action, ActionEntry, ActionList, Avatar, Button, ButtonVariant, Group, Icon, Leading, ListRow,
     ModalController, Notice, NoticeTone, SearchField, Section, Segmented, Sheet, SheetFooter, Tag,
     Text, TextField, TextRole, Trailing, tokens,
 };
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use crate::library::ItemId;
 use crate::session_end::SessionEnd;
@@ -72,17 +72,17 @@ impl std::fmt::Debug for SessionSheet {
 }
 
 /// Reach a member: on the same network, through the server, or not.
-fn path_label(path: Option<notein_sync::Path>) -> Option<String> {
+fn path_label(path: Option<notin_sync::Path>) -> Option<String> {
     match path {
-        Some(notein_sync::Path::Direct) => Some(tr!("collab-path-lan")),
-        Some(notein_sync::Path::Relay) => Some(tr!("collab-path-relay")),
+        Some(notin_sync::Path::Direct) => Some(tr!("collab-path-lan")),
+        Some(notin_sync::Path::Relay) => Some(tr!("collab-path-relay")),
         None => None,
     }
 }
 
 /// What a person row says under the name.
 #[sismo::function("collab::person_status")]
-fn person_status(role: Role, online: bool, path: Option<notein_sync::Path>, me: bool) -> String {
+fn person_status(role: Role, online: bool, path: Option<notin_sync::Path>, me: bool) -> String {
     let mut parts = vec![super::role_label(role)];
     if !me {
         match (online, path_label(path)) {
@@ -187,7 +187,7 @@ impl SessionSheet {
                     .fill(),
             )
             .maybe_child(view.can_rename.then(|| {
-                notein_ui_kit::IconButton::new(lucide::pencil_line(), tr!("common-rename"))
+                notin_ui_kit::IconButton::new(lucide::pencil_line(), tr!("common-rename"))
                     .on_press(move |_| {
                         let mut draft = draft;
                         draft.set(title.clone());
@@ -195,7 +195,7 @@ impl SessionSheet {
                     })
             }))
             .child(
-                notein_ui_kit::IconButton::new(lucide::x(), tr!("common-close"))
+                notin_ui_kit::IconButton::new(lucide::x(), tr!("common-close"))
                     .on_press(|_| ModalController::get().close()),
             )
             .maybe(false, |r| r.background(p.bg))
@@ -594,7 +594,7 @@ impl Component for SessionFooter {
             let end = SessionEnd {
                 title: view.title,
                 docs: view.docs,
-                reason: notein_sync::Removal::Left,
+                reason: notin_sync::Removal::Left,
             };
             buttons.push(
                 Button::new(tr!("collab-ended-save-copy"))
@@ -626,8 +626,8 @@ fn end_button(id: ShareId, mode: ShareMode, mut confirming: State<Option<Instant
             .on_press(move |_| {
                 crate::sync::end_share(id);
                 ModalController::get().close();
-                notein_ui_kit::Toasts::get()
-                    .show(notein_ui_kit::Toast::new(tr!("collab-session-ended-toast")));
+                notin_ui_kit::Toasts::get()
+                    .show(notin_ui_kit::Toast::new(tr!("collab-session-ended-toast")));
             })
             .into_element();
     }
@@ -648,7 +648,7 @@ fn end_button(id: ShareId, mode: ShareMode, mut confirming: State<Option<Instant
         }
         crate::sync::end_share(id);
         ModalController::get().close();
-        notein_ui_kit::Toasts::get().show(notein_ui_kit::Toast::new(tr!("collab-unshared-toast")));
+        notin_ui_kit::Toasts::get().show(notin_ui_kit::Toast::new(tr!("collab-unshared-toast")));
     })
     .into_element()
 }
@@ -669,7 +669,7 @@ fn leave_button(view: &ShareView, mut confirming: State<Option<Instant>>) -> Ele
     let end = SessionEnd {
         title: view.title.clone(),
         docs: view.docs.clone(),
-        reason: notein_sync::Removal::Left,
+        reason: notin_sync::Removal::Left,
     };
     let mode = view.mode;
     Button::new(label)

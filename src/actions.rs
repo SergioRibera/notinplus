@@ -3,9 +3,9 @@
 //! it was asked from.
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{Action, ActionEntry, ActionList, ModalController};
+use notin_i18n::tr;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{Action, ActionEntry, ActionList, ModalController};
 
 use crate::flows;
 use crate::library::{FolderId, ItemId, LibraryData, WorkspaceId};

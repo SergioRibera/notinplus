@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use notein_handwriting::{Label, Template, Trace};
+use notin_handwriting::{Label, Template, Trace};
 
 use crate::uji::Sample;
 

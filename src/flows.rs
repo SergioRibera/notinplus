@@ -11,13 +11,13 @@ pub mod transfer;
 pub use export_as::export_as;
 
 use freya::prelude::*;
-use notein_plugin::UserMessage;
-use notein_plugin::kind::ActionEffect;
-use notein_ui_kit::{
+use notin_plugin::UserMessage;
+use notin_plugin::kind::ActionEffect;
+use notin_ui_kit::{
     Button, ButtonVariant, ListRow, ModalController, Sheet, SheetFooter, Toast, ToastTone, Toasts,
 };
 
-use notein_i18n::tr;
+use notin_i18n::tr;
 
 use crate::library::{FolderId, ItemId, NotebookFate, TabTarget, WorkspaceId};
 use crate::plugins::content;
@@ -210,7 +210,7 @@ pub fn run_kind_action(item: ItemId, action: &str) {
 /// Hand a file to the system share sheet.
 #[sismo::function("flows::share_file")]
 pub fn share_file(name: String, mime: String, bytes: Vec<u8>) {
-    share(notein_plugin::Share::File {
+    share(notin_plugin::Share::File {
         subject: name.clone(),
         name,
         mime,
@@ -220,16 +220,16 @@ pub fn share_file(name: String, mime: String, bytes: Vec<u8>) {
 
 /// Hand `what` to the system share sheet.
 #[sismo::function("flows::share")]
-pub fn share(what: notein_plugin::Share) {
+pub fn share(what: notin_plugin::Share) {
     use istmo_share::{ShareClient, ShareFile, ShareRequest};
     // A menu that runs this closes first, unmounting the scope `spawn`
     // would tie the task to; dropping the task cancels the call.
     spawn_in_window(traced!("task::flows::share", async move {
         let request = match what {
-            notein_plugin::Share::Text { text, subject } => {
+            notin_plugin::Share::Text { text, subject } => {
                 ShareRequest::text(text).with_subject(subject)
             }
-            notein_plugin::Share::File {
+            notin_plugin::Share::File {
                 name,
                 mime,
                 bytes,
@@ -338,7 +338,7 @@ fn ask_notebook_fate(items: Vec<ItemId>, title: String, notebooks: usize) {
     let fate = State::create_in_scope(NotebookFate::Keep, ScopeId::ROOT);
     let subtitle = tr!("flows-trash-notebooks", "count" => notebooks);
     Sheet::titled(title)
-        .kind(lucide::trash_2(), notein_ui_kit::palette().danger)
+        .kind(lucide::trash_2(), notin_ui_kit::palette().danger)
         .subtitle(subtitle)
         .child(NotebookFateChoice { fate })
         .footer(SheetFooter::new([
@@ -370,12 +370,12 @@ impl Component for NotebookFateChoice {
         let row = move |value: NotebookFate, title: String, sub: String| {
             ListRow::new(title)
                 .subtitle(sub)
-                .leading(notein_ui_kit::Leading::Check(current == value))
+                .leading(notin_ui_kit::Leading::Check(current == value))
                 .selected(current == value)
                 .on_press(move |_| fate.set(value))
                 .into_element()
         };
-        notein_ui_kit::Group::default()
+        notin_ui_kit::Group::default()
             .child(row(
                 NotebookFate::Keep,
                 tr!("flows-fate-keep"),

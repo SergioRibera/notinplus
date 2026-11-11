@@ -12,10 +12,10 @@ pub(crate) mod panes;
 use std::sync::Arc;
 
 use freya::prelude::*;
-use notein_plugin::UserMessage;
-use notein_plugin::services::{HistoryRequest, HistoryStep};
-use notein_ui_kit::theme::palette as theme;
-use notein_ui_kit::{
+use notin_plugin::UserMessage;
+use notin_plugin::services::{HistoryRequest, HistoryStep};
+use notin_ui_kit::theme::palette as theme;
+use notin_ui_kit::{
     Button, EmptyState, ModalController, PanelEdge, SidePanel, Toast, Toasts, tokens, width_class,
 };
 
@@ -24,7 +24,7 @@ use crate::library::{
     Workspace, WorkspaceId,
 };
 use crate::state::{self, LibraryState, LibraryView};
-use notein_i18n::tr;
+use notin_i18n::tr;
 use panes::SplitEdge;
 
 pub use panel::PanelTab;
@@ -147,7 +147,7 @@ impl Ops {
 
 /// Time the "Borrador descartado" toast offers to keep the canvas.
 const SCRATCH_GRACE: std::time::Duration =
-    std::time::Duration::from_millis(notein_ui_kit::tokens::toast::SCRATCH);
+    std::time::Duration::from_millis(notin_ui_kit::tokens::toast::SCRATCH);
 
 /// A scratch canvas is closing: when it holds anything, keep its doc
 /// for a few seconds behind "Guardar".

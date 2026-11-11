@@ -7,10 +7,10 @@ use std::rc::Rc;
 
 use freya::prelude::*;
 use freya_engine::prelude::{Color as SkColor, Paint, PaintStyle, PathEffect};
-use notein_i18n::tr;
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::{Palette, palette};
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::{Palette, palette};
+use notin_ui_kit::{
     Button, EmptyState, Icon, IconButton, Modal, ModalController, Tag, Text, TextRole, tokens,
     width_class,
 };
@@ -174,7 +174,7 @@ impl Layout {
                         .child(
                             Icon::new(icon)
                                 .size(radius)
-                                .color(notein_ui_kit::theme::on_color(tint)),
+                                .color(notin_ui_kit::theme::on_color(tint)),
                         ),
                 )
                 .child(
@@ -321,7 +321,7 @@ fn filters(
         .height(Size::px(34.0))
         .show_scrollbar(false)
         .child(
-            notein_ui_kit::ScrollContent::new(
+            notin_ui_kit::ScrollContent::new(
                 rect()
                     .horizontal()
                     .cross_align(Alignment::Center)

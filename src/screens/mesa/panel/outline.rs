@@ -7,11 +7,11 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use freya::prelude::*;
-use notein_i18n::tr;
-use notein_plugin::kind::{OutlineIcon, OutlineNode};
-use notein_ui_kit::TapExt;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{Icon, Leading, ListRow, ScrollContent, Text, TextRole, tokens};
+use notin_i18n::tr;
+use notin_plugin::kind::{OutlineIcon, OutlineNode};
+use notin_ui_kit::TapExt;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{Icon, Leading, ListRow, ScrollContent, Text, TextRole, tokens};
 
 use crate::library::ItemId;
 

@@ -4,17 +4,17 @@
 use std::time::{Duration, Instant};
 
 use freya::prelude::*;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     Button, ButtonVariant, Group, Icon, IconButton, ListRow, ModalController, Notice, NoticeTone,
     Section, Segmented, Sheet, SheetFooter, Text, TextField, TextRole, Trailing, tokens,
 };
 
-use notein_i18n::tr;
-use notein_plugin::UserMessage;
+use notin_i18n::tr;
+use notin_plugin::UserMessage;
 
 use crate::sync::{LinkTarget, SyncSnapshot};
-use notein_sync::TrustedDevice;
+use notin_sync::TrustedDevice;
 
 /// A pairing code is renewed after this long.
 const CODE_LIFETIME: Duration = Duration::from_secs(5 * 60);
@@ -137,7 +137,7 @@ fn linked_device(
         } else {
             tr!("settings-devices-linked-offline", "since" => since)
         })
-        .leading(notein_ui_kit::Leading::Element(
+        .leading(notin_ui_kit::Leading::Element(
             rect()
                 .width(Size::px(10.0))
                 .height(Size::px(10.0))
@@ -277,7 +277,7 @@ impl Component for Devices {
 pub fn open_pairing() {
     crate::sync::begin_pairing();
     ModalController::get().push(
-        notein_ui_kit::Modal::new(Pairing)
+        notin_ui_kit::Modal::new(Pairing)
             .center()
             .width(460.0)
             .dismiss_on_backdrop(true)
@@ -487,7 +487,7 @@ fn show_code(snapshot: &SyncSnapshot, left: Duration) -> Element {
                 .icon(freya::icons::lucide::copy())
                 .on_press(move |_| {
                     if freya::clipboard::Clipboard::set(link.clone()).is_ok() {
-                        notein_ui_kit::Toasts::get().show(notein_ui_kit::Toast::new(tr!(
+                        notin_ui_kit::Toasts::get().show(notin_ui_kit::Toast::new(tr!(
                             "settings-devices-link-copied"
                         )));
                     }
@@ -540,7 +540,7 @@ impl Component for EnterCode {
     fn render(&self) -> impl IntoElement {
         let snapshot = crate::sync::use_sync().read().clone();
         let code = use_state(String::new);
-        let mut device = use_state(|| None::<notein_sync::DeviceId>);
+        let mut device = use_state(|| None::<notin_sync::DeviceId>);
         let mut sent = use_state(|| false);
         let digits: String = code
             .read()
@@ -551,7 +551,7 @@ impl Component for EnterCode {
         let chosen = (*device.read())
             .or_else(|| (snapshot.discovered.len() == 1).then(|| snapshot.discovered[0].device));
         let mut submit = move |digits: String| {
-            if let (Some(target), Some(parsed)) = (chosen, notein_sync::PairingCode::parse(&digits))
+            if let (Some(target), Some(parsed)) = (chosen, notin_sync::PairingCode::parse(&digits))
             {
                 sent.set(true);
                 crate::sync::pair_discovered(target, parsed);
@@ -561,10 +561,10 @@ impl Component for EnterCode {
             submit(digits.clone());
         }
         let failure = snapshot.last_pair_failure.map(|(_, why)| match why {
-            notein_sync::PairFailure::Rejected => {
+            notin_sync::PairFailure::Rejected => {
                 tr!("settings-devices-pair-rejected")
             }
-            notein_sync::PairFailure::Unreachable => {
+            notin_sync::PairFailure::Unreachable => {
                 tr!("settings-devices-pair-unreachable")
             }
         });
@@ -572,7 +572,7 @@ impl Component for EnterCode {
             let id = peer.device;
             ListRow::new(peer.name.clone())
                 .icon(freya::icons::lucide::monitor_smartphone())
-                .leading(notein_ui_kit::Leading::Check(chosen == Some(id)))
+                .leading(notin_ui_kit::Leading::Check(chosen == Some(id)))
                 .selected(chosen == Some(id))
                 .on_press(move |_| device.set(Some(id)))
                 .into_element()

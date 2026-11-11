@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use freya::prelude::*;
 use freya::router::RouterContext;
-use notein_i18n::tr;
-use notein_ui_kit::theme::palette;
-use notein_ui_kit::{
+use notin_i18n::tr;
+use notin_ui_kit::theme::palette;
+use notin_ui_kit::{
     BarItem, Button, EmptyState, IconButton, Leading, ListRow, SelectionBar, Text, TextRole, Toast,
     Toasts, Trailing, tokens, width_class,
 };
@@ -132,7 +132,7 @@ impl Component for Trash {
             .padding((insets.top, insets.right, insets.bottom, insets.left))
             .on_global_key_down(|e: Event<KeyboardEventData>| {
                 if e.key == Key::Named(NamedKey::Escape)
-                    && !notein_ui_kit::ModalController::get().is_open()
+                    && !notin_ui_kit::ModalController::get().is_open()
                 {
                     RouterContext::get().go_back();
                 }
@@ -187,13 +187,13 @@ impl Component for TrashList {
                 ScrollView::new()
                     .width(Size::fill())
                     .height(Size::fill())
-                    .child(notein_ui_kit::ScrollContent::new(
+                    .child(notin_ui_kit::ScrollContent::new(
                         rect()
                             .width(Size::fill())
                             .padding((0.0, self.pad, 120.0, self.pad))
                             .spacing(16.0)
                             .child(header)
-                            .child(notein_ui_kit::Group::default().children(rows))
+                            .child(notin_ui_kit::Group::default().children(rows))
                             .child(ui.empty_all(all_batches, total)),
                     )),
             )
@@ -339,7 +339,7 @@ impl TrashUi {
                     )
                     .child(
                         Button::new(tr!("trash-purge-count", "count" => total))
-                            .variant(notein_ui_kit::ButtonVariant::DangerFill)
+                            .variant(notin_ui_kit::ButtonVariant::DangerFill)
                             .on_press(move |_| {
                                 confirming.set(false);
                                 purge(batches.clone());

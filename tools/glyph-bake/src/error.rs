@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use notein_handwriting::HandwritingError;
+use notin_handwriting::HandwritingError;
 
 #[derive(Debug)]
 pub(crate) enum BakeError {
