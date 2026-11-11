@@ -452,8 +452,12 @@ impl Share {
         removed
     }
 
-    /// A member walks away on its own; returns whether it was inside.
-    pub fn depart(&mut self, device: DeviceId) -> bool {
+    /// A member walks away on its own from the membership that began at
+    /// `joined_at`; returns whether it was inside that one.
+    pub fn depart(&mut self, device: DeviceId, joined_at: u64) -> bool {
+        if self.member(device).is_none_or(|m| m.joined_at != joined_at) {
+            return false;
+        }
         let removed = self.remove_member(device);
         if removed && !self.departed.contains(&device) {
             self.departed.push(device);
@@ -832,8 +836,9 @@ pub enum ShareMessage {
     Meta(Box<Share>),
     /// The owner closed the share.
     Ended,
-    /// A member walked away.
-    Left,
+    /// A member walked away from the membership that began at
+    /// `joined_at`; one it began since, coming back, is not touched.
+    Left { joined_at: u64 },
     /// Ephemeral state of one of the share's documents, see
     /// `SyncDriver::live`.
     Live { doc: DocId, bytes: Vec<u8> },

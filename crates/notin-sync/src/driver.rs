@@ -1039,9 +1039,14 @@ impl<R: Replica> SyncDriver<R> {
     pub fn leave_share(&mut self, id: ShareId) -> Vec<Action> {
         // Also in the mailbox, for an owner away for longer than this
         // device keeps it in mind.
+        let me = self.profile.id();
+        let joined_at = self
+            .share(id)
+            .and_then(|s| s.member(me))
+            .map_or(0, |m| m.joined_at);
+        let left = ShareMessage::Left { joined_at };
         let recorded = self.share(id).and_then(|share| {
-            let sealed =
-                ShareMessage::Left.seal_signed(share, RecordKind::Left, self.profile.key());
+            let sealed = left.seal_signed(share, RecordKind::Left, self.profile.key());
             let publish = RelayMessage::Publish {
                 share: id,
                 kind: RecordKind::Left,
@@ -1066,7 +1071,7 @@ impl<R: Replica> SyncDriver<R> {
             Held::Left,
             Payload::Share {
                 share: id,
-                sealed: ShareMessage::Left.seal(&link.share.key),
+                sealed: left.seal(&link.share.key),
             },
         ));
         out.push(Action::Event(DriverEvent::ShareRemoved {
@@ -1656,8 +1661,8 @@ impl<R: Replica> SyncDriver<R> {
             ShareMessage::Expelled => {
                 self.removed_by_owner(from, id, Removal::Expelled, out);
             }
-            ShareMessage::Left => {
-                if link.share.is_owner(me) && link.share.depart(from) {
+            ShareMessage::Left { joined_at } => {
+                if link.share.is_owner(me) && link.share.depart(from, joined_at) {
                     link.engine.forget_peer(from);
                     out.extend(self.rekey(id));
                 }
@@ -3256,8 +3261,8 @@ impl<R: Replica> SyncDriver<R> {
                 return Ok(Taken::Applied(true));
             }
             // Only for itself: the signature says who walked away.
-            (ShareMessage::Left, RecordKind::Left)
-                if link.share.is_owner(me) && link.share.depart(author) =>
+            (ShareMessage::Left { joined_at }, RecordKind::Left)
+                if link.share.is_owner(me) && link.share.depart(author, joined_at) =>
             {
                 link.engine.forget_peer(author);
                 out.extend(self.rekey(id));
@@ -4633,7 +4638,7 @@ mod tests {
         let guest_id = guest.profile.id();
         // Someone else's departure cannot be filed in the guest's name.
         let eve = driver("Eve");
-        let forged = ShareMessage::Left.seal_signed(
+        let forged = ShareMessage::Left { joined_at: 1 }.seal_signed(
             owner.share(id).unwrap(),
             RecordKind::Left,
             eve.profile.key(),
@@ -4654,6 +4659,50 @@ mod tests {
             1,
             "a departure changes the key"
         );
+    }
+
+    #[test]
+    fn an_old_departure_does_not_throw_out_a_member_who_came_back() {
+        for told_live in [false, true] {
+            let (mut owner, mut guest, id) = joined_then_apart();
+            let at_guest = on_relay(&mut guest);
+            let at_owner = on_relay(&mut owner);
+            let sealed = published(&guest.leave_share(id), at_guest)
+                .into_iter()
+                .find(|(k, _)| *k == RecordKind::Left)
+                .map(|(_, s)| s)
+                .expect("the departure goes to the mailbox");
+            if !told_live {
+                // Back on the network before the owner heard it left.
+                guest.outbox.clear();
+            }
+            std::thread::sleep(Duration::from_millis(3));
+            connect_both(&mut owner, &mut guest);
+            deliver(guest.rejoin(id), &mut guest, &mut owner);
+            let guest_id = guest.profile.id();
+            assert!(
+                owner.share(id).unwrap().is_member(guest_id),
+                "live {told_live}"
+            );
+            let records = RelayMessage::Records {
+                share: id,
+                records: vec![record(1, guest_id, RecordKind::Left, sealed)],
+            };
+            owner.on_event(from_relay(at_owner, &records)).unwrap();
+            assert!(
+                owner.share(id).unwrap().is_member(guest_id),
+                "live {told_live}"
+            );
+            // Read again after a restart: still nothing.
+            let book = ShareBook::decode(&owner.book().encode()).unwrap();
+            let mut owner = SyncDriver::new(owner.profile.clone(), MemReplica::default(), book);
+            let at_owner = on_relay(&mut owner);
+            owner.on_event(from_relay(at_owner, &records)).unwrap();
+            assert!(
+                owner.share(id).unwrap().is_member(guest_id),
+                "live {told_live}"
+            );
+        }
     }
 
     #[test]
