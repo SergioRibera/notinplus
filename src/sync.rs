@@ -77,6 +77,9 @@ pub struct ShareView {
     pub pending: Vec<Member>,
     pub owner_online: bool,
     pub owner_path: Option<ReachPath>,
+    /// The owner's lease is gone: nothing is shared with the other
+    /// members until the owner is reached again.
+    pub waiting_for_owner: bool,
     pub invite_link: String,
     pub can_edit: bool,
     pub can_manage: bool,
@@ -1117,6 +1120,8 @@ impl Service {
             // The next snapshot shows the new path, and the invitation
             // made again with the share's new key.
             DriverEvent::InviteRenewed(_)
+            | DriverEvent::LeaseExpired(_)
+            | DriverEvent::LeaseRenewed(_)
             | DriverEvent::PeerOnline { online: true, .. }
             | DriverEvent::RelayOnline(_)
             | DriverEvent::PathChanged { .. } => {}
@@ -1497,6 +1502,7 @@ impl Service {
                 pending: share.pending.clone(),
                 owner_online: online.contains(&share.owner.device),
                 owner_path: self.driver.path_to(share.owner.device),
+                waiting_for_owner: self.driver.waiting_for_owner(share.id),
                 invite_link: self
                     .driver
                     .invite_for(share.id)

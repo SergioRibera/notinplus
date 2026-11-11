@@ -21,7 +21,7 @@ use crate::relay::{KnockToken, RecordKind, Registration, RelayAddr, RelayMessage
 use crate::replica::{BlobKey, BlobKind, DocId, Replica, Scope, Version};
 use crate::share::{
     EndedShare, Invite, LeftShare, Member, Role, Share, ShareBook, ShareEdit, ShareId,
-    ShareMessage, ShareMode, Unopened, open_keys, proof_key, seal_keys,
+    ShareMessage, ShareMode, SignedLease, Unopened, open_keys, proof_key, seal_keys,
 };
 
 /// How long a pairing offer stays valid.
@@ -96,6 +96,13 @@ pub enum Payload {
     JoinReply {
         share: ShareId,
         sealed: Vec<u8>,
+    },
+    /// The owner's newest lease on a share, from the owner or passed on
+    /// by a member. Signed, not sealed: one that missed a key change must
+    /// still be able to read that it did.
+    Lease {
+        share: ShareId,
+        lease: SignedLease,
     },
     /// The share's new keys from its owner, sealed for the receiver
     /// alone (see [`seal_keys`]).
@@ -329,6 +336,12 @@ pub enum DriverEvent {
         doc: DocId,
         bytes: Vec<u8>,
     },
+    /// The owner's lease on the share ran out or names a newer key or
+    /// other members: this device shares with nobody but the owner until
+    /// it hears from it. The app says it waits for the owner.
+    LeaseExpired(ShareId),
+    /// The lease holds again; sharing with the other members resumes.
+    LeaseRenewed(ShareId),
     /// The share changed its key: earlier invitations no longer let
     /// anyone in, so the one shown should be made again with
     /// [`SyncDriver::invite_for`].
@@ -584,6 +597,9 @@ pub struct SyncDriver<R> {
     /// Public keys of every device heard of, so a channel can be opened
     /// through a relay when it is not on the network.
     known_keys: HashMap<DeviceId, [u8; 32]>,
+    /// Whether the lease on each share held when last looked at, to tell
+    /// the app when that changes.
+    leases: HashMap<ShareId, bool>,
     /// Mailbox records by someone a share does not list yet, waiting
     /// for a newer view of it, with how often they were tried.
     parked: HashMap<ShareId, Parked>,
@@ -648,6 +664,7 @@ impl<R: Replica> SyncDriver<R> {
             known_keys: HashMap::new(),
             outbox: HashMap::new(),
             parked: HashMap::new(),
+            leases: HashMap::new(),
             redials: HashMap::new(),
             ended: book.ended.into_iter().map(|e| (e.id, e)).collect(),
             left: book.left.into_iter().map(|l| (l.invite.share, l)).collect(),
@@ -897,6 +914,7 @@ impl<R: Replica> SyncDriver<R> {
         if share.server.is_none() {
             share.server = self.relay().map(ToString::to_string);
         }
+        share.issue_lease(self.profile.key(), now_ms());
         let engine = SyncEngine::new(Arc::clone(&self.replica), share.scope());
         self.shares.insert(id, ShareLink { share, engine });
         let mut out = self.relay_register(id);
@@ -1001,6 +1019,7 @@ impl<R: Replica> SyncDriver<R> {
         }
         out.extend(self.relay_register(id));
         out.extend(self.broadcast_meta(id));
+        out.extend(self.spread_lease(id));
         out.push(Action::Event(DriverEvent::InviteRenewed(id)));
         out.push(Action::Event(DriverEvent::ShareChanged(id)));
         out
@@ -1247,6 +1266,155 @@ impl<R: Replica> SyncDriver<R> {
         self.outbox.retain(|_, queue| !queue.is_empty());
     }
 
+    /// Owner side: a new lease on `id` when the one held no longer fits
+    /// the share or is a day old. Returns whether one was issued.
+    fn renew_lease(&mut self, id: ShareId) -> bool {
+        let me = self.profile.id();
+        let now = now_ms();
+        self.shares
+            .get_mut(&id)
+            .filter(|link| link.share.is_owner(me))
+            .is_some_and(|link| link.share.renew_lease(self.profile.key(), now))
+    }
+
+    /// Whether this device waits for the owner of `id` before it shares
+    /// with anyone else: its lease ran out, or names a newer key or other
+    /// members.
+    #[must_use]
+    pub fn waiting_for_owner(&self, id: ShareId) -> bool {
+        self.share(id).is_some() && !self.lease_holds(id)
+    }
+
+    /// Whether this device may share `id` with others than its owner:
+    /// always as the owner, else only under the owner's lease.
+    #[must_use]
+    pub fn lease_holds(&self, id: ShareId) -> bool {
+        self.share(id)
+            .is_some_and(|share| share.is_owner(self.profile.id()) || share.lease_holds(now_ms()))
+    }
+
+    /// Whether the share's content may go to `device`: its owner, or a
+    /// participant while the lease holds.
+    fn may_share(&self, id: ShareId, device: DeviceId) -> bool {
+        self.share(id).is_some_and(|share| {
+            share.is_owner(device) || (share.is_member(device) && self.lease_holds(id))
+        })
+    }
+
+    /// Owner side: the newest lease on `id` to every member with an open
+    /// channel and to the mailbox, renewed first when due.
+    fn spread_lease(&mut self, id: ShareId) -> Vec<Action> {
+        self.renew_lease(id);
+        let me = self.profile.id();
+        let Some(share) = self.share(id).filter(|s| s.is_owner(me)) else {
+            return Vec::new();
+        };
+        let Some(lease) = share.lease.clone() else {
+            return Vec::new();
+        };
+        let mut out: Vec<Action> = share
+            .members
+            .iter()
+            .filter(|m| self.connected.contains_key(&m.device))
+            .map(|m| {
+                send(
+                    m.device,
+                    &Payload::Lease {
+                        share: id,
+                        lease: lease.clone(),
+                    },
+                )
+            })
+            .collect();
+        out.extend(self.lease_record(id));
+        out
+    }
+
+    /// The newest lease on `id` for `device`: from the owner to any
+    /// member, between members only while it holds, so a device the
+    /// lease leaves out gets nothing.
+    fn lease_for(&mut self, id: ShareId, device: DeviceId) -> Option<Action> {
+        self.renew_lease(id);
+        if !self.may_share(id, device) {
+            return None;
+        }
+        let lease = self.share(id)?.lease.clone()?;
+        Some(send(device, &Payload::Lease { share: id, lease }))
+    }
+
+    /// Owner side: the newest lease on `id` for the share's mailbox.
+    fn lease_record(&self, id: ShareId) -> Option<Action> {
+        let share = self.share(id).filter(|s| s.is_owner(self.profile.id()))?;
+        let lease = share.lease.clone()?;
+        let sealed = ShareMessage::Lease(Box::new(lease)).seal_signed(
+            share,
+            RecordKind::Lease,
+            self.profile.key(),
+        );
+        let publish = RelayMessage::Publish {
+            share: id,
+            kind: RecordKind::Lease,
+            sealed,
+            epoch: share.epoch,
+        };
+        self.relay_send(self.share_relay(id)?, &publish)
+    }
+
+    /// Member side: `signed` from `from`, the owner or a member passing
+    /// it on. A lease on a newer key says this device missed a change:
+    /// it shares nothing until the owner brings it up to date.
+    fn take_lease(
+        &mut self,
+        id: ShareId,
+        signed: SignedLease,
+        out: &mut Vec<Action>,
+    ) -> Result<(), SyncError<R::Error>> {
+        let Some(link) = self.shares.get_mut(&id) else {
+            return Ok(());
+        };
+        let ahead = signed.lease.epoch > link.share.epoch;
+        if !link.share.offer_lease(signed) {
+            return Ok(());
+        }
+        if ahead {
+            let owner = link.share.owner.device;
+            out.extend(self.connect_to(owner));
+        }
+        self.lease_settled(id, out)
+    }
+
+    /// After the lease or the view of `id` changed: tell the app, and hand
+    /// in what waited for the lease to hold.
+    fn lease_settled(
+        &mut self,
+        id: ShareId,
+        out: &mut Vec<Action>,
+    ) -> Result<(), SyncError<R::Error>> {
+        self.note_lease(id, out);
+        if self.lease_holds(id) {
+            out.extend(self.relay_publish()?);
+        }
+        Ok(())
+    }
+
+    /// Tell the app when the lease on `id` starts or stops holding.
+    fn note_lease(&mut self, id: ShareId, out: &mut Vec<Action>) {
+        let holds = self.lease_holds(id);
+        if self.share(id).is_none() {
+            self.leases.remove(&id);
+            return;
+        }
+        let before = self.leases.insert(id, holds);
+        // First look: only a lease already gone is news.
+        if before != Some(holds) && (before.is_some() || !holds) {
+            out.push(Action::Event(if holds {
+                DriverEvent::LeaseRenewed(id)
+            } else {
+                DriverEvent::LeaseExpired(id)
+            }));
+        }
+    }
+
     /// Owner side: the share's keys for one member over its channel,
     /// once the key changed at least once. A member that missed the
     /// change, the mailbox not keeping it, catches up this way.
@@ -1263,7 +1431,8 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Owner's current view for one member, as [`Self::broadcast_meta`].
-    fn meta_for(&self, id: ShareId, device: DeviceId) -> Option<Action> {
+    fn meta_for(&mut self, id: ShareId, device: DeviceId) -> Option<Action> {
+        self.renew_lease(id);
         let link = self.shares.get(&id)?;
         if !link.share.is_owner(self.profile.id()) || !link.share.is_member(device) {
             return None;
@@ -1279,7 +1448,8 @@ impl<R: Replica> SyncDriver<R> {
 
     /// Owner's current view sent to every connected member.
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::broadcast_meta"))]
-    fn broadcast_meta(&self, id: ShareId) -> Vec<Action> {
+    fn broadcast_meta(&mut self, id: ShareId) -> Vec<Action> {
+        self.renew_lease(id);
         let Some(link) = self.shares.get(&id) else {
             return Vec::new();
         };
@@ -1463,6 +1633,7 @@ impl<R: Replica> SyncDriver<R> {
             // away; keys first, or the rest does not open.
             out.extend(self.keys_for(share, device));
             out.extend(self.meta_for(share, device));
+            out.extend(self.lease_for(share, device));
             out.extend(self.share_round_for(share, device)?);
         }
         if self.intent.as_ref().is_some_and(|i| i.device == device) {
@@ -1534,6 +1705,15 @@ impl<R: Replica> SyncDriver<R> {
             Payload::JoinReply { share, sealed } => {
                 self.on_join_reply(from, share, &sealed, out)?;
             }
+            Payload::Lease { share, lease } => {
+                // Only from someone inside: a stranger has nothing to say.
+                if self
+                    .share(share)
+                    .is_some_and(|s| s.participants().any(|m| m.device == from))
+                {
+                    self.take_lease(share, lease, out)?;
+                }
+            }
             Payload::Keys { share, sealed } => {
                 if self.take_keys(share, from, &sealed) {
                     // What waited for this key opens now, and what was held
@@ -1541,7 +1721,7 @@ impl<R: Replica> SyncDriver<R> {
                     if self.take_records(share, Vec::new(), out)? {
                         out.push(Action::Event(DriverEvent::ShareChanged(share)));
                     }
-                    out.extend(self.relay_publish()?);
+                    self.lease_settled(share, out)?;
                 }
             }
             Payload::Relay(bytes) => {
@@ -1643,6 +1823,9 @@ impl<R: Replica> SyncDriver<R> {
             out.extend(reply);
             return Ok(());
         }
+        // Without the owner's lease, rounds from other members are taken
+        // in but not answered with content.
+        let answers = self.may_share(id, from);
         let Some(link) = self.shares.get_mut(&id) else {
             return Ok(());
         };
@@ -1655,6 +1838,7 @@ impl<R: Replica> SyncDriver<R> {
         let me = self.profile.id();
         let mut round = false;
         let mut moved = false;
+        let viewed = matches!(message, ShareMessage::Meta(_));
         match message {
             ShareMessage::Live { doc, bytes } => {
                 #[cfg(feature = "sismo")]
@@ -1668,30 +1852,7 @@ impl<R: Replica> SyncDriver<R> {
                     }));
                 }
             }
-            ShareMessage::Sync(bytes) => {
-                #[cfg(feature = "sismo")]
-                sismo::counter!("sync.in.share_sync_bytes", bytes.len());
-                let message = Message::from_bytes(&bytes)?;
-                let Some(message) = permitted(&link.share, from, message) else {
-                    return Ok(());
-                };
-                let handled = link.engine.handle(from, message)?;
-                for reply in &handled.replies {
-                    out.push(send(
-                        from,
-                        &Payload::Share {
-                            share: id,
-                            sealed: ShareMessage::Sync(reply.to_bytes()?).seal(&link.share.key),
-                        },
-                    ));
-                }
-                if !handled.imported.is_empty() {
-                    out.push(Action::Event(DriverEvent::Imported(handled.imported)));
-                }
-                if !handled.merged.is_empty() {
-                    out.push(Action::Event(DriverEvent::Merged(handled.merged)));
-                }
-            }
+            ShareMessage::Sync(bytes) => return self.on_share_sync(from, id, &bytes, answers, out),
             ShareMessage::Meta(share) => {
                 if let Some(fresh) = fresh_meta(&link.share, from, me, *share) {
                     if fresh == link.share {
@@ -1729,13 +1890,55 @@ impl<R: Replica> SyncDriver<R> {
             ShareMessage::Edit(edit) => {
                 self.apply_edit(from, id, edit, out);
             }
+            ShareMessage::Lease(signed) => self.take_lease(id, *signed, out)?,
         }
         if moved {
             out.extend(self.sync_relays());
             out.extend(self.relay_subscribe(id));
         }
+        if viewed {
+            self.lease_settled(id, out)?;
+        }
         if round {
             out.extend(self.share_round_for(id, from)?);
+        }
+        Ok(())
+    }
+
+    /// An exchange message inside share `id` from `from`; answered with
+    /// content only when `answers`.
+    fn on_share_sync(
+        &mut self,
+        from: DeviceId,
+        id: ShareId,
+        bytes: &[u8],
+        answers: bool,
+        out: &mut Vec<Action>,
+    ) -> Result<(), SyncError<R::Error>> {
+        #[cfg(feature = "sismo")]
+        sismo::counter!("sync.in.share_sync_bytes", bytes.len());
+        let Some(link) = self.shares.get_mut(&id) else {
+            return Ok(());
+        };
+        let message = Message::from_bytes(bytes)?;
+        let Some(message) = permitted(&link.share, from, message) else {
+            return Ok(());
+        };
+        let handled = link.engine.handle(from, message)?;
+        for reply in handled.replies.iter().filter(|_| answers) {
+            out.push(send(
+                from,
+                &Payload::Share {
+                    share: id,
+                    sealed: ShareMessage::Sync(reply.to_bytes()?).seal(&link.share.key),
+                },
+            ));
+        }
+        if !handled.imported.is_empty() {
+            out.push(Action::Event(DriverEvent::Imported(handled.imported)));
+        }
+        if !handled.merged.is_empty() {
+            out.push(Action::Event(DriverEvent::Merged(handled.merged)));
         }
         Ok(())
     }
@@ -1753,6 +1956,7 @@ impl<R: Replica> SyncDriver<R> {
         // never to the mailbox; one away asks again on its return and, let
         // in by then, is welcomed at once.
         let key = link.share.take_knock_key(device);
+        link.share.renew_lease(self.profile.key(), now_ms());
         let answer = if admitted {
             JoinAnswer::Welcome(Box::new(link.share.for_member()))
         } else {
@@ -1862,6 +2066,7 @@ impl<R: Replica> SyncDriver<R> {
             // Already in, back after a restart: it stays as it is, role and
             // all, and only hears the share again.
             (Some(link), Some(key)) if link.share.is_member(from) => {
+                link.share.renew_lease(self.profile.key(), now_ms());
                 let welcome = JoinAnswer::Welcome(Box::new(link.share.for_member()));
                 let sealed = seal_answer(&key, &welcome);
                 out.extend(self.route(from, &Payload::JoinReply { share: id, sealed }));
@@ -1897,6 +2102,7 @@ impl<R: Replica> SyncDriver<R> {
                 }
                 link.share.admit(member);
                 link.share.touch(now_ms());
+                link.share.renew_lease(self.profile.key(), now_ms());
                 let welcome = JoinAnswer::Welcome(Box::new(link.share.for_member()));
                 let sealed = seal_answer(&key, &welcome);
                 // The relay learns the new member before the welcome goes
@@ -2106,6 +2312,10 @@ impl<R: Replica> SyncDriver<R> {
         id: ShareId,
         device: DeviceId,
     ) -> Result<Vec<Action>, SyncError<R::Error>> {
+        // Without the owner's lease, only the owner hears from us.
+        if !self.may_share(id, device) {
+            return Ok(Vec::new());
+        }
         let Some(link) = self.shares.get(&id) else {
             return Ok(Vec::new());
         };
@@ -2179,6 +2389,7 @@ impl<R: Replica> SyncDriver<R> {
                     .participants()
                     .filter(|m| m.device != me)
                     .filter(|m| self.connected.contains_key(&m.device))
+                    .filter(|m| self.may_share(id, m.device))
                     .map(|m| m.device)
                     .collect();
                 Some((members, share.key.clone()))
@@ -2226,6 +2437,7 @@ impl<R: Replica> SyncDriver<R> {
                     .participants()
                     .filter(|m| m.device != me)
                     .filter(|m| self.connected.contains_key(&m.device))
+                    .filter(|m| self.may_share(id, m.device))
                     .map(|m| m.device)
                     .collect();
                 Some((members, share.key.clone()))
@@ -2280,7 +2492,10 @@ impl<R: Replica> SyncDriver<R> {
             }
             .seal(&link.share.key);
             for member in link.share.participants() {
-                if member.device == me || !self.connected.contains_key(&member.device) {
+                if member.device == me
+                    || !self.connected.contains_key(&member.device)
+                    || !self.may_share(link.share.id, member.device)
+                {
                     continue;
                 }
                 out.push(send_live(
@@ -2328,6 +2543,14 @@ impl<R: Replica> SyncDriver<R> {
             sismo::counter!("sync.redials", self.redials.len());
         }
         let mut out = Vec::new();
+        // The owner keeps its leases fresh; members learn when theirs ran out.
+        let ids: Vec<ShareId> = self.shares.keys().copied().collect();
+        for id in ids {
+            if self.renew_lease(id) {
+                out.extend(self.spread_lease(id));
+            }
+            self.note_lease(id, &mut out);
+        }
         if self.offer.is_some_and(|o| o.expired()) {
             self.offer = None;
         }
@@ -2705,6 +2928,7 @@ pub fn relay_message(bytes: &[u8]) -> Option<RelayMessage> {
         | Payload::Join { .. }
         | Payload::JoinReply { .. }
         | Payload::Keys { .. }
+        | Payload::Lease { .. }
         | Payload::Live { .. } => None,
     }
 }
@@ -3006,19 +3230,23 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Whether this device may leave records for `id` at `relay`: the
-    /// owner always, a member once the relay answered its subscription
-    /// and only while it holds the key the relay has the share at.
+    /// owner always, a member under the owner's lease once the relay
+    /// answered its subscription, while it holds the key the relay has
+    /// the share at.
     fn mailbox_ready(&self, id: ShareId, relay: DeviceId) -> bool {
         let me = self.profile.id();
         let Some(share) = self.share(id) else {
             return false;
         };
+        // The owner's lease is what says the key is still the current one;
+        // the relay's epoch is only a hint, a relay may lie about it.
         share.is_owner(me)
-            || self
-                .relays
-                .get(&relay)
-                .and_then(|r| r.epochs.get(&id))
-                .is_some_and(|epoch| *epoch <= share.epoch)
+            || (share.lease_holds(now_ms())
+                && self
+                    .relays
+                    .get(&relay)
+                    .and_then(|r| r.epochs.get(&id))
+                    .is_some_and(|epoch| *epoch <= share.epoch))
     }
 
     /// Just connected to `relay`: register what we own there, subscribe
@@ -3042,6 +3270,11 @@ impl<R: Replica> SyncDriver<R> {
         for id in ids {
             out.extend(self.relay_register(id));
             out.extend(self.relay_subscribe(id));
+            if self.renew_lease(id) {
+                out.extend(self.spread_lease(id));
+            } else {
+                out.extend(self.lease_record(id));
+            }
         }
         let pending: Vec<ShareId> = self.joins.keys().copied().collect();
         for share in pending {
@@ -3433,6 +3666,10 @@ impl<R: Replica> SyncDriver<R> {
                 }
                 return Ok(Taken::Applied(true));
             }
+            (ShareMessage::Lease(signed), RecordKind::Lease) if link.share.is_owner(author) => {
+                self.take_lease(id, *signed, out)?;
+                return Ok(Taken::Applied(false));
+            }
             // Only for itself: the signature says who walked away.
             (ShareMessage::Left { joined_at }, RecordKind::Left)
                 if link.share.is_owner(me) && link.share.depart(author, joined_at) =>
@@ -3487,10 +3724,17 @@ fn fresh_meta(current: &Share, from: DeviceId, me: DeviceId, incoming: Share) ->
     } else {
         (0, Vec::new())
     };
+    // A newer lease of the owner's comes along; any other is ignored.
+    let mut held = current.clone();
+    if let Some(signed) = incoming.lease.clone() {
+        held.offer_lease(signed);
+    }
+    let lease = held.lease;
     Some(Share {
         key: current.key.clone(),
         epoch: current.epoch,
         previous: current.previous.clone(),
+        lease,
         owner: current.owner.clone(),
         relay_cursor,
         held_back,
@@ -4197,7 +4441,14 @@ mod tests {
 
     /// A relay this driver uses, already connected.
     fn on_relay(driver: &mut SyncDriver<MemReplica>) -> DeviceId {
-        let key = crate::identity::DeviceKey::generate();
+        on_relay_at(driver, &crate::identity::DeviceKey::generate())
+    }
+
+    /// The relay with key `key` this driver uses, already connected.
+    fn on_relay_at(
+        driver: &mut SyncDriver<MemReplica>,
+        key: &crate::identity::DeviceKey,
+    ) -> DeviceId {
         driver.set_relay(Some(RelayAddr {
             host: "relay:7710".into(),
             public: *key.public(),
@@ -4832,16 +5083,22 @@ mod tests {
         };
         let out = guest.on_event(from_relay(at_guest, &behind)).unwrap();
         assert!(published(&out, at_guest).is_empty());
-        let Some(Action::Send { bytes, .. }) = owner.keys_for(id, guest.profile.id()) else {
-            panic!("the owner hands the key over");
-        };
-        let out = guest
-            .on_event(NetEvent::Message {
-                from: owner.profile.id(),
-                bytes,
-            })
-            .unwrap();
-        let again = published(&out, at_guest);
+        // The owner hands over the key, its view and its lease.
+        let gid = guest.profile.id();
+        let handed = [
+            owner.keys_for(id, gid),
+            owner.meta_for(id, gid),
+            owner.lease_for(id, gid),
+        ];
+        let mut again = Vec::new();
+        for action in handed {
+            let Some(Action::Send { bytes, .. }) = action else {
+                panic!("the owner hands it over");
+            };
+            let from = owner.profile.id();
+            let out = guest.on_event(NetEvent::Message { from, bytes }).unwrap();
+            again.extend(published(&out, at_guest));
+        }
         assert!(!again.is_empty(), "what was turned away never went again");
         for (kind, sealed) in again {
             assert!(ShareMessage::open_signed(owner.share(id).unwrap(), &sealed, kind).is_ok());
@@ -4995,6 +5252,171 @@ mod tests {
         assert!(again.share(id).unwrap().held_back.is_empty());
     }
 
+    /// Owner, Ana, Carl and Eve in one share; then Eve is thrown out while
+    /// Ana is away, so Ana still holds the old key and lists Eve. Carl
+    /// heard of it from the owner.
+    fn stale_member() -> (
+        SyncDriver<MemReplica>,
+        SyncDriver<MemReplica>,
+        SyncDriver<MemReplica>,
+        SyncDriver<MemReplica>,
+        ShareId,
+    ) {
+        let (mut owner, mut guest, mut eve, id) = three_members();
+        let mut carl = driver("Carl");
+        let invite = owner.share(id).unwrap().invite();
+        connect_both(&mut owner, &mut carl);
+        deliver(carl.join(invite), &mut carl, &mut owner);
+        connect_both(&mut guest, &mut owner);
+        for member in [&mut guest, &mut eve, &mut carl] {
+            owner
+                .on_event(NetEvent::Disconnected(member.profile.id()))
+                .unwrap();
+            member
+                .on_event(NetEvent::Disconnected(owner.profile.id()))
+                .unwrap();
+        }
+        assert!(guest.lease_holds(id), "a member in step holds the lease");
+        owner.expel(id, eve.profile.id());
+        connect_both(&mut carl, &mut owner);
+        assert_eq!(carl.share(id).unwrap().epoch, 1);
+        assert!(carl.lease_holds(id));
+        (owner, guest, carl, eve, id)
+    }
+
+    /// The owner's lease as of long ago, on what `member` holds.
+    fn old_lease(
+        owner: &SyncDriver<MemReplica>,
+        member: &SyncDriver<MemReplica>,
+        id: ShareId,
+    ) -> SignedLease {
+        let mut view = member.share(id).unwrap().clone();
+        view.lease = None;
+        view.issue_lease(owner.profile.key(), now_ms() - crate::share::LEASE_MS - 1);
+        view.lease.unwrap()
+    }
+
+    #[test]
+    fn the_owner_keeps_its_lease_fresh_and_a_member_back_with_it_says_so() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        let at_owner = on_relay(&mut owner);
+        guest.shares.get_mut(&id).unwrap().share.lease = Some(old_lease(&owner, &guest, id));
+        let out = guest.tick().unwrap();
+        assert!(out.contains(&Action::Event(DriverEvent::LeaseExpired(id))));
+        assert!(guest.waiting_for_owner(id));
+        // A lease two days old is renewed and handed out.
+        let share = &mut owner.shares.get_mut(&id).unwrap().share;
+        share.lease = None;
+        share.issue_lease(owner.profile.key(), now_ms() - 2 * 24 * 60 * 60 * 1000);
+        let out = owner.tick().unwrap();
+        assert!(
+            published(&out, at_owner)
+                .iter()
+                .any(|(kind, _)| *kind == RecordKind::Lease)
+        );
+        // Meeting the owner brings the guest's lease back.
+        let events = connect_both(&mut guest, &mut owner);
+        assert!(
+            events.contains(&Action::Event(DriverEvent::LeaseRenewed(id))),
+            "{events:?}"
+        );
+        assert!(!guest.waiting_for_owner(id));
+    }
+
+    #[test]
+    fn a_relay_lying_about_the_key_gets_nothing_sealed_with_the_old_one() {
+        // Eve's relay hides that the key changed and withholds the new one.
+        let (owner, mut guest, _carl, eve, id) = stale_member();
+        let relay = on_relay(&mut guest);
+        caught_up(&mut guest, relay, id);
+        let eves = eve.share(id).unwrap().clone();
+        let opens = |out: &[Action]| {
+            published(out, relay)
+                .iter()
+                .any(|(_, sealed)| eves.open_any(sealed).is_some())
+        };
+        // Once the lease runs out, nothing goes to the mailbox.
+        guest.shares.get_mut(&id).unwrap().share.lease = Some(old_lease(&owner, &guest, id));
+        assert!(!guest.lease_holds(id));
+        let events = guest.tick().unwrap();
+        assert!(events.contains(&Action::Event(DriverEvent::LeaseExpired(id))));
+        mark(&guest, D1, 2, 7);
+        assert!(!opens(&guest.push_doc(D1).unwrap()));
+        let left = guest.leave_share(id);
+        assert!(
+            published(&left, relay).is_empty(),
+            "a departure went out under no lease"
+        );
+
+        // Nor sooner, once a member passes on the owner's newer lease.
+        let (_owner, mut guest, mut carl, _eve, id) = stale_member();
+        let relay = on_relay(&mut guest);
+        caught_up(&mut guest, relay, id);
+        connect_both(&mut guest, &mut carl);
+        assert!(
+            !guest.lease_holds(id),
+            "a newer lease tells the key changed"
+        );
+        mark(&guest, D1, 2, 8);
+        assert!(published(&guest.push_doc(D1).unwrap(), relay).is_empty());
+        assert!(published(&guest.leave_share(id), relay).is_empty());
+    }
+
+    #[test]
+    fn a_member_behind_on_the_key_shares_nothing_with_the_one_thrown_out() {
+        // Its lease run out: Eve, still listed here, hears nothing.
+        let (owner, mut guest, _carl, eve, id) = stale_member();
+        guest.shares.get_mut(&id).unwrap().share.lease = Some(old_lease(&owner, &guest, id));
+        let eve_id = eve.profile.id();
+        let to_eve = |out: &[Action]| {
+            out.iter()
+                .filter(|a| matches!(a, Action::Send { device, .. } if *device == eve_id))
+                .count()
+        };
+        let out = guest.on_event(NetEvent::Connected(info(&eve, 3))).unwrap();
+        assert_eq!(to_eve(&out), 0, "{out:?}");
+        assert_eq!(to_eve(&guest.live(D1, b"ink")), 0);
+        mark(&guest, D1, 2, 9);
+        assert_eq!(to_eve(&guest.push_doc(D1).unwrap()), 0);
+        assert_eq!(to_eve(&guest.announce().unwrap()), 0);
+
+        // Lease still young, but Carl passes on the owner's newer one:
+        // Ana stops at once and goes to find the owner.
+        let (owner, mut guest, mut carl, eve, id) = stale_member();
+        let relay = on_relay(&mut guest);
+        let eve_id = eve.profile.id();
+        let carl_id = carl.profile.id();
+        let out = carl.on_event(NetEvent::Connected(info(&guest, 4))).unwrap();
+        let mut dialed = false;
+        for action in out {
+            if let Action::Send { device, bytes, .. } = action
+                && device == guest.profile.id()
+            {
+                let replies = guest
+                    .on_event(NetEvent::Message {
+                        from: carl_id,
+                        bytes,
+                    })
+                    .unwrap();
+                dialed |= replies
+                    .iter()
+                    .any(|a| matches!(a, Action::Connect { .. } | Action::ConnectVia { .. }));
+            }
+        }
+        assert!(!guest.lease_holds(id));
+        assert!(dialed, "the owner is sought out");
+        drop((owner, relay));
+        let out = guest.on_event(NetEvent::Connected(info(&eve, 3))).unwrap();
+        assert_eq!(
+            out.iter()
+                .filter(|a| matches!(a, Action::Send { device, .. } if *device == eve_id))
+                .count(),
+            0
+        );
+        // Still the owner may be talked to, to catch up.
+        assert!(guest.may_share(id, guest.share(id).unwrap().owner.device));
+    }
+
     #[test]
     fn a_member_behind_on_the_key_publishes_nothing_until_it_catches_up() {
         let mut owner = driver("Sergio");
@@ -5014,17 +5436,21 @@ mod tests {
                 .on_event(NetEvent::Disconnected(owner.profile.id()))
                 .unwrap();
         }
-        let at_owner = on_relay(&mut owner);
-        let keys: Vec<crate::relay::Record> =
-            published(&owner.expel(id, eve.profile.id()), at_owner)
-                .into_iter()
-                .map(|(kind, sealed)| crate::relay::Record {
-                    epoch: 1,
-                    ..record(1, owner.profile.id(), kind, sealed)
-                })
-                .collect();
+        // One relay for everyone, as the share names it.
+        let relay_key = crate::identity::DeviceKey::generate();
+        let at_owner = on_relay_at(&mut owner, &relay_key);
+        let mut handed = published(&owner.expel(id, eve.profile.id()), at_owner);
+        handed.extend(published(&owner.announce().unwrap(), at_owner));
+        let keys: Vec<crate::relay::Record> = handed
+            .into_iter()
+            .zip(1..)
+            .map(|((kind, sealed), seq)| crate::relay::Record {
+                epoch: 1,
+                ..record(seq, owner.profile.id(), kind, sealed)
+            })
+            .collect();
         // Carl comes back on the relay alone and writes at once.
-        let at_carl = on_relay(&mut carl);
+        let at_carl = on_relay_at(&mut carl, &relay_key);
         mark(&carl, D1, 3, 1);
         let out = carl.push_doc(D1).unwrap();
         assert!(

@@ -136,6 +136,9 @@ pub enum RecordKind {
     /// The share's keys for the member with transport key `to` alone,
     /// after the owner changed them; replaces the earlier one for `to`.
     Keys { to: [u8; 32] },
+    /// The owner's lease on the share's current key and members;
+    /// replaces the earlier one.
+    Lease,
 }
 
 /// One mailbox entry.
@@ -260,7 +263,10 @@ impl Mailbox {
     /// Whether `public` may hand in a record of `kind`: any member, but
     /// only the owner speaks for the share as a whole or hands out keys.
     fn accepts(&self, public: [u8; 32], kind: RecordKind) -> bool {
-        let owners_only = matches!(kind, RecordKind::Meta | RecordKind::Keys { .. });
+        let owners_only = matches!(
+            kind,
+            RecordKind::Meta | RecordKind::Keys { .. } | RecordKind::Lease
+        );
         self.allows(public) && (!owners_only || self.owner == public)
     }
 
@@ -299,6 +305,9 @@ impl Mailbox {
                 RecordKind::Keys { to } => self.records.retain(|r| {
                     r.from != from || !matches!(r.kind, RecordKind::Keys { to: t } if t == to)
                 }),
+                RecordKind::Lease => self
+                    .records
+                    .retain(|r| r.from != from || !matches!(r.kind, RecordKind::Lease)),
                 RecordKind::Left => self
                     .records
                     .retain(|r| r.from != from || !matches!(r.kind, RecordKind::Left)),
@@ -1138,6 +1147,7 @@ mod tests {
         assert!(!mailbox.current(1), "an old key is turned away");
         assert!(mailbox.current(2));
         assert!(!mailbox.accepts([1; 32], RecordKind::Meta));
+        assert!(!mailbox.accepts([1; 32], RecordKind::Lease));
         assert!(!mailbox.accepts([1; 32], RecordKind::Keys { to: [2; 32] }));
         assert!(mailbox.accepts([0; 32], RecordKind::Keys { to: [2; 32] }));
         assert!(mailbox.accepts([1; 32], RecordKind::Update { doc: D }));

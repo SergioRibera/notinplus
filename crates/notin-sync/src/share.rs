@@ -197,6 +197,8 @@ pub struct Share {
     /// Keys the share had before, newest first, to open what was sealed
     /// with them.
     pub previous: Vec<ShareKey>,
+    /// The owner's newest lease: what lets a member share with others.
+    pub lease: Option<SignedLease>,
 }
 
 impl bincode::Encode for ShareKey {
@@ -250,7 +252,83 @@ impl Share {
             server: None,
             epoch: 0,
             previous: Vec::new(),
+            lease: None,
         }
+    }
+
+    /// What the owner's lease vouches for: every participant with its
+    /// signing key and role.
+    #[must_use]
+    pub fn roster_hash(&self) -> [u8; 32] {
+        use blake2::{Blake2s256, Digest};
+        let mut participants: Vec<&Member> = self.participants().collect();
+        participants.sort_by_key(|m| m.device);
+        let mut hasher = Blake2s256::new();
+        hasher.update(b"notin-roster");
+        hasher.update(self.id.0);
+        for member in participants {
+            hasher.update(member.device.0);
+            hasher.update(member.sign);
+            hasher.update(member.role.tag().as_bytes());
+            hasher.update([0]);
+        }
+        hasher.finalize().into()
+    }
+
+    /// Owner side: sign a lease on the share as it stands, at `now`, or
+    /// just after the last one, so a newer lease always tells apart.
+    pub fn issue_lease(&mut self, owner: &DeviceKey, now: u64) {
+        let after = self
+            .lease
+            .as_ref()
+            .map_or(0, |l| l.lease.issued_at.saturating_add(1));
+        let lease = Lease {
+            share: self.id,
+            epoch: self.epoch,
+            roster: self.roster_hash(),
+            issued_at: now.max(after),
+        };
+        self.lease = Some(lease.sign(owner));
+    }
+
+    /// Owner side: a new lease when the one held no longer matches the
+    /// share or is a day old. Returns whether one was issued.
+    pub fn renew_lease(&mut self, owner: &DeviceKey, now: u64) -> bool {
+        let current = self.lease_holds(now)
+            && self
+                .lease
+                .as_ref()
+                .is_some_and(|l| now.saturating_sub(l.lease.issued_at) < LEASE_RENEW_MS);
+        if !current {
+            self.issue_lease(owner, now);
+        }
+        !current
+    }
+
+    /// Whether the lease held is the owner's, current and on the key and
+    /// members held here.
+    #[must_use]
+    pub fn lease_holds(&self, now: u64) -> bool {
+        self.lease.as_ref().is_some_and(|signed| {
+            signed.verifies(self.id, &self.owner.sign)
+                && signed.lease.epoch == self.epoch
+                && signed.lease.roster == self.roster_hash()
+                && signed.lease.fresh(now)
+        })
+    }
+
+    /// Take `signed` when it is the owner's and newer than the one held.
+    /// Returns whether it was taken.
+    pub fn offer_lease(&mut self, signed: SignedLease) -> bool {
+        let newer = self
+            .lease
+            .as_ref()
+            .is_none_or(|held| signed.lease.issued_at > held.lease.issued_at);
+        if newer && signed.verifies(self.id, &self.owner.sign) {
+            self.lease = Some(signed);
+            return true;
+        }
+        false
     }
 
     /// Open `sealed` with whichever of the share's keys sealed it.
@@ -627,6 +705,77 @@ pub struct Departed {
     pub device: DeviceId,
 }
 
+/// How long an owner's lease lets members share with each other.
+///
+/// Without hearing from the owner, a member that missed a key change (and so
+/// still holds a key an expelled device knows) keeps sharing with the
+/// other members, through relays included, until its lease runs out:
+/// shorter closes that window sooner, but members of an owner away for
+/// longer stop syncing among themselves sooner too. The owner renews it
+/// at least daily while online.
+pub const LEASE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+/// How old a lease the owner hands out may be.
+const LEASE_RENEW_MS: u64 = 24 * 60 * 60 * 1000;
+/// How far ahead of this device's clock a lease may be dated.
+const LEASE_SKEW_MS: u64 = 24 * 60 * 60 * 1000;
+
+/// What the owner vouches for: the share's key epoch and members, as of
+/// `issued_at` (Unix milliseconds).
+#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+pub struct Lease {
+    pub share: ShareId,
+    pub epoch: u32,
+    /// [`Share::roster_hash`] of the participants the owner holds current.
+    pub roster: [u8; 32],
+    pub issued_at: u64,
+}
+
+/// A [`Lease`] with the owner's signature.
+#[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
+pub struct SignedLease {
+    pub lease: Lease,
+    pub signature: [u8; 64],
+}
+
+impl Lease {
+    fn signed_bytes(&self) -> Vec<u8> {
+        let body = bincode::encode_to_vec(self, bincode::config::standard()).unwrap_or_default();
+        [b"notin-lease".as_slice(), &body].concat()
+    }
+
+    #[must_use]
+    pub fn sign(self, owner: &DeviceKey) -> SignedLease {
+        use ed25519_dalek::Signer;
+        let signature = owner.signing().sign(&self.signed_bytes()).to_bytes();
+        SignedLease {
+            lease: self,
+            signature,
+        }
+    }
+
+    /// Not older than [`LEASE_MS`] at `now`, nor dated far ahead.
+    #[must_use]
+    pub const fn fresh(&self, now: u64) -> bool {
+        self.issued_at <= now.saturating_add(LEASE_SKEW_MS)
+            && now.saturating_sub(self.issued_at) <= LEASE_MS
+    }
+}
+
+impl SignedLease {
+    /// Signed by the owner whose signing key is `owner`, for `share`.
+    #[must_use]
+    pub fn verifies(&self, share: ShareId, owner: &[u8; 32]) -> bool {
+        let Ok(key) = ed25519_dalek::VerifyingKey::from_bytes(owner) else {
+            return false;
+        };
+        let signature = ed25519_dalek::Signature::from_bytes(&self.signature);
+        self.lease.share == share
+            && key
+                .verify_strict(&self.lease.signed_bytes(), &signature)
+                .is_ok()
+    }
+}
+
 /// What travels in an invitation link or QR.
 #[derive(bincode::Encode, bincode::Decode, Clone, PartialEq, Eq, Debug)]
 pub struct Invite {
@@ -901,6 +1050,8 @@ pub enum ShareMessage {
     Expelled,
     /// A member asks the owner for a change.
     Edit(ShareEdit),
+    /// The owner's newest lease, from the owner or passed on by a member.
+    Lease(Box<SignedLease>),
 }
 
 impl ShareMessage {
@@ -1334,5 +1485,39 @@ mod tests {
             assert!(share.depart(device.id(), 1), "{i}");
         }
         assert_eq!(share.departed.len(), DEPARTED_MAX);
+    }
+
+    #[test]
+    fn a_lease_holds_only_as_the_owner_signed_it_and_for_a_while() {
+        let owner = DeviceKey::generate();
+        let member = DeviceKey::generate();
+        let mut share = Share::new(member_of(&owner, Role::Owner), "x", ShareMode::Permanent, 1);
+        share.admit(member_of(&member, Role::Editor));
+        let now = 10 * LEASE_MS;
+        share.issue_lease(&owner, now);
+        assert!(share.lease_holds(now));
+        assert!(share.lease_holds(now + LEASE_MS));
+        assert!(!share.lease_holds(now + LEASE_MS + 1), "past its days");
+        assert!(
+            !share.lease_holds(now - 2 * LEASE_SKEW_MS),
+            "dated far ahead"
+        );
+        // Another key, other members, another role: not what it vouches for.
+        let mut rotated = share.clone();
+        rotated.rotate(ShareKey::generate());
+        assert!(!rotated.lease_holds(now));
+        let mut other = share.clone();
+        other.set_role(member.id(), Role::Viewer);
+        assert!(!other.lease_holds(now));
+        // Signed by someone else than the owner: never taken.
+        let mut forged = share.clone();
+        let lease = forged.lease.take().unwrap().lease;
+        assert!(!forged.offer_lease(lease.clone().sign(&member)));
+        assert!(forged.offer_lease(lease.sign(&owner)));
+        // An older one never replaces a newer one, and each is newer.
+        let held = share.lease.clone().unwrap();
+        share.issue_lease(&owner, now);
+        assert!(share.lease.as_ref().unwrap().lease.issued_at > held.lease.issued_at);
+        assert!(!share.offer_lease(held));
     }
 }
