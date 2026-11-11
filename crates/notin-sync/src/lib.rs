@@ -47,9 +47,10 @@ pub use share::{
 /// How bytes from elsewhere are decoded: a length past this limit is
 /// refused before anything is allocated, so a forged one can neither
 /// exhaust memory nor abort the process. Room for the largest payload a
-/// channel carries in parts.
+/// channel carries in parts (256 MiB) and its framing; the relay hands
+/// its mailboxes over in pages far below it.
 pub(crate) const WIRE: bincode::config::Configuration<
     bincode::config::LittleEndian,
     bincode::config::Varint,
-    bincode::config::Limit<{ 1 << 28 }>,
-> = bincode::config::standard().with_limit::<{ 1 << 28 }>();
+    bincode::config::Limit<{ 1 << 29 }>,
+> = bincode::config::standard().with_limit::<{ 1 << 29 }>();

@@ -377,6 +377,37 @@ impl Default for RelayLimits {
     }
 }
 
+/// Bytes of records the relay hands over in one message.
+const RECORDS_PAGE: usize = 4 << 20;
+
+/// The relay's own mailbox files: room for the fullest mailbox
+/// [`RelayLimits::max_mailbox_bytes`] lets through, so none is dropped
+/// on loading, while a corrupt length still cannot abort.
+const STORE: bincode::config::Configuration<
+    bincode::config::LittleEndian,
+    bincode::config::Varint,
+    bincode::config::Limit<{ 1 << 31 }>,
+> = bincode::config::standard().with_limit::<{ 1 << 31 }>();
+
+/// `records` split in runs of at most `budget` sealed bytes, one record
+/// at least in each.
+fn pages(records: Vec<Record>, budget: usize) -> Vec<Vec<Record>> {
+    let mut pages = vec![Vec::new()];
+    let mut bytes = 0;
+    for record in records {
+        let size = record.sealed.len();
+        if bytes + size > budget && pages.last().is_some_and(|p| !p.is_empty()) {
+            pages.push(Vec::new());
+            bytes = 0;
+        }
+        bytes += size;
+        if let Some(page) = pages.last_mut() {
+            page.push(record);
+        }
+    }
+    pages
+}
+
 /// Every mailbox, optionally mirrored to disk.
 #[derive(Debug, Default)]
 pub struct Store {
@@ -414,8 +445,7 @@ impl Store {
                 continue;
             };
             let bytes = std::fs::read(&path)?;
-            if let Ok((mailbox, _)) = bincode::decode_from_slice::<Mailbox, _>(&bytes, crate::WIRE)
-            {
+            if let Ok((mailbox, _)) = bincode::decode_from_slice::<Mailbox, _>(&bytes, STORE) {
                 store.insert(ShareId(id), mailbox);
             }
         }
@@ -860,14 +890,17 @@ impl Serving {
                 let records = mailbox.since(after);
                 let epoch = mailbox.epoch;
                 self.subs.entry(share).or_default().insert(from);
-                self.reply(
-                    from,
-                    &RelayMessage::Records {
-                        share,
-                        records,
-                        epoch,
-                    },
-                );
+                // In pages, each well under what a device decodes at once.
+                for records in pages(records, RECORDS_PAGE) {
+                    self.reply(
+                        from,
+                        &RelayMessage::Records {
+                            share,
+                            records,
+                            epoch,
+                        },
+                    );
+                }
             }
             RelayMessage::Publish {
                 share,
@@ -1261,6 +1294,31 @@ mod tests {
         assert_eq!(reach.grants.len(), 3);
         assert!(reach.granted([19; 32], [2; 32]), "the newest knock stays");
         assert!(!reach.granted([10; 32], [2; 32]));
+    }
+
+    #[test]
+    fn records_go_in_pages_and_the_store_takes_a_full_mailbox() {
+        let record = |seq, size| Record {
+            seq,
+            from: A,
+            kind: RecordKind::Meta,
+            sealed: vec![0; size],
+            epoch: 0,
+        };
+        let pages = pages(
+            vec![record(1, 6), record(2, 6), record(3, 20), record(4, 1)],
+            10,
+        );
+        let seqs: Vec<Vec<u64>> = pages
+            .iter()
+            .map(|p| p.iter().map(|r| r.seq).collect())
+            .collect();
+        assert_eq!(seqs, vec![vec![1], vec![2], vec![3], vec![4]]);
+        assert!(super::pages(Vec::new(), 10).iter().all(Vec::is_empty));
+        // A page always fits what a device decodes; a full mailbox fits
+        // what the relay reads back.
+        assert!(RECORDS_PAGE + RelayLimits::default().max_record < (1 << 29));
+        assert!(RelayLimits::default().max_mailbox_bytes < (1 << 31) / 2);
     }
 
     #[test]
