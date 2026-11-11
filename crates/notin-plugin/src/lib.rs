@@ -100,7 +100,7 @@ pub use kind::{
 };
 pub use loader::{LoaderError, SDK_ABI_VERSION};
 pub use manifest::{ManifestError, ManifestLibrary, ManifestRequirement, PluginManifest};
-pub use payload::{Payload, PayloadError};
+pub use payload::{Payload, PayloadError, WIRE, WIRE_LIMIT, Wire};
 pub use plugin::{Font, Plugin, PluginSettings, Registrar};
 pub use services::{
     HeaderPress, Host, HostServices, HostToast, Jump, Peer, Presence, Progress, Records, Share,

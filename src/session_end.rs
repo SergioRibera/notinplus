@@ -59,7 +59,7 @@ fn load() -> Vec<SessionEnd> {
     std::fs::read(path())
         .ok()
         .and_then(|bytes| {
-            bincode::decode_from_slice(&bytes, bincode::config::standard())
+            bincode::decode_from_slice(&bytes, notin_plugin::WIRE)
                 .ok()
                 .map(|(ends, _)| ends)
         })

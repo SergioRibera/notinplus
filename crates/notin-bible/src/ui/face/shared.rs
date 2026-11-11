@@ -11,7 +11,7 @@ use notin_sdk::services::Records;
 
 use crate::state::{BibleBookmark, BibleViewerState};
 
-const CODEC: bincode::config::Configuration = bincode::config::standard();
+const CODEC: notin_sdk::Wire = notin_sdk::WIRE;
 
 fn key(highlight: &BibleBookmark) -> String {
     use std::fmt::Write as _;

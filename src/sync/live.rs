@@ -44,7 +44,7 @@ impl LiveMessage {
     #[must_use]
     #[sismo::function("sync::live::decode")]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, bincode::config::standard())
+        bincode::decode_from_slice(bytes, notin_plugin::WIRE)
             .ok()
             .map(|(message, _)| message)
     }
@@ -79,4 +79,16 @@ fn listeners() -> std::sync::MutexGuard<'static, Vec<(ItemId, flume::Sender<Live
     LISTENERS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LiveMessage;
+
+    #[test]
+    fn a_forged_length_from_a_peer_is_dropped() {
+        // Presence claiming 2^64 - 1 bytes of state.
+        let forged = [2, 253, 255, 255, 255, 255, 255, 255, 255, 255];
+        assert!(LiveMessage::from_bytes(&forged).is_none());
+    }
 }

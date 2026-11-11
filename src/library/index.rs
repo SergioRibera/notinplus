@@ -10,14 +10,14 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 
-use bincode::config::{self, Configuration};
 use istmo_data_store::DataStoreClient;
 
 use super::error::{LibraryError, Result};
 use super::links::LinkIndex;
 use super::model::{INDEX_VERSION, LibraryIndex, WorkspaceIndex};
 
-const CODEC: Configuration = config::standard();
+// Bounded, so a forged length in what is read back is an error.
+const CODEC: notin_plugin::Wire = notin_plugin::WIRE;
 
 /// data-store key the whole blob lives under. The suffix tracks the
 /// on-disk schema: a blob written under an older key is never read, so

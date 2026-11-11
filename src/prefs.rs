@@ -30,14 +30,13 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-use bincode::config::{self, Configuration};
-
 use crate::brush::{BrushKind, BrushPreset};
 use crate::canvas::{InputMode, Viewport};
 use crate::library::bodies;
 use crate::library::{ItemId, ViewSlot};
 
-const CODEC: Configuration = config::standard();
+// Bounded, so a forged length in what is read back is an error.
+const CODEC: notin_plugin::Wire = notin_plugin::WIRE;
 const PREFS_FILE: &str = "prefs.bin";
 const EDITOR_PREFS_FILE: &str = "editor.bin";
 const HANDWRITING_PREFS_FILE: &str = "handwriting.bin";

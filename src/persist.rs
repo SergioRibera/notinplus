@@ -7,12 +7,12 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use bincode::config::{self, Configuration};
 use bincode::{Decode, Encode};
 
 use crate::library::bodies;
 
-const CODEC: Configuration = config::standard();
+// Bounded, so a forged length in what is read back is an error.
+const CODEC: notin_plugin::Wire = notin_plugin::WIRE;
 
 /// A record persisted as `<data dir>/<FILE>`.
 pub trait Persisted: Encode + Decode<()> + Default {

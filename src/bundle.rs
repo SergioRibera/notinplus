@@ -17,7 +17,6 @@ use std::io::{self, Cursor, Read, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bincode::config::{self, Configuration};
 use notin_i18n::tr;
 use notin_plugin::UserMessage;
 
@@ -28,7 +27,8 @@ use crate::library::{
     LinkKind, PaneTab, Tag, TagId, Workspace, WorkspaceId, bodies, refs,
 };
 
-const CODEC: Configuration = config::standard();
+// Bounded, so a forged length in what is read back is an error.
+const CODEC: notin_plugin::Wire = notin_plugin::WIRE;
 
 /// Schema version carried in [`BundleManifest::version`]. Bumped on any
 /// breaking payload change — the reader rejects unknown versions so a
@@ -764,6 +764,14 @@ fn parse_id<Id: core::str::FromStr>(name: &str, ext: &str) -> Option<Id> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_forged_length_in_an_imported_manifest_is_an_error() {
+        // A manifest whose exporting device name claims 2^64 - 1 bytes.
+        let mut forged = bincode::encode_to_vec(BUNDLE_VERSION, CODEC).unwrap();
+        forged.extend_from_slice(&[0, 0, 253, 255, 255, 255, 255, 255, 255, 255, 255]);
+        assert!(bincode::decode_from_slice::<BundleManifest, _>(&forged, CODEC).is_err());
+    }
 
     #[test]
     fn parse_id_round_trips_uuid() {

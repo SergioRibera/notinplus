@@ -126,7 +126,7 @@ impl DesktopStore {
 fn load(path: &std::path::Path) -> Option<HashMap<String, Value>> {
     let bytes = std::fs::read(path).ok()?;
     let (map, _) =
-        bincode::decode_from_slice::<HashMap<String, Value>, _>(&bytes, standard()).ok()?;
+        bincode::decode_from_slice::<HashMap<String, Value>, _>(&bytes, notin_plugin::WIRE).ok()?;
     Some(map)
 }
 

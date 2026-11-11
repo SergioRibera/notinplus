@@ -70,7 +70,7 @@ impl SyncRecord {
     #[must_use]
     #[sismo::function("library::sync::record_decode")]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, bincode::config::standard())
+        bincode::decode_from_slice(bytes, notin_plugin::WIRE)
             .ok()
             .map(|(record, _): (Self, usize)| record)
     }
@@ -560,5 +560,19 @@ impl LibraryData {
             (Some(a), None) | (None, Some(a)) => Some(a),
             (None, None) => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SyncRecord;
+
+    #[test]
+    fn a_forged_length_from_another_device_is_dropped() {
+        // A plugin snapshot whose plugin id claims 2^64 - 1 bytes.
+        let mut forged = vec![6];
+        forged.extend_from_slice(&[0; 16]);
+        forged.extend_from_slice(&[253, 255, 255, 255, 255, 255, 255, 255, 255]);
+        assert!(SyncRecord::decode(&forged).is_none());
     }
 }

@@ -55,7 +55,7 @@ impl Graveyard {
         let yard: Self = std::fs::read(&path)
             .ok()
             .and_then(|bytes| {
-                bincode::decode_from_slice(&bytes, config::standard())
+                bincode::decode_from_slice(&bytes, notin_plugin::WIRE)
                     .ok()
                     .map(|(yard, _): (Self, usize)| yard)
             })

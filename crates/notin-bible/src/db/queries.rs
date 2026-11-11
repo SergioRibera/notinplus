@@ -239,10 +239,7 @@ pub(crate) fn load_settings(db: &Db) -> Result<Vec<(String, ConfigValue)>> {
         Ok(rows
             .into_iter()
             .filter_map(|(key, bytes)| {
-                match bincode::decode_from_slice::<ConfigValue, _>(
-                    &bytes,
-                    bincode::config::standard(),
-                ) {
+                match bincode::decode_from_slice::<ConfigValue, _>(&bytes, notin_sdk::WIRE) {
                     Ok((value, _)) => Some((key, value)),
                     Err(e) => {
                         log::warn!("bible: setting {key} unreadable, dropped: {e}");

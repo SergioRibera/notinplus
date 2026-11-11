@@ -52,15 +52,21 @@ impl std::fmt::Display for InstallError {
 impl std::error::Error for InstallError {}
 
 /// Recover the typed error from a failed [`InstallerClient::install`].
+/// Bounded, so a forged length in the error bytes is an error itself.
+const PLUGIN_ERROR: bincode::config::Configuration<
+    bincode::config::LittleEndian,
+    bincode::config::Varint,
+    bincode::config::Limit<{ 1 << 20 }>,
+> = bincode::config::standard().with_limit::<{ 1 << 20 }>();
+
 impl From<istmo_core::IstmoError> for InstallError {
     fn from(err: istmo_core::IstmoError) -> Self {
         match err {
             istmo_core::IstmoError::PluginError { bytes } => {
-                bincode::decode_from_slice::<Self, _>(&bytes, bincode::config::standard())
-                    .map_or_else(
-                        |e| Self::Backend(format!("decode plugin error payload: {e}")),
-                        |(err, _)| err,
-                    )
+                bincode::decode_from_slice::<Self, _>(&bytes, PLUGIN_ERROR).map_or_else(
+                    |e| Self::Backend(format!("decode plugin error payload: {e}")),
+                    |(err, _)| err,
+                )
             }
             other => Self::Backend(other.to_string()),
         }

@@ -5,10 +5,21 @@
 //! adapters in [`crate::erased`] encode and decode them with one codec
 //! on both sides.
 
-use bincode::config::{self, Configuration};
+use bincode::config::{self, Configuration, Limit, LittleEndian, Varint};
 use bincode::{Decode, Encode};
 
-const CODEC: Configuration = config::standard();
+/// The bincode configuration for bytes that come from elsewhere.
+///
+/// Other devices, imported files, plugins: a length past [`WIRE_LIMIT`] is
+/// refused before anything is allocated, so a forged one can neither
+/// exhaust memory nor abort the process.
+pub type Wire = Configuration<LittleEndian, Varint, Limit<WIRE_LIMIT>>;
+/// Bytes one decoded value may claim.
+pub const WIRE_LIMIT: usize = 1 << 28;
+/// See [`Wire`]. Encodes the same as `bincode::config::standard()`.
+pub const WIRE: Wire = config::standard().with_limit::<WIRE_LIMIT>();
+
+const CODEC: Wire = WIRE;
 
 /// A value that crosses the shell as bytes.
 pub trait Payload: Encode + Decode<()> + Clone + Send + Sync + 'static {
@@ -51,6 +62,14 @@ mod tests {
     struct Verse {
         book: u8,
         chapter: u16,
+    }
+
+    #[test]
+    fn a_forged_length_is_an_error() {
+        // A string claiming 2^64 - 1 bytes.
+        let forged = [253, 255, 255, 255, 255, 255, 255, 255, 255];
+        assert!(<String as Payload>::from_bytes(&forged).is_err());
+        assert!(<Vec<Vec<u8>> as Payload>::from_bytes(&forged).is_err());
     }
 
     #[test]

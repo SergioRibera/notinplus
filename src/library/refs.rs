@@ -17,7 +17,6 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use bincode::config::{self, Configuration};
 use notin_plugin::SourceRef;
 
 use super::bodies;
@@ -25,7 +24,8 @@ use super::model::ItemId;
 use crate::deep_link::scan_links;
 use crate::doc::Doc;
 
-const CODEC: Configuration = config::standard();
+// Bounded, so a forged length in what is read back is an error.
+const CODEC: notin_plugin::Wire = notin_plugin::WIRE;
 const FILE: &str = "refs.bincode";
 /// Schema version encoded into the cache file; a mismatch drops it.
 const VERSION: u32 = 1;

@@ -27,8 +27,19 @@ impl NoteAnchor {
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("notes::anchor_decode"))]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, bincode::config::standard())
+        bincode::decode_from_slice(bytes, notin_sdk::WIRE)
             .ok()
             .map(|(anchor, _)| anchor)
+    }
+}
+
+#[cfg(test)]
+mod forged {
+    use super::NoteAnchor;
+
+    #[test]
+    fn a_forged_length_is_no_anchor() {
+        let forged = [1, 253, 255, 255, 255, 255, 255, 255, 255, 255];
+        assert!(NoteAnchor::decode(&forged).is_none());
     }
 }

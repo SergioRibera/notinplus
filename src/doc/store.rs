@@ -28,7 +28,6 @@
 use std::borrow::Cow;
 use std::fmt;
 
-use bincode::config::{self, Configuration};
 use loro::{
     Container, ExportMode, Frontiers, LoroDoc, LoroEncodeError, LoroError, LoroMap,
     LoroMovableList, LoroValue, UpdateOptions, ValueOrContainer, VersionVector,
@@ -43,7 +42,8 @@ use crate::image_box::ImageBox;
 use crate::ink_glyph::InkGlyph;
 use crate::text_box::TextBox;
 
-const CODEC: Configuration = config::standard();
+// Bounded, so a forged length in what is read back is an error.
+const CODEC: notin_plugin::Wire = notin_plugin::WIRE;
 
 const META: &str = "meta";
 const BRUSHES: &str = "brushes";

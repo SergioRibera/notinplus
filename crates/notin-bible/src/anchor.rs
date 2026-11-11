@@ -68,8 +68,19 @@ impl BibleAnchor {
     /// (chip ⚠) rather than propagating a hard failure.
     #[must_use]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, bincode::config::standard())
+        bincode::decode_from_slice(bytes, notin_sdk::WIRE)
             .ok()
             .map(|(v, _)| v)
+    }
+}
+
+#[cfg(test)]
+mod forged {
+    use super::BibleAnchor;
+
+    #[test]
+    fn a_forged_length_is_no_anchor() {
+        let forged = [253, 255, 255, 255, 255, 255, 255, 255, 255];
+        assert!(BibleAnchor::decode(&forged).is_none());
     }
 }
