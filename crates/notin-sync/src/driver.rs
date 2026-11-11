@@ -129,9 +129,7 @@ impl Payload {
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::payload::decode"))]
     fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, crate::WIRE)
-            .ok()
-            .map(|(payload, _)| payload)
+        crate::decode(bytes, crate::cap::PAYLOAD).ok()
     }
 }
 
@@ -2213,11 +2211,12 @@ impl<R: Replica> SyncDriver<R> {
         if intent.invite.owner.device != from {
             return Ok(());
         }
-        let answer = intent.invite.key.open(sealed).ok().and_then(|plain| {
-            bincode::decode_from_slice(&plain, crate::WIRE)
-                .ok()
-                .map(|(answer, _): (JoinAnswer, usize)| answer)
-        });
+        let answer = intent
+            .invite
+            .key
+            .open(sealed)
+            .ok()
+            .and_then(|plain| crate::decode(&plain, crate::cap::ANSWER).ok());
         if matches!(answer, Some(JoinAnswer::Pending)) {
             if let Some(intent) = self.joins.get_mut(&id)
                 && !intent.awaiting_approval

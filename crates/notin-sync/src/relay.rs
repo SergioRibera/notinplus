@@ -230,9 +230,7 @@ impl RelayMessage {
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("sync::relay::decode"))]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, crate::WIRE)
-            .ok()
-            .map(|(message, _)| message)
+        crate::decode(bytes, crate::cap::RELAY).ok()
     }
 }
 
@@ -380,14 +378,10 @@ impl Default for RelayLimits {
 /// Bytes of records the relay hands over in one message.
 const RECORDS_PAGE: usize = 4 << 20;
 
-/// The relay's own mailbox files: room for the fullest mailbox
-/// [`RelayLimits::max_mailbox_bytes`] lets through, so none is dropped
-/// on loading, while a corrupt length still cannot abort.
-const STORE: bincode::config::Configuration<
-    bincode::config::LittleEndian,
-    bincode::config::Varint,
-    bincode::config::Limit<{ 1 << 31 }>,
-> = bincode::config::standard().with_limit::<{ 1 << 31 }>();
+/// What one of the relay's own mailbox files may take: room for the
+/// fullest mailbox [`RelayLimits::max_mailbox_bytes`] lets through, so
+/// none is dropped on loading, while a corrupt length cannot abort.
+const STORE_CAP: usize = 512 << 20;
 
 /// `records` split in runs of at most `budget` sealed bytes, one record
 /// at least in each.
@@ -445,7 +439,7 @@ impl Store {
                 continue;
             };
             let bytes = std::fs::read(&path)?;
-            if let Ok((mailbox, _)) = bincode::decode_from_slice::<Mailbox, _>(&bytes, STORE) {
+            if let Ok(mailbox) = crate::decode::<Mailbox>(&bytes, STORE_CAP) {
                 store.insert(ShareId(id), mailbox);
             }
         }
@@ -1317,8 +1311,8 @@ mod tests {
         assert!(super::pages(Vec::new(), 10).iter().all(Vec::is_empty));
         // A page always fits what a device decodes; a full mailbox fits
         // what the relay reads back.
-        assert!(RECORDS_PAGE + RelayLimits::default().max_record < (1 << 29));
-        assert!(RelayLimits::default().max_mailbox_bytes < (1 << 31) / 2);
+        assert!(RelayLimits::default().max_mailbox_bytes < STORE_CAP as u64);
+        assert!(RECORDS_PAGE + RelayLimits::default().max_record < crate::cap::RELAY);
     }
 
     #[test]

@@ -315,9 +315,7 @@ impl Frame {
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::net::frame_decode"))]
     fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, crate::WIRE)
-            .ok()
-            .map(|(frame, _)| frame)
+        crate::decode(bytes, crate::cap::FRAME).ok()
     }
 }
 

@@ -983,9 +983,7 @@ impl ShareBook {
     #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("sync::share_book::decode"))]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        bincode::decode_from_slice(bytes, crate::WIRE)
-            .ok()
-            .map(|(book, _): (Self, usize)| book)
+        crate::decode(bytes, crate::cap::PAYLOAD).ok()
     }
 
     #[must_use]
@@ -1082,9 +1080,7 @@ impl ShareMessage {
     #[cfg_attr(feature = "sismo", sismo::function("sync::share::open"))]
     pub fn open(key: &ShareKey, sealed: &[u8]) -> Option<Self> {
         let plain = key.open(sealed).ok()?;
-        bincode::decode_from_slice(&plain, crate::WIRE)
-            .ok()
-            .map(|(message, _)| message)
+        crate::decode(&plain, crate::cap::PAYLOAD).ok()
     }
 
     /// [`Self::open`] with whichever of the share's keys sealed it.
@@ -1122,8 +1118,8 @@ impl ShareMessage {
         kind: RecordKind,
     ) -> Result<(DeviceId, Self), Unopened> {
         let plain = share.open_any(sealed).ok_or(Unopened::NoKey)?;
-        let (record, _): (SignedRecord, usize) =
-            bincode::decode_from_slice(&plain, crate::WIRE).map_err(|_| Unopened::Invalid)?;
+        let record: SignedRecord =
+            crate::decode(&plain, crate::cap::RECORD).map_err(|_| Unopened::Invalid)?;
         let author = share
             .participants()
             .find(|m| m.public == record.author)
@@ -1135,8 +1131,8 @@ impl ShareMessage {
         verifying
             .verify_strict(&signed, &signature)
             .map_err(|_| Unopened::Invalid)?;
-        let (message, _) = bincode::decode_from_slice(&record.message, crate::WIRE)
-            .map_err(|_| Unopened::Invalid)?;
+        let message =
+            crate::decode(&record.message, crate::cap::RECORD).map_err(|_| Unopened::Invalid)?;
         Ok((author.device, message))
     }
 }
@@ -1186,7 +1182,7 @@ pub fn open_keys(
     let (epoch, boxed) = sealed.split_first_chunk::<4>()?;
     let epoch = u32::from_be_bytes(*epoch);
     let plain = key_box(&me.agree(owner)?, share, epoch).open(boxed).ok()?;
-    let (keys, _): (Vec<ShareKey>, usize) = bincode::decode_from_slice(&plain, crate::WIRE).ok()?;
+    let keys: Vec<ShareKey> = crate::decode(&plain, crate::cap::KEYS).ok()?;
     Some((epoch, keys))
 }
 

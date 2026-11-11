@@ -1221,9 +1221,7 @@ fn beacon_bytes(beacon: &Beacon) -> Vec<u8> {
 
 #[cfg_attr(feature = "sismo", sismo::function("sync::lan::decode_beacon"))]
 fn decode_beacon(bytes: &[u8]) -> Option<Beacon> {
-    bincode::decode_from_slice(bytes, crate::WIRE)
-        .ok()
-        .map(|(beacon, _): (Beacon, usize)| beacon)
+    crate::decode(bytes, crate::cap::BEACON).ok()
 }
 
 /// The listening socket, a relay node when the config says so.
