@@ -5434,7 +5434,7 @@ rec {
           "serde" = [ "dep:serde" ];
           "zeroize" = [ "dep:zeroize" ];
         };
-        resolvedDefaultFeatures = [ "digest" "precomputed-tables" "zeroize" ];
+        resolvedDefaultFeatures = [ "alloc" "default" "digest" "precomputed-tables" "zeroize" ];
       };
       "curve25519-dalek-derive" = rec {
         crateName = "curve25519-dalek-derive";
@@ -17789,6 +17789,10 @@ rec {
           {
             name = "chacha20poly1305";
             packageId = "chacha20poly1305";
+          }
+          {
+            name = "curve25519-dalek";
+            packageId = "curve25519-dalek 5.0.0";
           }
           {
             name = "ed25519-dalek";
