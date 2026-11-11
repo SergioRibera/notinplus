@@ -216,18 +216,9 @@ impl<R: Replica> SyncEngine<R> {
                 sent: HashMap::new(),
             },
         );
-        let out = self.push_for(peer)?;
+        let (out, sent) = self.lacking(peer)?;
         // What goes out now is what the peer holds next, so a push of a
         // later edit builds on it instead of waiting for another round.
-        let sent: Vec<(DocId, Version)> = out
-            .iter()
-            .filter_map(|message| match message {
-                Message::DocUpdates { doc, .. } | Message::DocSnapshot { doc, .. } => {
-                    Some((*doc, self.replica.doc_version(*doc)?))
-                }
-                Message::Inventory { .. } | Message::Blobs(_) => None,
-            })
-            .collect();
         if let Some(heard) = self.heard.get_mut(&peer) {
             heard.sent.extend(sent);
         }
@@ -239,10 +230,24 @@ impl<R: Replica> SyncEngine<R> {
     /// they land without waiting for the peer's next round.
     #[cfg_attr(feature = "sismo", sismo::function("sync::engine::push_for"))]
     pub fn push_for(&self, peer: DeviceId) -> Result<Vec<Message>, SyncError<R::Error>> {
+        self.lacking(peer).map(|(out, _)| out)
+    }
+
+    /// [`Self::push_for`], with the version each document had when read
+    /// for it: never newer than what goes out, even while edits land.
+    #[allow(
+        clippy::type_complexity,
+        reason = "a private pair of what goes and what it held"
+    )]
+    fn lacking(
+        &self,
+        peer: DeviceId,
+    ) -> Result<(Vec<Message>, Vec<(DocId, Version)>), SyncError<R::Error>> {
         let Some(heard) = self.heard.get(&peer) else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         };
         let mut out = Vec::new();
+        let mut sent = Vec::new();
         let remote = &heard.docs;
         for (doc, local) in self.replica.docs() {
             if !self.scope.covers_doc(doc) {
@@ -252,18 +257,23 @@ impl<R: Replica> SyncEngine<R> {
                 Some(theirs) if *theirs == local => {}
                 Some(theirs) => match self.replica.doc_updates_since(doc, theirs) {
                     Ok(bytes) if bytes.is_empty() => {}
-                    Ok(bytes) => out.push(Message::DocUpdates { doc, bytes }),
+                    Ok(bytes) => {
+                        out.push(Message::DocUpdates { doc, bytes });
+                        sent.push((doc, local));
+                    }
                     // A version this replica can no longer diff against
                     // (history trimmed, foreign marker): the whole document
                     // still gets the peer there.
                     Err(_) => {
                         let bytes = self.replica.doc_snapshot(doc).map_err(SyncError::Replica)?;
                         out.push(Message::DocSnapshot { doc, bytes });
+                        sent.push((doc, local));
                     }
                 },
                 None => {
                     let bytes = self.replica.doc_snapshot(doc).map_err(SyncError::Replica)?;
                     out.push(Message::DocSnapshot { doc, bytes });
+                    sent.push((doc, local));
                 }
             }
         }
@@ -287,7 +297,7 @@ impl<R: Replica> SyncEngine<R> {
                 out.push(Message::Blobs(blobs));
             }
         }
-        Ok(out)
+        Ok((out, sent))
     }
 
     /// New changes of `doc` for `peer` since what it last announced, and
@@ -613,5 +623,63 @@ mod tests {
             Message::from_bytes::<Infallible>(&bytes),
             Err(SyncError::Version(v)) if v == PROTOCOL_VERSION + 1
         ));
+    }
+
+    /// A library where an edit lands right after each whole document is
+    /// read out, as when the user keeps writing during an exchange.
+    struct EditsAfterExport(std::sync::Arc<std::sync::Mutex<MemReplica>>);
+
+    impl Replica for EditsAfterExport {
+        type Error = Infallible;
+
+        fn docs(&self) -> Vec<(DocId, Version)> {
+            self.0.docs()
+        }
+
+        fn doc_version(&self, doc: DocId) -> Option<Version> {
+            self.0.doc_version(doc)
+        }
+
+        fn doc_updates_since(&self, doc: DocId, since: &Version) -> Result<Vec<u8>, Infallible> {
+            self.0.doc_updates_since(doc, since)
+        }
+
+        fn doc_snapshot(&self, doc: DocId) -> Result<Vec<u8>, Infallible> {
+            let bytes = self.0.doc_snapshot(doc);
+            self.0.lock().unwrap().mark(doc, 1, 99);
+            bytes
+        }
+
+        fn doc_import(&mut self, doc: DocId, bytes: &[u8]) -> Result<(), Infallible> {
+            self.0.doc_import(doc, bytes)
+        }
+
+        fn blob_heads(&self) -> Vec<BlobHead> {
+            self.0.blob_heads()
+        }
+
+        fn blobs(&self, keys: &[BlobKey]) -> Vec<Blob> {
+            self.0.blobs(keys)
+        }
+
+        fn blob_merge(&mut self, blob: Blob) -> Result<bool, Infallible> {
+            self.0.blob_merge(blob)
+        }
+    }
+
+    #[test]
+    fn an_edit_landing_while_answering_still_gets_pushed() {
+        let library = std::sync::Arc::new(std::sync::Mutex::new(MemReplica::default()));
+        library.lock().unwrap().mark(D1, 1, 1);
+        let mut a = SyncEngine::new(EditsAfterExport(library), Scope::All);
+        let mut b = SyncEngine::new(MemReplica::default(), Scope::All);
+        for reply in a.handle(B, b.inventory()).unwrap().replies {
+            b.handle(A, reply).unwrap();
+        }
+        assert_eq!(marks(&b, D1), vec![(1, 1)]);
+        // The edit came after the snapshot: the next push carries it.
+        let push = a.push_doc(B, D1).unwrap().expect("the late edit goes out");
+        b.handle(A, push).unwrap();
+        assert_eq!(marks(&b, D1), vec![(1, 1), (1, 99)]);
     }
 }
