@@ -158,6 +158,36 @@ impl fmt::Debug for PairingCode {
     }
 }
 
+/// Random secret carried only by a pairing QR or link, never typed.
+/// Six digits are too few to show a relay (it could try them all), so
+/// reaching the offering device through one takes this instead.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct PairingSecret([u8; 16]);
+
+impl PairingSecret {
+    #[must_use]
+    pub fn random() -> Self {
+        Self(rand::random())
+    }
+
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+}
+
+impl From<[u8; 16]> for PairingSecret {
+    fn from(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl fmt::Debug for PairingSecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PairingSecret(..)")
+    }
+}
+
 /// What the device persists: its key, its display name and the
 /// devices it trusts.
 #[derive(Clone, Debug)]

@@ -1,4 +1,4 @@
-//! `notin-relay --port 7720 --data ./relay-data [--name "Relay"]`
+//! `notin-relay --port 7720 --data ./relay-data [--name "Relay"] [--no-retain]`
 //!
 //! Prints the address to put in invitations and keeps running until
 //! interrupted. The keypair is created on first run under `--data`.
@@ -7,7 +7,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use notin_sync::{DeviceProfile, RelayAddr, RelayConfig, RelayServer, RelayStore};
+use notin_sync::{DeviceProfile, RelayAddr, RelayConfig, RelayLimits, RelayServer, RelayStore};
 
 const DEFAULT_PORT: u16 = 7720;
 
@@ -19,6 +19,9 @@ struct Args {
     /// Address to print for invitations; defaults to the first
     /// non-loopback IPv4 of this host.
     advertise: Option<String>,
+    /// Keep permanent mailboxes on disk; `--no-retain` makes a pure
+    /// pass-through that writes nothing down.
+    retain: bool,
 }
 
 #[derive(Debug)]
@@ -47,6 +50,7 @@ impl Args {
             data: PathBuf::from("relay-data"),
             name: "notein relay".to_owned(),
             advertise: None,
+            retain: true,
         };
         while let Some(flag) = raw.next() {
             match flag.as_str() {
@@ -58,6 +62,7 @@ impl Args {
                     args.data = PathBuf::from(raw.next().ok_or(ArgError::Missing("--data"))?);
                 }
                 "--name" => args.name = raw.next().ok_or(ArgError::Missing("--name"))?,
+                "--no-retain" => args.retain = false,
                 "--advertise" => {
                     args.advertise = Some(raw.next().ok_or(ArgError::Missing("--advertise"))?);
                 }
@@ -85,6 +90,10 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             key: profile.key().clone(),
             name: profile.name().to_owned(),
             port: args.port,
+            limits: RelayLimits {
+                retain: args.retain,
+                ..RelayLimits::default()
+            },
         },
         store,
     )?;
@@ -116,7 +125,7 @@ fn main() -> ExitCode {
         Err(err) => {
             eprintln!("{err}");
             eprintln!(
-                "usage: notin-relay [--port N] [--data DIR] [--name NAME] [--advertise HOST]"
+                "usage: notin-relay [--port N] [--data DIR] [--name NAME] [--advertise HOST] [--no-retain]"
             );
             return ExitCode::FAILURE;
         }

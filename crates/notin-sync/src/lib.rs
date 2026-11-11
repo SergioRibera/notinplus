@@ -31,10 +31,12 @@ pub use driver::{
 };
 pub use engine::{DocStatus, Handled, Message, PROTOCOL_VERSION, SyncEngine};
 pub use error::{CipherError, IdentityError, SyncError};
-pub use identity::{DeviceId, DeviceKey, DeviceProfile, PairingCode, TrustedDevice};
+pub use identity::{DeviceId, DeviceKey, DeviceProfile, PairingCode, PairingSecret, TrustedDevice};
 pub use net::lan::LanNode;
 pub use net::{Beacon, LanConfig, Lane, NetError, NetEvent, PeerInfo};
-pub use relay::{RelayAddr, RelayConfig, RelayMessage, RelayServer, Store as RelayStore};
+pub use relay::{
+    KnockToken, RelayAddr, RelayConfig, RelayLimits, RelayMessage, RelayServer, Store as RelayStore,
+};
 pub use replica::{Blob, BlobHead, BlobKey, BlobKind, DocId, Replica, Scope, Version};
 pub use share::{
     EndedShare, Invite, LeftShare, Member, Role, Share, ShareBook, ShareEdit, ShareId,

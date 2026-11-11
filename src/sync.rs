@@ -1292,6 +1292,8 @@ impl Service {
                     public: peer.public,
                     name: peer.name,
                     code,
+                    // Typed codes only pair on the same network.
+                    secret: None,
                 })
             }
             Cmd::SetName(name) => {

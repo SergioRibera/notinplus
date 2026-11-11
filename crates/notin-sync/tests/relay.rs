@@ -10,7 +10,7 @@ use common::MemReplica;
 use notin_sync::driver::DriverEvent;
 use notin_sync::{
     Action, DeviceKey, DeviceProfile, DocId, Invite, LanConfig, LanNode, RelayAddr, RelayConfig,
-    RelayServer, RelayStore, Share, ShareBook, ShareMode, SyncDriver,
+    RelayLimits, RelayServer, RelayStore, Share, ShareBook, ShareMode, SyncDriver,
 };
 /// A device: its transport plus its driver, pumped by hand.
 struct Device {
@@ -98,6 +98,7 @@ fn relay() -> (RelayServer, RelayAddr) {
             key,
             name: "relay".into(),
             port: 0,
+            limits: RelayLimits::default(),
         },
         RelayStore::memory(),
     )

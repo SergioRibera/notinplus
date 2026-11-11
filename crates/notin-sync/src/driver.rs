@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 
 use crate::engine::{Message, SyncEngine};
 use crate::error::SyncError;
-use crate::identity::{DeviceId, DeviceProfile, PairingCode, TrustedDevice};
+use crate::identity::{DeviceId, DeviceProfile, PairingCode, PairingSecret, TrustedDevice};
 use crate::net::{Lane, NetEvent, PeerInfo};
-use crate::relay::{RecordKind, RelayAddr, RelayMessage};
+use crate::relay::{KnockToken, RecordKind, RelayAddr, RelayMessage};
 use crate::replica::{BlobKey, BlobKind, DocId, Replica, Scope, Version};
 use crate::share::{
     EndedShare, Invite, LeftShare, Member, Role, Share, ShareBook, ShareEdit, ShareId,
@@ -138,18 +138,26 @@ pub struct PairingOffer {
     pub public: [u8; 32],
     pub name: String,
     pub code: PairingCode,
+    /// Only in a QR or link, never typed: what lets the device reach the
+    /// offering one through a relay.
+    pub secret: Option<PairingSecret>,
 }
 
 impl PairingOffer {
-    /// `notein://pair?pk=<hex>&name=<hex>&code=<6 digits>`.
+    /// `notein://pair?pk=<hex>&name=<hex>&code=<6 digits>[&s=<hex>]`.
     #[must_use]
     pub fn to_link(&self) -> String {
-        format!(
+        let mut link = format!(
             "{LINK_SCHEME}pk={}&name={}&code={}",
             hex::encode(self.public),
             hex::encode(self.name.as_bytes()),
             self.code
-        )
+        );
+        if let Some(secret) = self.secret {
+            link.push_str("&s=");
+            link.push_str(&hex::encode(secret.as_bytes()));
+        }
+        link
     }
 
     /// Reverse of [`Self::to_link`].
@@ -159,6 +167,7 @@ impl PairingOffer {
         let mut public = None;
         let mut name = None;
         let mut code = None;
+        let mut secret = None;
         for pair in query.split('&') {
             let (key, value) = pair.split_once('=')?;
             match key {
@@ -168,6 +177,10 @@ impl PairingOffer {
                 }
                 "name" => name = Some(String::from_utf8(hex::decode(value).ok()?).ok()?),
                 "code" => code = PairingCode::parse(value),
+                "s" => {
+                    let bytes = hex::decode(value).ok()?;
+                    secret = Some(PairingSecret::from(<[u8; 16]>::try_from(bytes).ok()?));
+                }
                 _ => {}
             }
         }
@@ -177,6 +190,7 @@ impl PairingOffer {
             public,
             name: name?,
             code: code?,
+            secret,
         })
     }
 }
@@ -283,11 +297,25 @@ pub enum Action {
     Event(DriverEvent),
 }
 
+#[derive(Clone, Copy, Debug)]
+struct Offer {
+    code: PairingCode,
+    secret: PairingSecret,
+    since: Instant,
+}
+
+impl Offer {
+    fn expired(&self) -> bool {
+        self.since.elapsed() > OFFER_TTL
+    }
+}
+
 #[derive(Clone, Debug)]
 struct PairIntent {
     device: DeviceId,
     public: [u8; 32],
     code: PairingCode,
+    secret: Option<PairingSecret>,
     name: String,
     since: Instant,
 }
@@ -437,7 +465,7 @@ pub struct SyncDriver<R> {
     shares: HashMap<ShareId, ShareLink<R>>,
     discovered: HashMap<DeviceId, PeerInfo>,
     connected: HashMap<DeviceId, PeerInfo>,
-    offer: Option<(PairingCode, Instant)>,
+    offer: Option<Offer>,
     intent: Option<PairIntent>,
     joins: HashMap<ShareId, JoinIntent>,
     relay: Option<RelayLink>,
@@ -619,13 +647,18 @@ impl<R: Replica> SyncDriver<R> {
 
     /// Start accepting one pairing: the returned offer is what to show.
     pub fn begin_pairing(&mut self) -> PairingOffer {
-        let code = PairingCode::random();
-        self.offer = Some((code, Instant::now()));
+        let offer = Offer {
+            code: PairingCode::random(),
+            secret: PairingSecret::random(),
+            since: Instant::now(),
+        };
+        self.offer = Some(offer);
         PairingOffer {
             device: self.profile.id(),
             public: *self.profile.key().public(),
             name: self.profile.name().to_owned(),
-            code,
+            code: offer.code,
+            secret: Some(offer.secret),
         }
     }
 
@@ -642,13 +675,17 @@ impl<R: Replica> SyncDriver<R> {
             device: offer.device,
             public: offer.public,
             code: offer.code,
+            secret: offer.secret,
             name: offer.name.clone(),
             since: Instant::now(),
         });
         if self.connected.contains_key(&offer.device) {
             return vec![self.pair_request(offer.device)];
         }
-        self.connect_to(offer.device).into_iter().collect()
+        self.known_keys.insert(offer.device, offer.public);
+        let mut out: Vec<Action> = self.pair_knock().into_iter().collect();
+        out.extend(self.connect_to(offer.device));
+        out
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::pair_request"))]
@@ -673,15 +710,13 @@ impl<R: Replica> SyncDriver<R> {
     /// it has not expired or been consumed.
     #[must_use]
     pub fn current_offer(&self) -> Option<PairingOffer> {
-        let (code, since) = self.offer?;
-        if since.elapsed() > OFFER_TTL {
-            return None;
-        }
+        let offer = self.offer.filter(|o| !o.expired())?;
         Some(PairingOffer {
             device: self.profile.id(),
             public: *self.profile.key().public(),
             name: self.profile.name().to_owned(),
-            code,
+            code: offer.code,
+            secret: Some(offer.secret),
         })
     }
 
@@ -820,24 +855,40 @@ impl<R: Replica> SyncDriver<R> {
                 awaiting_approval: false,
             },
         );
-        if let Some(request) = self.join_request(share) {
-            return vec![request];
+        let request = self.join_request(share);
+        if !request.is_empty() {
+            return request;
         }
         self.connect_to(owner).into_iter().collect()
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::join_request"))]
-    fn join_request(&self, share: ShareId) -> Option<Action> {
-        let intent = self.joins.get(&share)?;
-        self.route(
-            intent.invite.owner.device,
+    fn join_request(&self, share: ShareId) -> Vec<Action> {
+        let Some(intent) = self.joins.get(&share) else {
+            return Vec::new();
+        };
+        let owner = intent.invite.owner.device;
+        let Some(request) = self.route(
+            owner,
             &Payload::Join {
                 share,
                 name: self.profile.display_name().to_owned(),
                 device_name: self.profile.name().to_owned(),
                 proof: intent.invite.proof(self.profile.key().public()),
             },
-        )
+        ) else {
+            return Vec::new();
+        };
+        let mut out = Vec::with_capacity(2);
+        if !self.connected.contains_key(&owner) {
+            // Through the relay the owner only hears us once we knock.
+            out.extend(self.relay_send(&RelayMessage::Knock {
+                to: intent.invite.owner.public,
+                token: KnockToken::share(&intent.invite.key, share),
+            }));
+        }
+        out.push(request);
+        out
     }
 
     /// Deliver `payload` to `device`: straight down an open channel,
@@ -1527,8 +1578,8 @@ impl<R: Replica> SyncDriver<R> {
             PairMessage::Request { code, name } => {
                 let accepted = self
                     .offer
-                    .take_if(|(_, since)| since.elapsed() <= OFFER_TTL)
-                    .is_some_and(|(expected, _)| expected.value() == code);
+                    .take_if(|o| !o.expired())
+                    .is_some_and(|o| o.code.value() == code);
                 if accepted {
                     let device = TrustedDevice::new(peer.public, name, now_ms());
                     self.profile.trust(device.clone());
@@ -1539,6 +1590,8 @@ impl<R: Replica> SyncDriver<R> {
                         }),
                     ));
                     out.push(Action::Event(DriverEvent::Paired(device)));
+                    out.extend(self.relay_consent());
+                    out.extend(self.relay_consent());
                     out.push(Action::Event(DriverEvent::PeerOnline {
                         device: from,
                         online: true,
@@ -1826,10 +1879,7 @@ impl<R: Replica> SyncDriver<R> {
             sismo::counter!("sync.redials", self.redials.len());
         }
         let mut out = Vec::new();
-        if self
-            .offer
-            .is_some_and(|(_, since)| since.elapsed() > OFFER_TTL)
-        {
+        if self.offer.is_some_and(|o| o.expired()) {
             self.offer = None;
         }
         if let Some(intent) = self.intent.take_if(|i| i.since.elapsed() > OFFER_TTL) {
@@ -1856,6 +1906,9 @@ impl<R: Replica> SyncDriver<R> {
         for share in pending {
             out.extend(self.join_request(share));
         }
+        // Consent follows pairings, revocations and offers opened since.
+        out.extend(self.relay_consent());
+        out.extend(self.pair_knock());
         // Subscriptions are cheap to repeat and heal a refused one once
         // the owner's registration has landed.
         let held: Vec<(ShareId, u64)> = self
@@ -2195,6 +2248,31 @@ impl<R: Replica> SyncDriver<R> {
         })
     }
 
+    /// Tell the relay which devices may reach us there: the trusted
+    /// ones, and whoever holds the open pairing link.
+    fn relay_consent(&self) -> Vec<Action> {
+        let keys = self.profile.trusted().iter().map(|t| t.public).collect();
+        let token = self
+            .offer
+            .filter(|o| !o.expired())
+            .map(|o| KnockToken::pairing(&o.secret));
+        self.relay_send(&RelayMessage::Trust { keys })
+            .into_iter()
+            .chain(self.relay_send(&RelayMessage::Expect { token }))
+            .collect()
+    }
+
+    /// Knock on the device we are pairing with, when its link carried
+    /// the secret for it.
+    fn pair_knock(&self) -> Option<Action> {
+        let intent = self.intent.as_ref()?;
+        let secret = intent.secret?;
+        self.relay_send(&RelayMessage::Knock {
+            to: intent.public,
+            token: KnockToken::pairing(&secret),
+        })
+    }
+
     /// Owner tells the relay who may use the share's mailbox.
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::relay_register"))]
     fn relay_register(&self, id: ShareId) -> Vec<Action> {
@@ -2208,6 +2286,7 @@ impl<R: Replica> SyncDriver<R> {
             share: id,
             members: share.members.iter().map(|m| m.public).collect(),
             retain: share.mode == ShareMode::Permanent,
+            knock: KnockToken::share(&share.key, id),
         })
         .into_iter()
         .collect()
@@ -2218,6 +2297,7 @@ impl<R: Replica> SyncDriver<R> {
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::relay_hello"))]
     fn relay_hello(&mut self) -> Result<Vec<Action>, SyncError<R::Error>> {
         let mut out = vec![Action::Event(DriverEvent::RelayOnline(true))];
+        out.extend(self.relay_consent());
         let ids: Vec<ShareId> = self.shares.keys().copied().collect();
         for id in ids {
             out.extend(self.relay_register(id));
@@ -2385,9 +2465,15 @@ impl<R: Replica> SyncDriver<R> {
                     Some(Payload::Sync(_) | Payload::Pair(_) | Payload::Relay(_)) | None => {}
                 }
             }
+            RelayMessage::Full { share } => {
+                tracing::warn!(target: "notin-sync", "relay keeps no more for share {share:?}");
+            }
             RelayMessage::Forward { .. }
             | RelayMessage::Register { .. }
             | RelayMessage::Unregister { .. }
+            | RelayMessage::Trust { .. }
+            | RelayMessage::Expect { .. }
+            | RelayMessage::Knock { .. }
             | RelayMessage::Subscribe { .. }
             | RelayMessage::Publish { .. } => {}
         }
