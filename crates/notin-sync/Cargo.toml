@@ -28,7 +28,7 @@ sismo = ["dep:sismo"]
 [dependencies]
 # Spans for the sismo profiler; off unless an app turns it on.
 sismo = { version = "0.1.1", default-features = false, optional = true }
-zudp = { version = "0.3.9", features = ["security", "discovery", "relay"] }
+zudp = { version = "0.4", features = ["security", "discovery", "relay"] }
 bincode = { version = "2", features = ["derive", "std"] }
 blake2 = "0.10"
 chacha20poly1305 = "0.10"

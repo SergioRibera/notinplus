@@ -123,9 +123,6 @@ istmo-build = "0.1.1-alpha.5"
 notin-i18n = { version = "0.1.0-alpha.2", path = "crates/notin-i18n", features = ["build"] }
 
 [patch.crates-io]
-# Relayed end-to-end sessions and hole punching; stays until zudp 0.4 is
-# on crates.io.
-zudp = { path = "../../GamerOS/zudp" }
 # istmo.documents (open files from the system, single instance) and
 # [[app.document_type]], until istmo publishes them.
 istmo = { git = "https://github.com/SergioRibera/istmo", rev = "c902ab0" }
