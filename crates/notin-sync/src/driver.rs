@@ -20,7 +20,7 @@ use crate::relay::{KnockToken, RecordKind, RelayAddr, RelayMessage};
 use crate::replica::{BlobKey, BlobKind, DocId, Replica, Scope, Version};
 use crate::share::{
     EndedShare, Invite, LeftShare, Member, Role, Share, ShareBook, ShareEdit, ShareId,
-    ShareMessage, ShareMode, proof_is_valid,
+    ShareMessage, ShareMode, Unopened, proof_is_valid,
 };
 
 /// How long a pairing offer stays valid.
@@ -37,6 +37,10 @@ const REDIAL_MAX: Duration = Duration::from_secs(30);
 const LARGER_WAITS: u32 = 2;
 /// Payloads held for one device until a channel to it opens.
 const OUTBOX_MAX: usize = 64;
+/// How many batches a mailbox record by an unlisted author waits.
+const PARK_TRIES: u8 = 5;
+/// Such records kept per share.
+const PARKED_MAX: usize = 256;
 /// How long a held message is worth delivering.
 const OUTBOX_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -560,6 +564,9 @@ pub struct SyncDriver<R> {
     /// Public keys of every device heard of, so a channel can be opened
     /// through a relay when it is not on the network.
     known_keys: HashMap<DeviceId, [u8; 32]>,
+    /// Mailbox records by someone a share does not list yet, waiting
+    /// for a newer view of it, with how often they were tried.
+    parked: HashMap<ShareId, Parked>,
     /// What waits for a channel to a device that is away.
     outbox: HashMap<DeviceId, Vec<Waiting>>,
     redials: HashMap<DeviceId, Redial>,
@@ -619,6 +626,7 @@ impl<R: Replica> SyncDriver<R> {
             retired: HashSet::new(),
             known_keys: HashMap::new(),
             outbox: HashMap::new(),
+            parked: HashMap::new(),
             redials: HashMap::new(),
             ended: book.ended.into_iter().map(|e| (e.id, e)).collect(),
             left: book.left.into_iter().map(|l| (l.invite.share, l)).collect(),
@@ -2928,11 +2936,7 @@ impl<R: Replica> SyncDriver<R> {
             RelayMessage::Records { share, records } => {
                 #[cfg(feature = "sismo")]
                 sismo::counter!("sync.relay.records_in", records.len());
-                let mut touched = false;
-                for record in records {
-                    touched |= self.apply_record(share, &record, out)?;
-                }
-                if touched {
+                if self.take_records(share, records, out)? {
                     out.push(Action::Event(DriverEvent::ShareChanged(share)));
                 }
             }
@@ -2988,34 +2992,92 @@ impl<R: Replica> SyncDriver<R> {
         Ok(())
     }
 
-    /// Apply one mailbox record; returns whether the share changed.
+    /// Take in mailbox records for `id`, with those parked before.
+    /// Returns whether the share changed.
+    ///
+    /// A view of the share says who may write, so views go first. A
+    /// record by someone not listed yet waits for the next view, and the
+    /// cursor stays before it, so a restart fetches it again.
+    #[cfg_attr(feature = "sismo", sismo::function("sync::relay::take_records"))]
+    fn take_records(
+        &mut self,
+        id: ShareId,
+        records: Vec<crate::relay::Record>,
+        out: &mut Vec<Action>,
+    ) -> Result<bool, SyncError<R::Error>> {
+        let Some((start, server)) = self.share(id).map(|s| (s.relay_cursor, s.server.clone()))
+        else {
+            return Ok(false);
+        };
+        let held = self.parked.remove(&id).unwrap_or_default();
+        let mut batch = held.records;
+        for record in records {
+            if record.seq > start && !batch.iter().any(|(r, _)| r.seq == record.seq) {
+                batch.push((record, 0));
+            }
+        }
+        batch.sort_by_key(|(r, _)| (r.kind != RecordKind::Meta, r.seq));
+        let mut touched = false;
+        // What counted while the cursor waited on parked records.
+        let mut top = start.max(held.top);
+        let mut parked = Vec::new();
+        for (record, tries) in batch {
+            match self.apply_record(id, &record, out)? {
+                Taken::Applied(changed) => {
+                    touched |= changed;
+                    top = top.max(record.seq);
+                }
+                Taken::Parked if tries < PARK_TRIES => parked.push((record, tries + 1)),
+                Taken::Parked | Taken::Dropped => {}
+            }
+        }
+        let Some(link) = self.shares.get_mut(&id) else {
+            return Ok(false);
+        };
+        // A share that moved is read from the start there.
+        if link.share.server == server {
+            let before = parked.iter().map(|(r, _)| r.seq - 1).min();
+            link.share.relay_cursor = before.map_or(top, |b| top.min(b)).max(start);
+            touched |= link.share.relay_cursor != start;
+        }
+        if !parked.is_empty() {
+            parked.truncate(PARKED_MAX);
+            self.parked.insert(
+                id,
+                Parked {
+                    records: parked,
+                    top,
+                },
+            );
+        }
+        Ok(touched)
+    }
+
+    /// Apply one mailbox record.
     #[cfg_attr(feature = "sismo", sismo::function("sync::relay::apply_record"))]
     fn apply_record(
         &mut self,
         id: ShareId,
         record: &crate::relay::Record,
         out: &mut Vec<Action>,
-    ) -> Result<bool, SyncError<R::Error>> {
+    ) -> Result<Taken, SyncError<R::Error>> {
         let me = self.profile.id();
         let Some(link) = self.shares.get_mut(&id) else {
-            return Ok(false);
+            return Ok(Taken::Dropped);
         };
-        if record.seq <= link.share.relay_cursor {
-            return Ok(false);
-        }
         // Only what a member signed counts, and only as that member: the
         // relay names the sender but anyone holding the key can seal.
-        let Some((author, message)) =
-            ShareMessage::open_signed(&link.share, &record.sealed, record.kind)
-        else {
-            return Ok(false);
-        };
+        let (author, message) =
+            match ShareMessage::open_signed(&link.share, &record.sealed, record.kind) {
+                Ok(opened) => opened,
+                Err(Unopened::Stranger) => return Ok(Taken::Parked),
+                Err(Unopened::Invalid) => return Ok(Taken::Dropped),
+            };
         if author != record.from {
-            return Ok(false);
+            return Ok(Taken::Dropped);
         }
-        link.share.relay_cursor = record.seq;
         if author == me {
-            return Ok(true);
+            return Ok(Taken::Applied(false));
         }
         match (message, record.kind) {
             (
@@ -3035,30 +3097,51 @@ impl<R: Replica> SyncDriver<R> {
             }
             (ShareMessage::Meta(share), RecordKind::Meta) => {
                 let Some(fresh) = fresh_meta(&link.share, author, me, *share) else {
-                    return Ok(true);
+                    return Ok(Taken::Applied(false));
                 };
                 let moved = fresh.server != link.share.server;
                 link.share = fresh;
                 link.engine.set_scope(link.share.scope());
                 if !link.share.is_member(me) {
                     self.shares.remove(&id);
+                    self.parked.remove(&id);
                     out.push(Action::Event(DriverEvent::ShareRemoved {
                         share: id,
                         reason: Removal::Expelled,
                     }));
-                    return Ok(false);
+                    return Ok(Taken::Dropped);
                 }
                 if moved {
                     out.extend(self.sync_relays());
                     out.extend(self.relay_subscribe(id));
                 }
+                return Ok(Taken::Applied(true));
             }
             // Members only ever leave exchange records and the owner's view
             // there; anything else came from somewhere it should not.
             _ => {}
         }
-        Ok(true)
+        Ok(Taken::Applied(false))
     }
+}
+
+/// Mailbox records of one share waiting for a newer view of it.
+#[derive(Debug, Default)]
+struct Parked {
+    /// Each with how many batches it has been tried in.
+    records: Vec<(crate::relay::Record, u8)>,
+    /// The last record that counted, past the cursor held back for these.
+    top: u64,
+}
+
+/// What became of one mailbox record.
+enum Taken {
+    /// It counted; `true` when the share itself changed.
+    Applied(bool),
+    /// Its author is not listed yet; it waits for a newer view.
+    Parked,
+    /// It does not count and never will.
+    Dropped,
 }
 
 /// The owner's view `incoming` as this device adopts it, or `None` when
@@ -4269,6 +4352,50 @@ mod tests {
     }
 
     #[test]
+    fn a_newcomers_records_ahead_of_the_view_listing_it_still_count() {
+        for split in [false, true] {
+            let (mut owner, mut guest, id) = joined_then_apart();
+            let relay = on_relay(&mut guest);
+            let mut eve = driver("Eve");
+            let invite = owner.share(id).unwrap().invite();
+            connect_both(&mut owner, &mut eve);
+            deliver(eve.join(invite), &mut eve, &mut owner);
+            mark(&eve, D1, 7, 1);
+            let snapshot = Message::DocSnapshot {
+                doc: D1,
+                bytes: eve.with_replica(|r| r.doc_snapshot(D1).unwrap()),
+            };
+            let kind = RecordKind::Snapshot { doc: D1 };
+            let by_eve =
+                ShareMessage::Sync(snapshot.to_bytes::<std::convert::Infallible>().unwrap())
+                    .seal_signed(eve.share(id).unwrap(), kind, eve.profile.key());
+            let view = ShareMessage::Meta(Box::new(owner.share(id).unwrap().for_member()))
+                .seal_signed(
+                    owner.share(id).unwrap(),
+                    RecordKind::Meta,
+                    owner.profile.key(),
+                );
+            let first = vec![record(10, eve.profile.id(), kind, by_eve)];
+            let then = vec![record(12, owner.profile.id(), RecordKind::Meta, view)];
+            let batches = if split {
+                vec![first, then]
+            } else {
+                vec![first.into_iter().chain(then).collect()]
+            };
+            for records in batches {
+                guest
+                    .on_event(from_relay(
+                        relay,
+                        &RelayMessage::Records { share: id, records },
+                    ))
+                    .unwrap();
+            }
+            assert!(marks(&guest, D1).contains(&(7, 1)), "split {split}");
+            assert_eq!(guest.share(id).unwrap().relay_cursor, 12);
+        }
+    }
+
+    #[test]
     fn an_older_view_replayed_after_a_newer_one_changes_nothing() {
         let (mut owner, mut guest, id) = joined_then_apart();
         let relay = on_relay(&mut guest);
@@ -4446,8 +4573,9 @@ mod tests {
         let now = guest.share(id).unwrap();
         assert_eq!(now.members, held.members);
         assert_eq!(now.server, held.server);
-        // Eve's own record was hers and moved the cursor; nothing else did.
-        assert_eq!(now.relay_cursor, 8);
+        // Nothing moved the cursor past what might still turn out to be
+        // a member's record, unsigned as it looks.
+        assert!(now.relay_cursor < 7, "{}", now.relay_cursor);
 
         // The owner's own signed view does land.
         let mut real = owner.share(id).unwrap().for_member();
@@ -4468,6 +4596,14 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(guest.share(id).unwrap().title, "Química");
+        // What never opens is given up on, and the cursor catches up.
+        for _ in 0..=PARK_TRIES {
+            let empty = RelayMessage::Records {
+                share: id,
+                records: Vec::new(),
+            };
+            guest.on_event(from_relay(relay, &empty)).unwrap();
+        }
         assert_eq!(guest.share(id).unwrap().relay_cursor, 9);
     }
 

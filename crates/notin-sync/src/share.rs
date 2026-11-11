@@ -798,21 +798,41 @@ impl ShareMessage {
     /// Reverse of [`Self::seal_signed`]: the message and the device that
     /// wrote it, when the author takes part in `share` and the signature
     /// holds for this share and `kind`.
-    #[must_use]
     #[cfg_attr(feature = "sismo", sismo::function("sync::share::open_signed"))]
-    pub fn open_signed(share: &Share, sealed: &[u8], kind: RecordKind) -> Option<(DeviceId, Self)> {
-        let plain = share.key.open(sealed).ok()?;
+    pub fn open_signed(
+        share: &Share,
+        sealed: &[u8],
+        kind: RecordKind,
+    ) -> Result<(DeviceId, Self), Unopened> {
+        let plain = share.key.open(sealed).map_err(|_| Unopened::Invalid)?;
         let (record, _): (SignedRecord, usize) =
-            bincode::decode_from_slice(&plain, bincode::config::standard()).ok()?;
-        let author = share.participants().find(|m| m.public == record.author)?;
-        let verifying = ed25519_dalek::VerifyingKey::from_bytes(&author.sign).ok()?;
+            bincode::decode_from_slice(&plain, bincode::config::standard())
+                .map_err(|_| Unopened::Invalid)?;
+        let author = share
+            .participants()
+            .find(|m| m.public == record.author)
+            .ok_or(Unopened::Stranger)?;
+        let verifying =
+            ed25519_dalek::VerifyingKey::from_bytes(&author.sign).map_err(|_| Unopened::Invalid)?;
         let signature = ed25519_dalek::Signature::from_bytes(&record.signature);
         let signed = signed_bytes(share.id, kind, &record.author, &record.message);
-        verifying.verify_strict(&signed, &signature).ok()?;
-        let (message, _) =
-            bincode::decode_from_slice(&record.message, bincode::config::standard()).ok()?;
-        Some((author.device, message))
+        verifying
+            .verify_strict(&signed, &signature)
+            .map_err(|_| Unopened::Invalid)?;
+        let (message, _) = bincode::decode_from_slice(&record.message, bincode::config::standard())
+            .map_err(|_| Unopened::Invalid)?;
+        Ok((author.device, message))
     }
+}
+
+/// Why a mailbox record did not open.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Unopened {
+    /// Sealed for the share but by someone this view of it does not list
+    /// yet: a newer view may.
+    Stranger,
+    /// Not sealed for the share, not signed, or signed for something else.
+    Invalid,
 }
 
 /// A [`ShareMessage`] with the signature of the member that wrote it.
@@ -1027,20 +1047,22 @@ mod tests {
                     doc: DocId([1; 16])
                 }
             )
-            .is_none()
+            .is_err()
         );
         let other = Share {
             id: ShareId([9; 16]),
             ..share.clone()
         };
-        assert!(ShareMessage::open_signed(&other, &sealed, kind).is_none());
+        assert!(ShareMessage::open_signed(&other, &sealed, kind).is_err());
         // Sealing with the key alone, unsigned, or by an outsider, counts for nothing.
         assert!(
-            ShareMessage::open_signed(&share, &ShareMessage::Ended.seal(&share.key), kind)
-                .is_none()
+            ShareMessage::open_signed(&share, &ShareMessage::Ended.seal(&share.key), kind).is_err()
         );
         let outsider = DeviceKey::generate();
         let sealed = ShareMessage::Ended.seal_signed(&share, kind, &outsider);
-        assert!(ShareMessage::open_signed(&share, &sealed, kind).is_none());
+        assert!(matches!(
+            ShareMessage::open_signed(&share, &sealed, kind),
+            Err(Unopened::Stranger)
+        ));
     }
 }
