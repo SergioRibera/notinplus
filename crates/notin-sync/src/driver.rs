@@ -45,8 +45,9 @@ const PARK_FOR_MS: u64 = 10 * 60 * 1000;
 const PARKED_MAX: usize = 256;
 /// Bytes of such records kept per share.
 const PARKED_BYTES: usize = 8 << 20;
-/// How often the lease clocks of a share are saved.
-const LEASE_SAVE_MS: u64 = 60 * 60 * 1000;
+/// How often the lease clocks of a share are saved: a restart loses no
+/// more than this of the time a lease was held.
+const LEASE_SAVE_MS: u64 = 5 * 60 * 1000;
 /// How long a held message is worth delivering.
 const OUTBOX_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -1384,6 +1385,25 @@ impl<R: Replica> SyncDriver<R> {
         }
     }
 
+    /// Bring the lease clocks of every share up to now and have them saved,
+    /// for the app to call before it is suspended or ends: a restart then
+    /// resumes them where they were.
+    pub fn keep_lease_clocks(&mut self) -> Vec<Action> {
+        self.mark_lease_clocks();
+        self.flush_dirty()
+    }
+
+    /// Every share's lease clocks brought up to now, to be saved.
+    fn mark_lease_clocks(&mut self) {
+        let ids: Vec<ShareId> = self.shares.keys().copied().collect();
+        for id in ids {
+            self.mark_lease_clock(id);
+            if self.share(id).is_some_and(|s| s.lease.is_some()) {
+                self.dirty.insert(id);
+            }
+        }
+    }
+
     /// The shares whose state changed without anything else saying so,
     /// for the app to save them.
     fn flush_dirty(&mut self) -> Vec<Action> {
@@ -1647,7 +1667,10 @@ impl<R: Replica> SyncDriver<R> {
         match event {
             NetEvent::Discovered(peer) => self.on_discovered(peer, &mut out),
             NetEvent::Connected(peer) => self.on_connected(peer, &mut out)?,
-            NetEvent::Disconnected(device) => self.on_disconnected(device, &mut out),
+            NetEvent::Disconnected(device) => {
+                self.mark_lease_clocks();
+                self.on_disconnected(device, &mut out);
+            }
             NetEvent::Renamed(peer) => {
                 if let Some(open) = self.connected.get_mut(&peer.device) {
                     open.name.clone_from(&peer.name);
@@ -1663,7 +1686,10 @@ impl<R: Replica> SyncDriver<R> {
                 }
             }
             NetEvent::ConnectFailed { addr, .. } => self.on_connect_failed(addr, &mut out),
-            NetEvent::Stopped(_) => self.on_stopped(&mut out),
+            NetEvent::Stopped(_) => {
+                self.mark_lease_clocks();
+                self.on_stopped(&mut out);
+            }
         }
         out.extend(self.bulk_changes());
         out.extend(self.flush_dirty());
@@ -5770,9 +5796,8 @@ mod tests {
     fn the_time_a_lease_was_held_and_the_clock_seen_outlive_a_restart() {
         let (_owner, mut guest, id) = joined_then_apart();
         let seq = guest.share(id).unwrap().lease.as_ref().unwrap().lease.seq;
-        // A lease taken is saved at once, with the time seen so far.
-        let out = guest.tick().unwrap();
-        assert!(out.contains(&Action::Event(DriverEvent::LeaseKept(id))));
+        // A lease taken is counted from then on, with the time seen so far.
+        guest.tick().unwrap();
         let share = guest.share(id).unwrap();
         assert_eq!(share.lease_held_seq, seq);
         assert!(share.clock_mark > 0);
@@ -5792,6 +5817,19 @@ mod tests {
         book.shares[0].lease_held_ms = crate::share::LEASE_MS + 1;
         let again = SyncDriver::new(guest.profile.clone(), MemReplica::default(), book);
         assert!(!again.lease_holds(id));
+    }
+
+    #[test]
+    fn the_lease_clocks_are_saved_on_leaving_and_on_request() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        guest.tick().unwrap();
+        connect_both(&mut guest, &mut owner);
+        let out = guest
+            .on_event(NetEvent::Disconnected(owner.profile.id()))
+            .unwrap();
+        assert!(out.contains(&Action::Event(DriverEvent::LeaseKept(id))));
+        let out = guest.keep_lease_clocks();
+        assert_eq!(out, vec![Action::Event(DriverEvent::LeaseKept(id))]);
     }
 
     #[test]

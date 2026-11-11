@@ -929,6 +929,12 @@ impl Service {
     }
 
     #[sismo::function("sync::save_shares")]
+    /// Save how long each lease was held, so a restart resumes it.
+    fn keep_lease_clocks(&mut self) {
+        let _ = self.driver.keep_lease_clocks();
+        self.save_shares();
+    }
+
     fn save_shares(&mut self) {
         let book = self.driver.book();
         if let Err(err) = std::fs::write(&self.shares_path, book.encode()) {
@@ -1420,6 +1426,10 @@ impl Service {
             }
             Cmd::Present(present) => {
                 sismo::scope!("sync::cmd::present");
+                // A phone may end an app in the background without a word.
+                if !present {
+                    self.keep_lease_clocks();
+                }
                 self.set_present(present)?
             }
             // Handled by the service loop before it gets here.
@@ -1883,6 +1893,7 @@ fn run(cmds: &flume::Receiver<Cmd>) {
                 pending_change.get_or_insert_with(|| Instant::now() + DEBOUNCE);
             }
             Ok(Step::Cmd(Cmd::Quit(done))) => {
+                service.keep_lease_clocks();
                 // Dropping the node says goodbye on every channel.
                 drop(service);
                 let _ = done.send(());
