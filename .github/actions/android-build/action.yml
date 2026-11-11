@@ -18,6 +18,13 @@ inputs:
       per-ABI split APKs plus a universal one. Empty → single-ABI build.
     required: false
     default: ""
+  per-crate:
+    description: >-
+      `true` → the one-derivation-per-crate build (nix/cross-crates.nix):
+      every crate lands in attic as it is built, and Gradle packages
+      `.#android-jniLibs-per-crate`.
+    required: false
+    default: "false"
   keystore-base64:
     description: Base64 release keystore. Empty → release builds are signed with the debug key.
     required: false
@@ -39,15 +46,17 @@ runs:
       uses: ./.github/actions/setup-nix
       with:
         attic-token: ${{ inputs.attic-token }}
+        watch-store: ${{ inputs.per-crate }}
 
     # Pushed on its own first: a failure further down still leaves the
     # dependency layer in attic, so the retry starts from the app crate.
     - name: Build Rust dependencies (every ABI)
+      if: inputs.per-crate != 'true'
       shell: bash
       run: nix build -L .#android-cargoArtifacts -o result-android-deps
 
     - name: Push dependencies to attic
-      if: always()
+      if: always() && inputs.per-crate != 'true'
       uses: ./.github/actions/attic-push
       with:
         push-enabled: ${{ steps.nix.outputs.push-enabled }}
@@ -55,7 +64,7 @@ runs:
 
     - name: Build Rust libraries (every ABI)
       shell: bash
-      run: nix build -L .#android-jniLibs -o result-android-jnilibs
+      run: nix build -L .#android-jniLibs${{ inputs.per-crate == 'true' && '-per-crate' || '' }} -o result-android-jnilibs
 
     - name: Push libraries to attic
       if: always()
@@ -63,6 +72,7 @@ runs:
       with:
         push-enabled: ${{ steps.nix.outputs.push-enabled }}
         paths: result-android-jnilibs
+        closure-of: ${{ inputs.per-crate == 'true' && '.#android-jniLibs-per-crate' || '' }}
 
     - name: Gradle ${{ inputs.task }}
       shell: bash
@@ -73,6 +83,7 @@ runs:
         KEYSTORE_PASSWORD: ${{ inputs.keystore-password }}
         KEY_ALIAS: ${{ inputs.key-alias }}
         KEY_PASSWORD: ${{ inputs.key-password }}
+        GRADLE_APP: android-gradle${{ inputs.per-crate == 'true' && '-per-crate' || '' }}
       run: |
         set -euo pipefail
 
@@ -114,4 +125,4 @@ runs:
 
         gradle_args=("$TASK" --stacktrace)
         [ -n "$ABIS" ] && gradle_args+=("-Pnotinplus.abis=$ABIS")
-        nix run .#android-gradle -- "${gradle_args[@]}"
+        nix run ".#$GRADLE_APP" -- "${gradle_args[@]}"

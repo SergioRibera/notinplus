@@ -132,3 +132,40 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
+
+  windows-per-crate:
+    name: Desktop per crate (x86_64-windows, Nix cross)
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: nix
+        uses: ./.github/actions/setup-nix
+        with:
+          attic-token: ${{ secrets.ATTIC_TOKEN }}
+          watch-store: "true"
+
+      - name: Build app
+        run: nix build -L .#notinplus-windows-per-crate -o result-app
+
+      - name: Push crates and app to attic
+        if: always()
+        uses: ./.github/actions/attic-push
+        with:
+          push-enabled: ${{ steps.nix.outputs.push-enabled }}
+          paths: result-app
+          closure-of: .#notinplus-windows-per-crate
+
+  android-per-crate:
+    name: Android per crate (debug, arm64-v8a)
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/android-build
+        with:
+          attic-token: ${{ secrets.ATTIC_TOKEN }}
+          task: ":app:assembleDebug"
+          per-crate: "true"
