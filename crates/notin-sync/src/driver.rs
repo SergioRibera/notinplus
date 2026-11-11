@@ -2591,10 +2591,27 @@ impl<R: Replica> SyncDriver<R> {
             .chain(left)
             .filter_map(|s| s.parse().ok())
             .chain(self.intent.as_ref().and_then(|i| i.relay.clone()))
+            // Others name these: never one of the devices we talk to.
+            .filter(|addr: &RelayAddr| !self.is_peer(addr.device()))
             .chain(self.relay().cloned())
             .collect();
         wanted.dedup();
         wanted
+    }
+
+    /// Whether `device` is one we know as a device rather than a relay:
+    /// this one, a trusted one, someone in a share, an owner we wait on,
+    /// the one we pair with, or one with a channel open as a device.
+    fn is_peer(&self, device: DeviceId) -> bool {
+        device == self.profile.id()
+            || self.profile.is_trusted(device)
+            || self
+                .shares
+                .values()
+                .any(|l| l.share.participants().any(|m| m.device == device))
+            || self.joins.values().any(|j| j.invite.owner.device == device)
+            || self.intent.as_ref().is_some_and(|i| i.device == device)
+            || (self.connected.contains_key(&device) && !self.relays.contains_key(&device))
     }
 
     /// Keep a link to every wanted relay and close the others, unless a
@@ -2615,9 +2632,10 @@ impl<R: Replica> SyncDriver<R> {
             .collect();
         let mut out = Vec::new();
         for device in dropped {
-            self.relays.remove(&device);
-            self.retired.insert(device);
-            if self.connected.remove(&device).is_some() {
+            let reached = self.relays.remove(&device).is_some_and(|r| r.connected);
+            // Only what we reached as a relay is turned away later.
+            if reached && self.connected.remove(&device).is_some() {
+                self.retired.insert(device);
                 out.push(Action::Disconnect { device });
             }
         }
@@ -4021,6 +4039,36 @@ mod tests {
         assert_eq!(held_for(&guest, owner_id), vec![Held::Left]);
         guest.supervise(Instant::now() + OUTBOX_TTL + Duration::from_secs(1));
         assert!(held_for(&guest, owner_id).is_empty());
+    }
+
+    #[test]
+    fn a_device_we_talk_to_is_never_taken_for_a_relay() {
+        let (_owner, mut guest, id) = joined_then_apart();
+        let phone = driver("Phone");
+        guest.profile_mut().trust(TrustedDevice::new(
+            *phone.profile.key().public(),
+            "Phone",
+            1,
+        ));
+        guest
+            .on_event(NetEvent::Connected(info(&phone, 12)))
+            .unwrap();
+        // The owner names the guest's own phone as the share's relay.
+        guest.shares.get_mut(&id).unwrap().share.server = Some(
+            RelayAddr {
+                host: "phone:7710".into(),
+                public: *phone.profile.key().public(),
+            }
+            .to_string(),
+        );
+        let out = guest.sync_relays();
+        assert!(out.is_empty(), "{out:?}");
+        assert!(!guest.relays.contains_key(&phone.profile.id()));
+        assert!(guest.connected().any(|p| p.device == phone.profile.id()));
+        let out = guest.tick().unwrap();
+        assert!(!out.contains(&Action::Disconnect {
+            device: phone.profile.id()
+        }));
     }
 
     #[test]
