@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 authors = ["Sergio Ribera <contact@sergioribera.rs>"]
 description = "Bible source + canvas plugin for notinplus (SQLite + FTS5 backed, custom reading UI)."
 repository = "https://github.com/SergioRibera/notinplus"
+publish = false
 
 [lib]
 # `rlib` keeps the in-process built-in path open; `cdylib` emits the
@@ -52,9 +53,9 @@ ui = [
 # Spans for the sismo profiler; off unless an app turns it on.
 sismo = { version = "0.1.1", default-features = false, optional = true }
 freya-icons = { version = "=0.5.0-rc.13", features = ["lucide"] }
-notin-sdk = { path = "../notin-sdk" }
-notin-i18n = { path = "../notin-i18n" }
-notin-align = { path = "../notin-align" }
+notin-sdk = { version = "0.1.0-alpha.1", path = "../notin-sdk" }
+notin-i18n = { version = "0.1.0-alpha.1", path = "../notin-i18n" }
+notin-align = { version = "0.1.0-alpha.1", path = "../notin-align" }
 # The pack format lives with its generator; path while the data repo is
 # unpublished, a git dependency pinned to a tag once it is.
 originals-format = { git = "https://github.com/biblionlabs/extra_data_source", rev = "5e6dca64597b5d83c4e5d4187bb6e4f9c9795566" }
@@ -92,7 +93,7 @@ freya-components = { version = "=0.5.0-rc.13", optional = true }
 freya-core = { version = "=0.5.0-rc.13", optional = true }
 freya-engine = { version = "=0.5.0-rc.13", optional = true }
 async-io = { version = "2", optional = true }
-notin-ui-kit = { path = "../notin-ui-kit", optional = true }
+notin-ui-kit = { version = "0.1.0-alpha.1", path = "../notin-ui-kit", optional = true }
 
 [build-dependencies]
-notin-i18n = { path = "../notin-i18n", features = ["build"] }
+notin-i18n = { version = "0.1.0-alpha.1", path = "../notin-i18n", features = ["build"] }

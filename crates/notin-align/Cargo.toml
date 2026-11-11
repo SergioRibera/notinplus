@@ -7,6 +7,8 @@ license = "MIT OR Apache-2.0"
 authors = ["Sergio Ribera <contact@sergioribera.rs>"]
 description = "Statistical word alignment between original-language verses (lemma ids) and a translation's tokens, for the Bible originals feature."
 repository = "https://github.com/SergioRibera/notinplus"
+keywords = ["alignment", "bible", "linguistics", "nlp"]
+categories = ["text-processing", "science"]
 
 [lints.rust]
 missing_debug_implementations = "warn"

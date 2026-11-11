@@ -23,5 +23,5 @@ missing_panics_doc = "allow"
 redundant_pub_crate = "allow"
 
 [dependencies]
-notin-handwriting = { path = "../../crates/notin-handwriting" }
+notin-handwriting = { version = "0.1.0-alpha.1", path = "../../crates/notin-handwriting" }
 ttf-parser = "0.25"

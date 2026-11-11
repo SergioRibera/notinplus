@@ -7,6 +7,8 @@ license = "MIT OR Apache-2.0"
 authors = ["Sergio Ribera <contact@sergioribera.rs>"]
 description = "Interface languages for notinplus and its plugins: Fluent catalogs per crate, checked at build time."
 repository = "https://github.com/SergioRibera/notinplus"
+keywords = ["i18n", "fluent", "localization", "notinplus"]
+categories = ["internationalization", "localization"]
 
 [features]
 # Build-script side: discovers `locales/<lang>/*.ftl`, checks them and

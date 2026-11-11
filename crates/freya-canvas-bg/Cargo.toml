@@ -7,6 +7,8 @@ license     = "MIT OR Apache-2.0"
 authors     = ["Sergio Ribera <contact@sergioribera.rs>"]
 description = "Pluggable background abstraction for Freya canvas widgets: infinite color fill, images, paginated documents, PDF."
 repository  = "https://github.com/SergioRibera/notinplus"
+keywords = ["freya", "canvas", "background", "gui"]
+categories = ["gui", "graphics"]
 
 [features]
 sismo = ["dep:sismo"]
