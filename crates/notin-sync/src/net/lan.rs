@@ -10,7 +10,7 @@
 //! app talks to it through channels and never blocks on the network.
 
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
@@ -46,6 +46,14 @@ const ASSEMBLIES_PER_DEVICE: usize = 4;
 /// Bytes of parts held, from every device together: one whole payload of
 /// the largest kind and some.
 const ASSEMBLING_MAX: usize = 320 << 20;
+/// A device nobody said this node deals with (a relay's clients): one
+/// payload in parts at a time, no larger than a relay message and some.
+const STRANGER_PAYLOAD_MAX: usize = 40 << 20;
+/// Bytes of parts held from strangers behind one address, and from all of
+/// them: keys are free to make, addresses less so, and the rest of the
+/// room stays for devices dealt with.
+const STRANGERS_PER_SOURCE: usize = 64 << 20;
+const STRANGERS_MAX: usize = 160 << 20;
 /// A payload whose parts stop coming is dropped after this.
 const ASSEMBLY_TIMEOUT: Duration = Duration::from_secs(60);
 /// Packets per second a peer may send before zudp drops them; parts
@@ -449,6 +457,48 @@ struct Assembly {
     started: Instant,
     /// Bytes held so far.
     bytes: usize,
+    /// Where a stranger's parts come from; `None` for a device dealt with.
+    stranger: Option<IpAddr>,
+}
+
+/// Whether a part of `len` bytes may open or grow payload `id` of
+/// `device`, out of `total` parts; `stranger` is where it comes from when
+/// nobody said this node deals with the device.
+fn admits(
+    assemblies: &HashMap<(DeviceId, u32), Assembly>,
+    device: DeviceId,
+    id: u32,
+    total: u32,
+    len: usize,
+    stranger: Option<IpAddr>,
+) -> bool {
+    let held = |keep: &dyn Fn(&Assembly) -> bool| -> usize {
+        assemblies
+            .values()
+            .filter(|a| keep(a))
+            .map(|a| a.bytes)
+            .sum()
+    };
+    if held(&|_| true) + len > ASSEMBLING_MAX {
+        return false;
+    }
+    if let Some(source) = stranger
+        && (held(&|a| a.stranger.is_some()) + len > STRANGERS_MAX
+            || held(&|a| a.stranger == Some(source)) + len > STRANGERS_PER_SOURCE)
+    {
+        return false;
+    }
+    if assemblies.contains_key(&(device, id)) {
+        return true;
+    }
+    let open = assemblies
+        .keys()
+        .filter(|(from, _)| *from == device)
+        .count();
+    match stranger {
+        Some(_) => open == 0 && (total as usize).saturating_mul(PART_SIZE) <= STRANGER_PAYLOAD_MAX,
+        None => open < ASSEMBLIES_PER_DEVICE,
+    }
 }
 
 struct Node {
@@ -710,33 +760,26 @@ impl Node {
         if !wanted || total == 0 || total > MAX_PARTS || index >= total || bytes.len() > PART_SIZE {
             return;
         }
-        // Room for so many payloads at once, from one device and in all.
-        let held: usize = self.assemblies.values().map(|a| a.bytes).sum();
-        if held + bytes.len() > ASSEMBLING_MAX {
+        // Room for so many payloads at once, from one device, one source
+        // and in all.
+        let stranger = (!self.bulk_from.contains(&device)).then(|| {
+            self.links
+                .get(&device)
+                .map_or_else(|| IpAddr::from([0, 0, 0, 0]), |l| socket_addr(l.addr).ip())
+        });
+        if !admits(&self.assemblies, device, id, total, bytes.len(), stranger) {
             return;
         }
-        if !self.assemblies.contains_key(&(device, id)) {
-            let open = self
-                .assemblies
-                .keys()
-                .filter(|(from, _)| *from == device)
-                .count();
-            if open >= ASSEMBLIES_PER_DEVICE {
-                return;
-            }
-            self.assemblies.insert(
-                (device, id),
-                Assembly {
-                    parts: vec![None; total as usize],
-                    missing: total as usize,
-                    started: Instant::now(),
-                    bytes: 0,
-                },
-            );
-        }
-        let Some(assembly) = self.assemblies.get_mut(&(device, id)) else {
-            return;
-        };
+        let assembly = self
+            .assemblies
+            .entry((device, id))
+            .or_insert_with(|| Assembly {
+                parts: vec![None; total as usize],
+                missing: total as usize,
+                started: Instant::now(),
+                bytes: 0,
+                stranger,
+            });
         let Some(slot) = assembly.parts.get_mut(index as usize) else {
             return;
         };
@@ -1446,6 +1489,43 @@ mod tests {
     use crate::identity::DeviceKey;
 
     const WAIT: Duration = Duration::from_secs(5);
+
+    fn holding(bytes: usize, stranger: Option<IpAddr>) -> Assembly {
+        Assembly {
+            parts: Vec::new(),
+            missing: 1,
+            started: Instant::now(),
+            bytes,
+            stranger,
+        }
+    }
+
+    #[test]
+    fn strangers_share_a_small_part_of_the_room_for_payloads_in_parts() {
+        let ip = |last| Some(IpAddr::from([10, 0, 0, last]));
+        let one = DeviceKey::generate().id();
+        let mut open = HashMap::new();
+        // One payload at a time, never larger than a relay message.
+        let big = u32::try_from(STRANGER_PAYLOAD_MAX / PART_SIZE + 1).unwrap();
+        assert!(!admits(&open, one, 1, big, PART_SIZE, ip(1)));
+        assert!(admits(&open, one, 1, 4, PART_SIZE, ip(1)));
+        open.insert((one, 1), holding(PART_SIZE, ip(1)));
+        assert!(!admits(&open, one, 2, 4, PART_SIZE, ip(1)));
+        // Fresh keys behind the same address share its budget.
+        let mut open = HashMap::new();
+        for id in 0..2u32 {
+            open.insert((DeviceKey::generate().id(), id), holding(32 << 20, ip(1)));
+        }
+        let other = DeviceKey::generate().id();
+        assert!(!admits(&open, other, 9, 4, PART_SIZE, ip(1)));
+        assert!(admits(&open, other, 9, 4, PART_SIZE, ip(2)));
+        // And strangers all together leave room for devices dealt with.
+        for last in 3..8 {
+            open.insert((DeviceKey::generate().id(), 0), holding(32 << 20, ip(last)));
+        }
+        assert!(!admits(&open, other, 9, 4, PART_SIZE, ip(9)));
+        assert!(admits(&open, other, 9, 4, PART_SIZE, None));
+    }
 
     fn free_udp_port() -> u16 {
         UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
