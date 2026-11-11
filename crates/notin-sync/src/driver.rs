@@ -1927,7 +1927,7 @@ impl<R: Replica> SyncDriver<R> {
                 if self.take_keys(share, from, &sealed) {
                     // What waited for this key opens now, and what was held
                     // back for it may go to the mailbox.
-                    if self.take_records(share, Vec::new(), out)? {
+                    if self.take_records(share, Vec::new(), false, out)? {
                         out.push(Action::Event(DriverEvent::ShareChanged(share)));
                     }
                     self.lease_settled(share, out)?;
@@ -3601,8 +3601,10 @@ impl<R: Replica> SyncDriver<R> {
         let Some(message) = RelayMessage::from_bytes(bytes) else {
             return Ok(());
         };
+        let ahead = matches!(message, RelayMessage::KeysAhead { .. });
         match message {
             RelayMessage::Records { share, .. }
+            | RelayMessage::KeysAhead { share, .. }
             | RelayMessage::Gone { share }
             | RelayMessage::Refused { share }
             | RelayMessage::Registered { share }
@@ -3617,12 +3619,17 @@ impl<R: Replica> SyncDriver<R> {
                 share,
                 records,
                 epoch,
+            }
+            | RelayMessage::KeysAhead {
+                share,
+                records,
+                epoch,
             } => {
                 #[cfg(feature = "sismo")]
                 sismo::counter!("sync.relay.records_in", records.len());
                 // Keys among these come first, so what this device holds is
                 // compared with the relay's once they are in.
-                if self.take_records(share, records, out)? {
+                if self.take_records(share, records, ahead, out)? {
                     out.push(Action::Event(DriverEvent::ShareChanged(share)));
                 }
                 if let Some(relay) = self.relays.get_mut(&from) {
@@ -3709,6 +3716,7 @@ impl<R: Replica> SyncDriver<R> {
         &mut self,
         id: ShareId,
         records: Vec<crate::relay::Record>,
+        ahead: bool,
         out: &mut Vec<Action>,
     ) -> Result<bool, SyncError<R::Error>> {
         let Some((start, server)) = self.share(id).map(|s| (s.relay_cursor, s.server.clone()))
@@ -3747,15 +3755,19 @@ impl<R: Replica> SyncDriver<R> {
             match self.apply_record(id, &record, out)? {
                 Taken::Applied(changed) => {
                     touched |= changed;
-                    // Keys may come ahead of their place, before records
-                    // they follow: they never move the cursor, and come
-                    // again in order.
-                    if !matches!(record.kind, RecordKind::Keys { .. }) {
+                    // Keys handed ahead of their place, before records they
+                    // follow, never move the cursor: they come again in order.
+                    if !(ahead && matches!(record.kind, RecordKind::Keys { .. })) {
                         top = top.max(record.seq);
                     }
                 }
                 Taken::Parked if now.saturating_sub(since) < PARK_FOR_MS => {
                     parked.push((record, since));
+                }
+                // Keys for someone else, in their place: passed, or one left
+                // last would be fetched on every subscription.
+                Taken::Dropped if !ahead && matches!(record.kind, RecordKind::Keys { .. }) => {
+                    top = top.max(record.seq);
                 }
                 Taken::Parked | Taken::Dropped => {}
             }
@@ -5765,25 +5777,29 @@ mod tests {
         };
         let keys: Vec<crate::relay::Record> =
             records.iter().filter(|r| r.kind == mine).cloned().collect();
-        let page = |records| RelayMessage::Records {
+        // Its keys first: the cursor stays where it was.
+        let ahead = RelayMessage::KeysAhead {
+            share: id,
+            records: keys,
+            epoch: 2,
+        };
+        guest.on_event(from_relay(at_guest, &ahead)).unwrap();
+        assert_eq!(guest.share(id).unwrap().epoch, 2);
+        assert_eq!(guest.share(id).unwrap().relay_cursor, 0);
+        // Then everything in order, sealed with keys it now holds: the
+        // cursor passes all of it, the keys at the end too, so nothing is
+        // fetched again.
+        let last = records.iter().map(|r| r.seq).max().unwrap();
+        assert!(matches!(
+            records.iter().find(|r| r.seq == last).unwrap().kind,
+            RecordKind::Keys { .. }
+        ));
+        let page = RelayMessage::Records {
             share: id,
             records,
             epoch: 2,
         };
-        // Its keys first: the cursor stays where it was.
-        guest.on_event(from_relay(at_guest, &page(keys))).unwrap();
-        assert_eq!(guest.share(id).unwrap().epoch, 2);
-        assert_eq!(guest.share(id).unwrap().relay_cursor, 0);
-        // Then everything in order, sealed with keys it now holds.
-        let last = records
-            .iter()
-            .filter(|r| !matches!(r.kind, RecordKind::Keys { .. }))
-            .map(|r| r.seq)
-            .max()
-            .unwrap();
-        guest
-            .on_event(from_relay(at_guest, &page(records)))
-            .unwrap();
+        guest.on_event(from_relay(at_guest, &page)).unwrap();
         assert!(marks(&guest, D1).contains(&(1, 77)));
         assert_eq!(guest.share(id).unwrap().relay_cursor, last);
     }

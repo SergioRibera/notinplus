@@ -218,6 +218,13 @@ pub enum RelayMessage {
     Behind { share: ShareId, epoch: u32 },
     /// The share no longer exists on this relay.
     Gone { share: ShareId },
+    /// A subscriber's keys, handed ahead of the records in order that
+    /// follow: they open those records, and are listed again in their place.
+    KeysAhead {
+        share: ShareId,
+        records: Vec<Record>,
+        epoch: u32,
+    },
 }
 
 impl RelayMessage {
@@ -387,7 +394,7 @@ const STORE_CAP: usize = 512 << 20;
 /// share's keys for it, so records sealed with any key since open
 /// whichever page they come in; then every record in order, those keys
 /// again among them.
-fn subscription_pages(records: Vec<Record>, public: [u8; 32]) -> Vec<Vec<Record>> {
+fn subscription_pages(records: Vec<Record>, public: [u8; 32]) -> Vec<(bool, Vec<Record>)> {
     let keys: Vec<Record> = records
         .iter()
         .filter(|r| r.kind == RecordKind::Keys { to: public })
@@ -395,9 +402,17 @@ fn subscription_pages(records: Vec<Record>, public: [u8; 32]) -> Vec<Vec<Record>
         .collect();
     let mut out = Vec::new();
     if !keys.is_empty() {
-        out.extend(pages(keys, RECORDS_PAGE));
+        out.extend(
+            pages(keys, RECORDS_PAGE)
+                .into_iter()
+                .map(|page| (true, page)),
+        );
     }
-    out.extend(pages(records, RECORDS_PAGE));
+    out.extend(
+        pages(records, RECORDS_PAGE)
+            .into_iter()
+            .map(|page| (false, page)),
+    );
     out
 }
 
@@ -903,15 +918,21 @@ impl Serving {
                 let epoch = mailbox.epoch;
                 self.subs.entry(share).or_default().insert(from);
                 // In pages, each well under what a device decodes at once.
-                for records in subscription_pages(records, public) {
-                    self.reply(
-                        from,
-                        &RelayMessage::Records {
+                for (ahead, records) in subscription_pages(records, public) {
+                    let page = if ahead {
+                        RelayMessage::KeysAhead {
                             share,
                             records,
                             epoch,
-                        },
-                    );
+                        }
+                    } else {
+                        RelayMessage::Records {
+                            share,
+                            records,
+                            epoch,
+                        }
+                    };
+                    self.reply(from, &page);
                 }
             }
             RelayMessage::Publish {
@@ -924,6 +945,7 @@ impl Serving {
             | RelayMessage::Refused { .. }
             | RelayMessage::Full { .. }
             | RelayMessage::Records { .. }
+            | RelayMessage::KeysAhead { .. }
             | RelayMessage::Behind { .. }
             | RelayMessage::Gone { .. }
             | RelayMessage::Knocked { .. } => {}
@@ -1350,11 +1372,11 @@ mod tests {
             record(3, mine),
         ];
         let pages = subscription_pages(records, [1; 32]);
-        let seqs: Vec<Vec<u64>> = pages
+        let seqs: Vec<(bool, Vec<u64>)> = pages
             .iter()
-            .map(|p| p.iter().map(|r| r.seq).collect())
+            .map(|(ahead, p)| (*ahead, p.iter().map(|r| r.seq).collect()))
             .collect();
-        assert_eq!(seqs, vec![vec![3], vec![1, 2, 3]]);
+        assert_eq!(seqs, vec![(true, vec![3]), (false, vec![1, 2, 3])]);
     }
 
     #[test]
