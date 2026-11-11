@@ -2665,13 +2665,14 @@ impl<R: Replica> SyncDriver<R> {
             .collect()
     }
 
-    /// The relay a share meets at: its own, or ours.
+    /// The relay a share meets at: the one it names, once linked, else
+    /// ours. Never ours in place of one it names.
     fn share_relay(&self, id: ShareId) -> Option<DeviceId> {
         self.share(id)
             .and_then(|s| s.server.as_deref())
-            .and_then(relay_device)
-            .filter(|device| self.relays.contains_key(device))
-            .or(self.own_relay)
+            .map_or(self.own_relay, |server| {
+                relay_device(server).filter(|device| self.relays.contains_key(device))
+            })
     }
 
     /// A connected relay `device` can be reached at: ours for a trusted
@@ -4265,6 +4266,34 @@ mod tests {
         assert!(owner.share(id).unwrap().is_member(device));
         assert!(!owner.share(id).unwrap().was_expelled(device));
         assert!(guest.share(id).is_some());
+    }
+
+    #[test]
+    fn a_share_naming_a_relay_not_linked_yet_takes_no_records_from_ours() {
+        let (owner, mut guest, id) = joined_then_apart();
+        let own = on_relay(&mut guest);
+        guest.shares.get_mut(&id).unwrap().share.server = Some(
+            RelayAddr {
+                host: "unseen:7710".into(),
+                public: *crate::identity::DeviceKey::generate().public(),
+            }
+            .to_string(),
+        );
+        let mut view = owner.share(id).unwrap().for_member();
+        view.title = "Química".into();
+        view.updated_at += 5;
+        let sealed = ShareMessage::Meta(Box::new(view)).seal_signed(
+            owner.share(id).unwrap(),
+            RecordKind::Meta,
+            owner.profile.key(),
+        );
+        let records = RelayMessage::Records {
+            share: id,
+            records: vec![record(3, owner.profile.id(), RecordKind::Meta, sealed)],
+        };
+        guest.on_event(from_relay(own, &records)).unwrap();
+        assert_ne!(guest.share(id).unwrap().title, "Química");
+        assert_eq!(guest.share(id).unwrap().relay_cursor, 0);
     }
 
     #[test]
