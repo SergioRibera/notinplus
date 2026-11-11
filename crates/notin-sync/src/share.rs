@@ -202,6 +202,10 @@ pub struct Share {
     /// The latest wall time this device has seen, in Unix milliseconds,
     /// so putting the clock back does not revive a lease.
     pub clock_mark: u64,
+    /// How long this device has held the lease numbered `lease_held_seq`,
+    /// by its own steady clock, across runs.
+    pub lease_held_ms: u64,
+    pub lease_held_seq: u64,
 }
 
 impl bincode::Encode for ShareKey {
@@ -257,6 +261,8 @@ impl Share {
             previous: Vec::new(),
             lease: None,
             clock_mark: 0,
+            lease_held_ms: 0,
+            lease_held_seq: 0,
         }
     }
 
@@ -311,6 +317,21 @@ impl Share {
             self.issue_lease(owner, now);
         }
         !current
+    }
+
+    /// Owner side: a lease of its own seen elsewhere, numbered past the one
+    /// held or as high but not it (a copy restored from before): the next
+    /// one counts past it. Its own lease handed back changes nothing. Returns whether a lease was issued.
+    pub fn raise_lease_past(&mut self, seen: &SignedLease, owner: &DeviceKey, now: u64) -> bool {
+        let ahead = self.lease.as_ref().is_none_or(|held| {
+            seen.lease.seq > held.lease.seq || (seen.lease.seq == held.lease.seq && seen != held)
+        });
+        if !ahead || !seen.verifies(self.id, &owner.sign_public()) {
+            return false;
+        }
+        self.lease = Some(seen.clone());
+        self.issue_lease(owner, now);
+        true
     }
 
     /// Whether the lease held is the owner's, current and on the key and
@@ -669,6 +690,8 @@ impl Share {
         Self {
             relay_cursor: 0,
             clock_mark: 0,
+            lease_held_ms: 0,
+            lease_held_seq: 0,
             held_back: Vec::new(),
             expelled: Vec::new(),
             departed: Vec::new(),

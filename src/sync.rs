@@ -1050,6 +1050,7 @@ impl Service {
                 self.remember_shares(Some(id));
                 crate::space::notify_changed();
             }
+            DriverEvent::LeaseKept(_) => self.save_shares(),
             DriverEvent::JoinPending(_) => {
                 sismo::scope!("sync::event::join_pending");
                 self.save_shares();

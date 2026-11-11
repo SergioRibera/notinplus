@@ -45,6 +45,8 @@ const PARK_FOR_MS: u64 = 10 * 60 * 1000;
 const PARKED_MAX: usize = 256;
 /// Bytes of such records kept per share.
 const PARKED_BYTES: usize = 8 << 20;
+/// How often the lease clocks of a share are saved.
+const LEASE_SAVE_MS: u64 = 60 * 60 * 1000;
 /// How long a held message is worth delivering.
 const OUTBOX_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -340,6 +342,9 @@ pub enum DriverEvent {
     LeaseExpired(ShareId),
     /// The lease holds again; sharing with the other members resumes.
     LeaseRenewed(ShareId),
+    /// Only what is saved of the share changed: the lease counted or the
+    /// time seen. The app saves the book so a restart keeps it.
+    LeaseKept(ShareId),
     /// The share changed its key: earlier invitations no longer let
     /// anyone in, so the one shown should be made again with
     /// [`SyncDriver::invite_for`].
@@ -610,6 +615,10 @@ pub struct SyncDriver<R> {
     /// Whether each connected device's payloads in parts are taken, as
     /// last told to the transport.
     bulk: HashMap<DeviceId, bool>,
+    /// Shares changed in ways only the app's saving cares about.
+    dirty: HashSet<ShareId>,
+    /// The clock mark of each share when last asked to be saved.
+    lease_saved: HashMap<ShareId, u64>,
     /// Mailbox records by someone a share does not list yet, waiting
     /// for a newer view of it, with how often they were tried.
     parked: HashMap<ShareId, Parked>,
@@ -677,6 +686,8 @@ impl<R: Replica> SyncDriver<R> {
             leases: HashMap::new(),
             lease_seen: HashMap::new(),
             bulk: HashMap::new(),
+            dirty: HashSet::new(),
+            lease_saved: HashMap::new(),
             redials: HashMap::new(),
             ended: book.ended.into_iter().map(|e| (e.id, e)).collect(),
             left: book.left.into_iter().map(|l| (l.invite.share, l)).collect(),
@@ -1285,10 +1296,16 @@ impl<R: Replica> SyncDriver<R> {
     fn renew_lease(&mut self, id: ShareId) -> bool {
         let me = self.profile.id();
         let now = now_ms();
-        self.shares
+        let issued = self
+            .shares
             .get_mut(&id)
             .filter(|link| link.share.is_owner(me))
-            .is_some_and(|link| link.share.renew_lease(self.profile.key(), now))
+            .is_some_and(|link| link.share.renew_lease(self.profile.key(), now));
+        // Its count must survive a restart, or the next lease would repeat it.
+        if issued {
+            self.dirty.insert(id);
+        }
+        issued
     }
 
     /// Whether this device waits for the owner of `id` before it shares
@@ -1310,14 +1327,20 @@ impl<R: Replica> SyncDriver<R> {
             // Neither a clock put back (the time seen before stays) nor a
             // lease kept past its days since it arrived here.
             let now = now_ms().max(share.clock_mark);
-            let held_for = share.lease.as_ref().and_then(|l| {
-                self.lease_seen
+            let held_ms = share.lease.as_ref().map_or(0, |l| {
+                let before = if share.lease_held_seq == l.lease.seq {
+                    share.lease_held_ms
+                } else {
+                    0
+                };
+                let since = self
+                    .lease_seen
                     .get(&id)
                     .filter(|(seq, _)| *seq == l.lease.seq)
-                    .map(|(_, since)| since.elapsed())
+                    .map_or(0, |(_, since)| millis(since.elapsed()));
+                before.saturating_add(since)
             });
-            share.lease_holds(now)
-                && held_for.is_none_or(|d| d <= Duration::from_millis(crate::share::LEASE_MS))
+            share.lease_holds(now) && held_ms <= crate::share::LEASE_MS
         })
     }
 
@@ -1328,15 +1351,39 @@ impl<R: Replica> SyncDriver<R> {
         let Some(link) = self.shares.get_mut(&id) else {
             return;
         };
-        link.share.clock_mark = link.share.clock_mark.max(now);
-        if let Some(seq) = link.share.lease.as_ref().map(|l| l.lease.seq)
-            && self
-                .lease_seen
-                .get(&id)
-                .is_none_or(|(held, _)| *held != seq)
-        {
-            self.lease_seen.insert(id, (seq, Instant::now()));
+        let share = &mut link.share;
+        share.clock_mark = share.clock_mark.max(now);
+        let Some(seq) = share.lease.as_ref().map(|l| l.lease.seq) else {
+            return;
+        };
+        let mut fresh = false;
+        if share.lease_held_seq == seq {
+            if let Some((held, since)) = self.lease_seen.get(&id)
+                && *held == seq
+            {
+                share.lease_held_ms = share.lease_held_ms.saturating_add(millis(since.elapsed()));
+            }
+        } else {
+            share.lease_held_seq = seq;
+            share.lease_held_ms = 0;
+            fresh = true;
         }
+        self.lease_seen.insert(id, (seq, Instant::now()));
+        // Kept on disk: a new lease at once, the clocks hourly.
+        let saved = self.lease_saved.get(&id).copied().unwrap_or(0);
+        if fresh || share.clock_mark.saturating_sub(saved) >= LEASE_SAVE_MS {
+            self.lease_saved.insert(id, share.clock_mark);
+            self.dirty.insert(id);
+        }
+    }
+
+    /// The shares whose state changed without anything else saying so,
+    /// for the app to save them.
+    fn flush_dirty(&mut self) -> Vec<Action> {
+        self.dirty
+            .drain()
+            .map(|id| Action::Event(DriverEvent::LeaseKept(id)))
+            .collect()
     }
 
     /// Whether the share's content may go to `device`: its owner, or a
@@ -1415,10 +1462,24 @@ impl<R: Replica> SyncDriver<R> {
         signed: SignedLease,
         out: &mut Vec<Action>,
     ) -> Result<(), SyncError<R::Error>> {
+        let me = self.profile.id();
         let Some(link) = self.shares.get_mut(&id) else {
             return Ok(());
         };
         let now = now_ms().max(link.share.clock_mark);
+        if link.share.is_owner(me) {
+            // A lease of its own numbered past what it holds: this copy was
+            // restored from before, and the next one must count past it.
+            if link
+                .share
+                .raise_lease_past(&signed, self.profile.key(), now)
+            {
+                self.dirty.insert(id);
+                self.mark_lease_clock(id);
+                out.extend(self.spread_lease(id));
+            }
+            return Ok(());
+        }
         if !link.share.offer_lease(signed, now) {
             return Ok(());
         }
@@ -1442,6 +1503,21 @@ impl<R: Replica> SyncDriver<R> {
             out.extend(owner.and_then(|owner| self.connect_to(owner)));
         }
         self.lease_settled(id, out)
+    }
+
+    /// A record this device wrote: only a lease of its own counts, for an
+    /// owner restored from before.
+    fn own_record(
+        &mut self,
+        id: ShareId,
+        message: ShareMessage,
+        kind: RecordKind,
+        out: &mut Vec<Action>,
+    ) -> Result<Taken, SyncError<R::Error>> {
+        if let (ShareMessage::Lease(signed), RecordKind::Lease) = (message, kind) {
+            self.take_lease(id, *signed, out)?;
+        }
+        Ok(Taken::Applied(false))
     }
 
     /// After the lease or the view of `id` changed: tell the app, and hand
@@ -1583,6 +1659,7 @@ impl<R: Replica> SyncDriver<R> {
             NetEvent::Stopped(_) => self.on_stopped(&mut out),
         }
         out.extend(self.bulk_changes());
+        out.extend(self.flush_dirty());
         Ok(out)
     }
 
@@ -2685,6 +2762,7 @@ impl<R: Replica> SyncDriver<R> {
             out.extend(self.relay_subscribe(*share));
         }
         out.extend(self.announce()?);
+        out.extend(self.flush_dirty());
         Ok(out)
     }
 
@@ -3729,7 +3807,7 @@ impl<R: Replica> SyncDriver<R> {
             return Ok(Taken::Dropped);
         }
         if author == me {
-            return Ok(Taken::Applied(false));
+            return self.own_record(id, message, record.kind, out);
         }
         match (message, record.kind) {
             (
@@ -3839,6 +3917,8 @@ fn fresh_meta(current: &Share, from: DeviceId, me: DeviceId, incoming: Share) ->
         previous: current.previous.clone(),
         lease,
         clock_mark: current.clock_mark,
+        lease_held_ms: current.lease_held_ms,
+        lease_held_seq: current.lease_held_seq,
         owner: current.owner.clone(),
         relay_cursor,
         held_back,
@@ -3929,6 +4009,10 @@ fn send_live(device: DeviceId, payload: &Payload) -> Action {
         lane: Lane::Live,
         bytes,
     }
+}
+
+fn millis(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
 fn now_ms() -> u64 {
@@ -5651,6 +5735,92 @@ mod tests {
             guest.lease_seen.insert(id, (seq, long_ago));
             assert!(!guest.lease_holds(id));
         }
+    }
+
+    #[test]
+    fn the_time_a_lease_was_held_and_the_clock_seen_outlive_a_restart() {
+        let (_owner, mut guest, id) = joined_then_apart();
+        let seq = guest.share(id).unwrap().lease.as_ref().unwrap().lease.seq;
+        // A lease taken is saved at once, with the time seen so far.
+        let out = guest.tick().unwrap();
+        assert!(out.contains(&Action::Event(DriverEvent::LeaseKept(id))));
+        let share = guest.share(id).unwrap();
+        assert_eq!(share.lease_held_seq, seq);
+        assert!(share.clock_mark > 0);
+        // Two hours held go into the book.
+        let two_hours = Duration::from_secs(2 * 60 * 60);
+        let Some(earlier) = Instant::now().checked_sub(two_hours) else {
+            return;
+        };
+        guest.lease_seen.insert(id, (seq, earlier));
+        guest.tick().unwrap();
+        let book = ShareBook::decode(&guest.book().encode()).unwrap();
+        let saved = book.get(id).unwrap();
+        assert!(saved.lease_held_ms >= millis(two_hours));
+        assert_eq!(saved.clock_mark, guest.share(id).unwrap().clock_mark);
+        // Restarted after its days were spent here, it no longer holds.
+        let mut book = book;
+        book.shares[0].lease_held_ms = crate::share::LEASE_MS + 1;
+        let again = SyncDriver::new(guest.profile.clone(), MemReplica::default(), book);
+        assert!(!again.lease_holds(id));
+    }
+
+    #[test]
+    fn a_restored_owner_counts_past_the_leases_it_gave_before() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        let restored = ShareBook::decode(&owner.book().encode()).unwrap();
+        // Two more leases go out after the copy was made.
+        let share = &mut owner.shares.get_mut(&id).unwrap().share;
+        share.issue_lease(owner.profile.key(), now_ms());
+        share.issue_lease(owner.profile.key(), now_ms());
+        let given = share.lease.clone().unwrap();
+        let sealed = ShareMessage::Lease(Box::new(given.clone())).seal_signed(
+            share,
+            RecordKind::Lease,
+            owner.profile.key(),
+        );
+        connect_both(&mut guest, &mut owner);
+        assert_eq!(
+            guest.share(id).unwrap().lease.as_ref().unwrap().lease.seq,
+            given.lease.seq
+        );
+        // Restored from the copy, the owner sees one of them in its mailbox.
+        let mut back = SyncDriver::new(
+            owner.profile.clone(),
+            MemReplica::default(),
+            restored.clone(),
+        );
+        let relay = on_relay(&mut back);
+        let records = vec![record(1, back.profile.id(), RecordKind::Lease, sealed)];
+        let out = back
+            .on_event(from_relay(
+                relay,
+                &RelayMessage::Records {
+                    share: id,
+                    records,
+                    epoch: 0,
+                },
+            ))
+            .unwrap();
+        assert!(out.contains(&Action::Event(DriverEvent::LeaseKept(id))));
+        let next = back.share(id).unwrap().lease.clone().unwrap();
+        assert!(next.lease.seq > given.lease.seq);
+        // Or a member hands it one; either way its next lease is taken.
+        let mut back = SyncDriver::new(owner.profile.clone(), MemReplica::default(), restored);
+        connect_both(&mut guest, &mut back);
+        back.on_event(NetEvent::Message {
+            from: guest.profile.id(),
+            bytes: Payload::Lease {
+                share: id,
+                lease: given.clone(),
+            }
+            .to_bytes(),
+        })
+        .unwrap();
+        let next = back.share(id).unwrap().lease.clone().unwrap();
+        assert!(next.lease.seq > given.lease.seq);
+        let mut view = guest.share(id).unwrap().clone();
+        assert!(view.offer_lease(next, now_ms()));
     }
 
     #[test]
