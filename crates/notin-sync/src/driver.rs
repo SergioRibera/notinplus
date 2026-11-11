@@ -2401,6 +2401,8 @@ impl<R: Replica> SyncDriver<R> {
         for link in self.shares.values_mut() {
             if link.share.is_owner(me) && link.share.server != server {
                 link.share.server.clone_from(&server);
+                // Another relay numbers its mailbox from scratch.
+                link.share.relay_cursor = 0;
                 link.share.updated_at = now;
             }
         }
@@ -3798,6 +3800,28 @@ mod tests {
         connect_both(&mut guest, &mut owner);
         assert!(guest.share(id).unwrap().is_member(eve.profile.id()));
         (owner, guest, eve, id)
+    }
+
+    #[test]
+    fn a_share_moving_to_another_relay_is_read_there_from_the_start() {
+        let (mut owner, mut guest, id) = joined_then_apart();
+        guest.shares.get_mut(&id).unwrap().share.relay_cursor = 40;
+        owner.shares.get_mut(&id).unwrap().share.relay_cursor = 40;
+        let key = crate::identity::DeviceKey::generate();
+        let moved = RelayAddr {
+            host: "new:7710".into(),
+            public: *key.public(),
+        };
+        owner.set_relay(Some(moved.clone()));
+        let share = owner.share(id).unwrap();
+        assert_eq!(share.server, Some(moved.to_string()));
+        assert_eq!(share.relay_cursor, 0);
+        // The guest learns it from the owner's view and starts over too.
+        connect_both(&mut guest, &mut owner);
+        let share = guest.share(id).unwrap();
+        assert_eq!(share.server, Some(moved.to_string()));
+        assert_eq!(share.relay_cursor, 0);
+        assert!(guest.relays.contains_key(&key.id()));
     }
 
     #[test]
