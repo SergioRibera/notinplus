@@ -13300,7 +13300,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13346,7 +13346,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         libName = "istmo_android";
         authors = [
@@ -13409,7 +13409,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         libName = "istmo_build";
         authors = [
@@ -13489,7 +13489,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         libName = "istmo_camera";
         authors = [
@@ -13558,7 +13558,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         libName = "istmo_core";
         authors = [
@@ -13606,7 +13606,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         libName = "istmo_data_store";
         authors = [
@@ -13664,7 +13664,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         libName = "istmo_file_picker";
         authors = [
@@ -13752,7 +13752,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         libName = "istmo_ios";
         authors = [
@@ -13799,7 +13799,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         procMacro = true;
         libName = "istmo_macros";
@@ -13836,7 +13836,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         libName = "istmo_opener";
         authors = [
@@ -13884,7 +13884,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         libName = "istmo_pen";
         authors = [
@@ -13998,7 +13998,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         libName = "istmo_plugins";
         authors = [
@@ -14076,7 +14076,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         libName = "istmo_plugins_schema";
         authors = [
@@ -14100,7 +14100,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         libName = "istmo_share";
         authors = [
@@ -14245,7 +14245,7 @@ rec {
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
           rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "0nwswhx1w52iyxjsd5y5v5rqm636daj9nb1y15z1b9313scz1yl1";
+          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
         };
         libName = "istmo_window";
         authors = [
