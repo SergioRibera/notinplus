@@ -16,6 +16,7 @@
   src,
   pname,
   version,
+  perCrate,
 }:
 let
   ndkVersion = "29.0.14206865";
@@ -26,11 +27,15 @@ let
   abis = {
     arm64-v8a = {
       target = "aarch64-linux-android";
+      arch = "aarch64";
+      features = "neon";
       clang = "aarch64-linux-android";
       skiaHash = "sha256-0SUm0ZnodtCHd/hlNqilNP+W6+vqdMGYP5CslxbJV/I=";
     };
     x86_64 = {
       target = "x86_64-linux-android";
+      arch = "x86_64";
+      features = "fxsr,sse,sse2";
       clang = "x86_64-linux-android";
       skiaHash = "sha256-3/dViGgFQBdLGmwvxb895A9rrQvPgPgBZjalu8OSBHU=";
     };
@@ -74,6 +79,8 @@ let
     abi:
     {
       target,
+      arch,
+      features,
       clang,
       skiaHash,
     }:
@@ -156,9 +163,84 @@ let
           nativeBuildInputs = commonArgs.nativeBuildInputs ++ [ pkgs.jq ];
         }
       );
+
+      # One derivation per crate (nix/cross-crates.nix).
+      cargoNixAndroid = import ./cross-crates.nix {
+        inherit pkgs lib;
+        platform = lib.systems.elaborate {
+          config = "${arch}-unknown-linux-android";
+          rust = {
+            rustcTarget = target;
+            rustcTargetSpec = target;
+            platform = {
+              inherit arch;
+              os = "android";
+              vendor = "unknown";
+              target-family = [ "unix" ];
+            };
+          };
+        };
+        targetEnv = "";
+        targetFeatures = features;
+        toolchain = pkgs.rust-bin.stable.${perCrate.channel}.minimal.override { targets = [ target ]; };
+        rustcFlags = [ "-Clinker=${commonArgs."CARGO_TARGET_${envTarget}_LINKER"}" ];
+        env = lib.filterAttrs (
+          name: _:
+          lib.hasPrefix "ANDROID_" name
+          || lib.elem name [
+            "JAVA_HOME"
+            "CC_${ccTarget}"
+            "CXX_${ccTarget}"
+            "AR_${ccTarget}"
+            "RANLIB_${ccTarget}"
+          ]
+        ) commonArgs;
+        nativeBuildInputs = [ pkgs.jdk17 ];
+        crateOverrides = perCrate.crateOverrides // {
+          freya-skia-bindings = _: {
+            SKIA_BINARIES_URL = "file://${skia}/skia-binaries-{key}.tar.gz";
+          };
+          zstd-sys = _: { };
+          notinplus =
+            attrs:
+            perCrate.crateOverrides.notinplus attrs
+            // {
+              # The `.so` the app loads; the rlib and staticlib are unused here.
+              type = [ "cdylib" ];
+              preConfigure = withAndroidDir;
+              # What the build script generated for Gradle.
+              postInstall = ''
+                cp -r android $out/android
+                echo "$PWD" > $out/android/.build-root
+              '';
+            };
+        };
+        buildRustCrateForBuild = perCrate.buildRustCrateForPkgs;
+        desktopCrate = perCrate.crate;
+      };
+      crate = cargoNixAndroid.workspaceMembers.notinplus.build;
+
+      perCrateLib =
+        pkgs.runCommand "${pname}-android-${abi}-${version}" { nativeBuildInputs = [ pkgs.jq ]; }
+          ''
+            install -Dm755 ${lib.getLib crate}/lib/lib${pname}.so $out/lib/${abi}/lib${pname}.so
+            cp -r --no-preserve=mode ${crate}/android $out/android
+            json=$out/android/.istmo/istmo.json
+            substituteInPlace $json --replace-fail "$(cat $out/android/.build-root)" "@src@"
+            rm $out/android/.build-root
+            # Plugin native sources live in each crate's source in the store
+            # (nix/cross-crates.nix): carry them along, as the crane build does.
+            jq -r '.plugins[] | "\(.id) \(.native_dir)"' $json | while read -r id native; do
+              case "$native" in /nix/store/*) ;; *) continue ;; esac
+              mkdir -p $out/android/.istmo/plugins/$id/native
+              cp -r --no-preserve=mode "$native" $out/android/.istmo/plugins/$id/native/android
+              substituteInPlace $json \
+                --replace-fail "$native" "@src@/android/.istmo/plugins/$id/native/android"
+            done
+          '';
     in
     {
-      inherit cargoArtifacts;
+      inherit cargoArtifacts crate perCrateLib;
       lib = lib';
     };
 
@@ -166,13 +248,18 @@ let
 
   # Every ABI's `.so` under `lib/<abi>/`, plus one copy of the generated
   # Gradle sources (identical across ABIs).
-  jniLibs = pkgs.runCommand "${pname}-android-jnilibs-${version}" { } ''
-    mkdir -p $out/lib
-    ${lib.concatMapStrings (abi: ''
-      ln -s ${perAbi.${abi}.lib}/lib/${abi} $out/lib/${abi}
-    '') (builtins.attrNames perAbi)}
-    ln -s ${perAbi.arm64-v8a.lib}/android $out/android
-  '';
+  mkJniLibs =
+    name: libOf:
+    pkgs.runCommand "${pname}-android-${name}-${version}" { } ''
+      mkdir -p $out/lib
+      ${lib.concatMapStrings (abi: ''
+        ln -s ${libOf perAbi.${abi}}/lib/${abi} $out/lib/${abi}
+      '') (builtins.attrNames perAbi)}
+      ln -s ${libOf perAbi.arm64-v8a}/android $out/android
+    '';
+  jniLibs = mkJniLibs "jnilibs" (p: p.lib);
+  # Same layout from the per-crate build.
+  jniLibsPerCrate = mkJniLibs "jnilibs-per-crate" (p: p.perCrateLib);
 
   cargoShim = pkgs.writeShellApplication {
     name = "cargo";
@@ -199,30 +286,36 @@ let
   # `nix run .#android-gradle -- :app:assembleRelease [gradle args]`, from
   # the repo root: builds (or fetches from attic) every ABI, drops the
   # generated Gradle sources into `android/` and runs Gradle on them.
-  gradle = pkgs.writeShellApplication {
-    name = "${pname}-android-gradle";
-    runtimeInputs = gradleInputs;
-    runtimeEnv = gradleEnv // {
-      NOTINPLUS_JNI_DIR = "${jniLibs}/lib";
+  mkGradle =
+    name: jniLibs:
+    pkgs.writeShellApplication {
+      name = "${pname}-${name}";
+      runtimeInputs = gradleInputs;
+      runtimeEnv = gradleEnv // {
+        NOTINPLUS_JNI_DIR = "${jniLibs}/lib";
+      };
+      text = ''
+        [ -f android/settings.gradle.kts ] || { echo "run from the notinplus checkout root" >&2; exit 1; }
+        cp -r --no-preserve=mode ${jniLibs}/android/. android/
+        sed -i "s|@src@|$PWD|g" android/.istmo/istmo.json
+        # Newer than Cargo.lock / istmo.toml, so the plugin trusts it
+        # instead of refreshing it through `cargo check`.
+        touch android/.istmo/istmo.json
+        cd android
+        exec gradle --no-daemon -Pandroid.aapt2FromMavenOverride="$AAPT2" "$@"
+      '';
     };
-    text = ''
-      [ -f android/settings.gradle.kts ] || { echo "run from the notinplus checkout root" >&2; exit 1; }
-      cp -r --no-preserve=mode ${jniLibs}/android/. android/
-      sed -i "s|@src@|$PWD|g" android/.istmo/istmo.json
-      # Newer than Cargo.lock / istmo.toml, so the plugin trusts it
-      # instead of refreshing it through `cargo check`.
-      touch android/.istmo/istmo.json
-      cd android
-      exec gradle --no-daemon -Pandroid.aapt2FromMavenOverride="$AAPT2" "$@"
-    '';
-  };
+  gradle = mkGradle "android-gradle" jniLibs;
+  gradlePerCrate = mkGradle "android-gradle-per-crate" jniLibsPerCrate;
 
   devShell = pkgs.mkShell (gradleEnv // { packages = gradleInputs; });
 in
 {
   inherit
     jniLibs
+    jniLibsPerCrate
     gradle
+    gradlePerCrate
     devShell
     ;
   abis = builtins.attrNames abis;

@@ -169,6 +169,7 @@
             version
             ;
           inherit (notinplus) src;
+          inherit (notinplus) perCrate;
         };
         windowsBundles =
           let
@@ -193,7 +194,7 @@
             pname
             version
             ;
-          inherit (notinplus) src;
+          inherit (notinplus) src perCrate;
         };
 
         # notin-relay: `.#relay`, `.#relay-bundles` (deb/rpm/tar.gz with a
@@ -243,11 +244,14 @@
           windowsBundles
           // {
             "${pname}-windows" = windows.package;
+            "${pname}-windows-per-crate" = windows.perCrate;
             windows-cargoArtifacts = windows.cargoArtifacts;
             windows-sdk = windows.xwinSdk;
             android-jniLibs = android.jniLibs;
             android-cargoArtifacts = android.cargoArtifacts;
             android-gradle = android.gradle;
+            android-jniLibs-per-crate = android.jniLibsPerCrate;
+            android-gradle-per-crate = android.gradlePerCrate;
           }
         )
         // relayPackages;

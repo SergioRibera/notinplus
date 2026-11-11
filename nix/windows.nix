@@ -13,6 +13,7 @@
   src,
   pname,
   version,
+  perCrate,
 }:
 let
   target = "x86_64-pc-windows-msvc";
@@ -124,9 +125,69 @@ let
     args = commonArgs;
     cargoArtifacts = craneLib.buildDepsOnly commonArgs;
   };
+
+  # One derivation per crate (nix/cross-crates.nix), same toolchain setup.
+  cargoNixWindows = import ./cross-crates.nix {
+    inherit pkgs lib;
+    platform = lib.systems.elaborate lib.systems.examples.x86_64-windows;
+    targetEnv = "msvc";
+    # `cc` picks the static CRT from this, and rust-skia its `-static` build.
+    targetFeatures = "crt-static,fxsr,sse,sse2";
+    toolchain = pkgs.rust-bin.stable.${perCrate.channel}.minimal.override { targets = [ target ]; };
+    rustcFlags = [
+      "-Clinker=${llvm.lld}/bin/lld-link"
+      "-Ctarget-feature=+crt-static"
+    ]
+    ++ map (d: "-Lnative=${d}") libDirs;
+    env = {
+      "CC_${target}" = "${clangCl}/bin/clang-cl";
+      "CXX_${target}" = "${clangCl}/bin/clang-cl";
+      "AR_${target}" = "${llvm.llvm}/bin/llvm-lib";
+      "RC_${target}" = "${llvm.llvm}/bin/llvm-rc";
+    };
+    crateOverrides = perCrate.crateOverrides // {
+      # nixpkgs links the system (Linux) zstd; Windows compiles the bundled one.
+      zstd-sys = _: { };
+      # Its build script points the linker at the import libraries in its
+      # own source dir, which is gone once the crate is built.
+      windows_x86_64_msvc = _: {
+        postInstall = ''
+          mkdir -p $lib/lib/import
+          cp lib/*.lib $lib/lib/import/
+          for file in $lib/lib/link $lib/env; do
+            if [ -f "$file" ]; then
+              sed -i "s|$PWD/lib|$lib/lib/import|g" "$file"
+            fi
+          done
+        '';
+      };
+      freya-skia-bindings = _: {
+        SKIA_BINARIES_URL = "file://${skia}/skia-binaries-{key}.tar.gz";
+      };
+      notinplus =
+        attrs:
+        perCrate.crateOverrides.notinplus attrs
+        // {
+          # Only the exe ships; the cdylib and staticlib are the mobile entry.
+          type = [ "rlib" ];
+        };
+    };
+    buildRustCrateForBuild = perCrate.buildRustCrateForPkgs;
+    desktopCrate = perCrate.crate;
+  };
+
+  perCrateWindows =
+    let
+      crate = cargoNixWindows.workspaceMembers.notinplus.build;
+    in
+    pkgs.runCommand "${pname}-windows-${version}" { } ''
+      install -Dm755 ${crate}/bin/${pname}.exe $out/bin/${pname}.exe
+      install -Dm644 ${pdfium}/bin/pdfium.dll $out/bin/pdfium.dll
+    '';
 in
 {
   inherit xwinSdk cargoArtifacts;
+  perCrate = perCrateWindows;
   package = craneLib.buildPackage (
     commonArgs
     // {

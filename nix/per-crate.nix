@@ -78,9 +78,12 @@ let
 in
 {
   inherit
+    channel
     toolchain
     cargoNix
     crate
     package
+    crateOverrides
+    buildRustCrateForPkgs
     ;
 }
