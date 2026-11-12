@@ -3251,12 +3251,13 @@ impl<R: Replica> SyncDriver<R> {
             .is_some_and(|r| r.connected)
     }
 
-    /// The invitation for a share we own, pointing at its relay.
+    /// The invitation for a share, pointing at its relay; ours when it
+    /// names none and we own it.
     #[must_use]
     pub fn invite_for(&self, id: ShareId) -> Option<Invite> {
         let share = self.share(id)?;
         let mut invite = share.invite();
-        if invite.server.is_none() {
+        if invite.server.is_none() && share.is_owner(self.profile.id()) {
             invite.server = self.relay().map(ToString::to_string);
         }
         Some(invite)
