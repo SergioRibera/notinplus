@@ -14,7 +14,7 @@ settings-devices-link-another = Vincular otro dispositivo
 settings-devices-scan-or-paste = Escanear o pegar enlace
 settings-devices-sync = Sincronización
 settings-devices-server = Servidor
-settings-devices-server-placeholder = relay.ejemplo.com:7400
+settings-devices-server-placeholder = relay.ejemplo.com:7400/clave
 # $address: host y puerto del servidor de retransmisión.
 settings-devices-server-online = { $address } · conectado
 settings-devices-server-offline = { $address } · sin conexión
@@ -28,6 +28,7 @@ settings-devices-pairing-preparing = Preparando el código…
 settings-devices-pairing-show-hint = En el otro dispositivo abre Ajustes › Dispositivos › Escanear o pegar enlace, o elige «Tengo un código».
 # $time: minutos y segundos restantes, como 4:59.
 settings-devices-pairing-renews = Se renueva en { $time }
+settings-devices-pairing-lan-only = Sin servidor, solo vincula dispositivos en la misma red.
 settings-devices-pairing-copy-link = Copiar enlace
 settings-devices-link-copied = Enlace copiado
 settings-devices-pairing-enter-hint = Elige el dispositivo que muestra el código y escribe sus seis dígitos.
@@ -35,7 +36,7 @@ settings-devices-pairing-searching = Buscando dispositivos en esta red…
 settings-devices-pairing-code = Código
 settings-devices-pairing-linking = Vinculando…
 settings-devices-pair-rejected = El código no coincide. Revísalo en el otro dispositivo.
-settings-devices-pair-unreachable = No encontramos ese dispositivo. Tienen que estar en la misma red.
+settings-devices-pair-unreachable = No pudimos llegar a ese dispositivo. Deja su código abierto; si no están en la misma red, necesita un servidor en Ajustes › Dispositivos.
 # $name: el nombre del otro dispositivo.
 settings-devices-paired = Vinculado con { $name }
 settings-devices-paired-hint = Tus documentos se sincronizarán cuando los dos estén conectados.

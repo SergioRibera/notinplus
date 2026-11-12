@@ -14,7 +14,7 @@ settings-devices-link-another = Link another device
 settings-devices-scan-or-paste = Scan or paste link
 settings-devices-sync = Sync
 settings-devices-server = Server
-settings-devices-server-placeholder = relay.example.com:7400
+settings-devices-server-placeholder = relay.example.com:7400/key
 # $address: host and port of the relay server.
 settings-devices-server-online = { $address } · connected
 settings-devices-server-offline = { $address } · offline
@@ -28,6 +28,7 @@ settings-devices-pairing-preparing = Preparing the code…
 settings-devices-pairing-show-hint = On the other device, open Settings › Devices › Scan or paste link, or choose “I have a code”.
 # $time: minutes and seconds left, like 4:59.
 settings-devices-pairing-renews = Renews in { $time }
+settings-devices-pairing-lan-only = Without a server, this only links devices on the same network.
 settings-devices-pairing-copy-link = Copy link
 settings-devices-link-copied = Link copied
 settings-devices-pairing-enter-hint = Choose the device showing the code and type its six digits.
@@ -35,7 +36,7 @@ settings-devices-pairing-searching = Looking for devices on this network…
 settings-devices-pairing-code = Code
 settings-devices-pairing-linking = Linking…
 settings-devices-pair-rejected = The code doesn't match. Check it on the other device.
-settings-devices-pair-unreachable = We couldn't find that device. Both have to be on the same network.
+settings-devices-pair-unreachable = We couldn't reach that device. Keep its code open; if you're not on the same network, it needs a server in Settings › Devices.
 # $name: the other device's name.
 settings-devices-paired = Linked with { $name }
 settings-devices-paired-hint = Your documents will sync whenever both are connected.

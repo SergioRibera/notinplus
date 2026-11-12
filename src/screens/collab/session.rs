@@ -308,7 +308,11 @@ impl SessionSheet {
                                         ),
                                     ),
                             )
-                            .child(Text::new(tr!("collab-invitation-hint")).role(TextRole::Hint)),
+                            .child(Text::new(tr!("collab-invitation-hint")).role(TextRole::Hint))
+                            // No relay in the link: guests have to be nearby.
+                            .maybe_child((!view.invite_relayed).then(|| {
+                                Text::new(tr!("collab-invitation-lan-only")).role(TextRole::Meta)
+                            })),
                     ),
             )
             .into_element()

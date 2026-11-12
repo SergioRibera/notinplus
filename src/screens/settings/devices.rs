@@ -438,6 +438,12 @@ fn show_code(snapshot: &SyncSnapshot, left: Duration) -> Element {
                 .role(TextRole::Hint)
                 .align(TextAlign::Center),
         )
+        // Without a server the code and the link only work nearby.
+        .maybe_child(offer.relay.is_none().then(|| {
+            Text::new(tr!("settings-devices-pairing-lan-only"))
+                .role(TextRole::Meta)
+                .align(TextAlign::Center)
+        }))
         .maybe_child(qr_svg(&link).map(|svg| {
             rect()
                 .width(Size::px(QR))

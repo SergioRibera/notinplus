@@ -156,6 +156,7 @@ collab-person-reachable = se alcanza { $path }
 collab-person-offline-short = sin conexión
 collab-invitation = Invitación
 collab-invitation-hint = Quien tenga el enlace entra mientras la sesión exista. Terminarla lo invalida.
+collab-invitation-lan-only = Sin servidor, este enlace solo funciona en la misma red (Ajustes › Dispositivos).
 collab-entry-role = Entran como
 collab-entry-role-hint = El rol de quien abre el enlace. Después se cambia por persona.
 # $role: el rol.

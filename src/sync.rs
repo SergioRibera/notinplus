@@ -81,6 +81,8 @@ pub struct ShareView {
     /// members until the owner is reached again.
     pub waiting_for_owner: bool,
     pub invite_link: String,
+    /// The invitation names a relay, so it works off the network too.
+    pub invite_relayed: bool,
     pub can_edit: bool,
     pub can_manage: bool,
     pub can_add_docs: bool,
@@ -1496,7 +1498,11 @@ impl Service {
         let online: Vec<DeviceId> = self.driver.connected().map(|p| p.device).collect();
         self.driver
             .shares()
-            .map(|share| ShareView {
+            .map(|share| {
+                let invite = self.driver.invite_for(share.id);
+                (invite.unwrap_or_else(|| share.invite()), share)
+            })
+            .map(|(invite, share)| ShareView {
                 id: share.id,
                 title: share.title.clone(),
                 owner: share.owner.clone(),
@@ -1523,10 +1529,8 @@ impl Service {
                 owner_online: online.contains(&share.owner.device),
                 owner_path: self.driver.path_to(share.owner.device),
                 waiting_for_owner: self.driver.waiting_for_owner(share.id),
-                invite_link: self
-                    .driver
-                    .invite_for(share.id)
-                    .map_or_else(|| share.invite().to_link(), |i| i.to_link()),
+                invite_link: invite.to_link(),
+                invite_relayed: invite.server.is_some(),
                 can_edit: share.can_edit(me),
                 can_manage: share.can_manage(me),
                 can_add_docs: share.can_add_docs(me),
