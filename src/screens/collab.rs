@@ -542,5 +542,17 @@ fn show_notice(notice: ShareNotice) {
                     .action(tr!("common-open"), move |()| session(share)),
             );
         }
+        ShareNotice::Paired { name } => {
+            toasts.show(Toast::new(
+                tr!("settings-devices-paired", "name" => name.as_str()),
+            ));
+        }
+        ShareNotice::PairFailed(reason) => {
+            let text = match reason {
+                notin_sync::PairFailure::Rejected => tr!("settings-devices-pair-rejected"),
+                notin_sync::PairFailure::Unreachable => tr!("settings-devices-pair-unreachable"),
+            };
+            toasts.show(Toast::new(text).tone(notin_ui_kit::ToastTone::Error));
+        }
     }
 }

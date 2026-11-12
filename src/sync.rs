@@ -180,6 +180,10 @@ pub enum ShareNotice {
     Refused { share: ShareId, title: String },
     /// Opening a link for a share this device is already in.
     AlreadyIn { share: ShareId, title: String },
+    /// This device was linked with another one, whichever side asked.
+    Paired { name: String },
+    /// Linking with another device did not go through.
+    PairFailed(PairFailure),
 }
 
 /// What the UI reads.
@@ -1041,6 +1045,7 @@ impl Service {
                 log::info!("sync: paired with {}", device.name);
                 self.last_failure = None;
                 self.save_profile();
+                notify(ShareNotice::Paired { name: device.name });
             }
             DriverEvent::Renamed { device, name } => {
                 log::info!("sync: {device:?} is now {name}");
@@ -1048,6 +1053,7 @@ impl Service {
             }
             DriverEvent::PairFailed { device, reason } => {
                 self.last_failure = Some((device, reason));
+                notify(ShareNotice::PairFailed(reason));
             }
             DriverEvent::Imported(_) | DriverEvent::Merged(_) => {
                 sismo::scope!("sync::event::imported");
