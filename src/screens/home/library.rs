@@ -502,9 +502,9 @@ impl ShelfRow {
             });
         match checked {
             Selecting::No => row.chevron(),
-            Selecting::Selected | Selecting::Unselected => row.leading(
-                notin_ui_kit::Leading::Check(checked == Selecting::Selected),
-            ),
+            Selecting::Selected | Selecting::Unselected => {
+                row.leading(notin_ui_kit::Leading::Check(checked == Selecting::Selected))
+            }
         }
     }
 
@@ -528,9 +528,9 @@ impl ShelfRow {
             });
         match checked {
             Selecting::No => row.kind(icon, tint),
-            Selecting::Selected | Selecting::Unselected => row.leading(
-                notin_ui_kit::Leading::Check(checked == Selecting::Selected),
-            ),
+            Selecting::Selected | Selecting::Unselected => {
+                row.leading(notin_ui_kit::Leading::Check(checked == Selecting::Selected))
+            }
         }
     }
 }
