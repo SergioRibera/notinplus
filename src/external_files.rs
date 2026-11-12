@@ -333,7 +333,7 @@ impl Component for ExternalOverlay {
             .position(Position::new_absolute().top(0.0).left(0.0))
             .width(Size::fill())
             .height(Size::fill())
-            .layer(Layer::Overlay)
+            .layer(Layer::OverlayLevel(notin_ui_kit::tokens::layer::SCREEN))
             .background(notin_ui_kit::palette().bg)
             .child(rect().expanded().key(key).child(ExternalView { session }))
             .into_element()

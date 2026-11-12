@@ -82,6 +82,10 @@ pub mod motion {
 /// then toasts and hints on top. Floating UI that belongs to the page (selection bars,
 /// toolbar menus) uses `Layer::Overlay`, one level above its parent.
 pub mod layer {
+    /// A view over the whole window (a file opened from outside). Above
+    /// page floating UI, which nests up to two `Layer::Overlay` jumps,
+    /// and below modals.
+    pub const SCREEN: u8 = 3;
     /// The lowest modal; each one stacked above takes two more levels, up
     /// to [`MODAL_MAX`].
     pub const MODAL: u8 = 4;
