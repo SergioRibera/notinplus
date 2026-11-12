@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 notin-sync = { path = "../crates/notin-sync" }
+originals-format = { git = "https://github.com/biblionlabs/extra_data_source", rev = "8d956625cc7117ce33d4cf57aaeb14520606915b" }
 
 # Fuzz targets build on nightly with their own flags; keep them out of the
 # main workspace and its lockfile.
@@ -22,6 +23,13 @@ istmo-core = { git = "https://github.com/SergioRibera/istmo", rev = "b3ede16" }
 [[bin]]
 name = "sync"
 path = "fuzz_targets/sync.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "originals"
+path = "fuzz_targets/originals.rs"
 test = false
 doc = false
 bench = false

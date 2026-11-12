@@ -635,6 +635,7 @@ version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
  "notin-sync",
+ "originals-format",
 ]
 
 [[package]]
@@ -654,6 +655,15 @@ name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
+
+[[package]]
+name = "originals-format"
+version = "0.1.0"
+source = "git+https://github.com/biblionlabs/extra_data_source?rev=8d956625cc7117ce33d4cf57aaeb14520606915b#8d956625cc7117ce33d4cf57aaeb14520606915b"
+dependencies = [
+ "wincode",
+ "zerocopy",
+]
 
 [[package]]
 name = "parking_lot"
@@ -1199,6 +1209,7 @@ dependencies = [
  "quote",
  "thiserror",
  "wincode-derive",
+ "zerocopy",
 ]
 
 [[package]]
