@@ -61,7 +61,7 @@ impl Component for WindowRoot {
         let settings = crate::settings::use_settings_root();
         crate::state::use_library_root();
         crate::screens::home::use_browse_root();
-        let lang = use_memo(move || settings.read().appearance.interface_lang());
+        let lang = use_memo(move || settings.interface_lang());
         let gutters = use_memo(notin_ui_kit::Gutters::default);
         use_provide_context(move || notin_ui_kit::ModalChrome {
             gutters: Some(gutters),

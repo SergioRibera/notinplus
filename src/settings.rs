@@ -101,23 +101,28 @@ pub struct AppearanceSettings {
 }
 
 impl AppearanceSettings {
-    /// Language the interface shows: the chosen one, else the device's
-    /// when it is supported, else [`Lang::FALLBACK`].
+    /// Language the interface shows: the chosen one, else `device`.
     #[must_use]
-    pub fn interface_lang(&self) -> Lang {
-        self.language.unwrap_or_else(device_lang)
+    pub fn interface_lang(&self, device: Lang) -> Lang {
+        self.language.unwrap_or(device)
     }
+}
+
+/// Supported language of `locale`, else [`Lang::FALLBACK`].
+fn lang_of(locale: Option<&istmo::plugins::Locale>) -> Lang {
+    locale
+        .and_then(|locale| Lang::from_locale(&locale.bcp47))
+        .unwrap_or(Lang::FALLBACK)
 }
 
 /// Supported language of the device locale istmo reports.
 fn device_lang() -> Lang {
-    istmo::plugins::SystemInfo::acquire()
+    let locale = istmo::plugins::SystemInfo::acquire()
         .and_then(|info| info.current_locale())
         .map_err(|err| log::warn!("system locale: {err}"))
         .ok()
-        .flatten()
-        .and_then(|locale| Lang::from_locale(&locale.bcp47))
-        .unwrap_or(Lang::FALLBACK)
+        .flatten();
+    lang_of(locale.as_ref())
 }
 
 impl From<AppearanceSettings> for Appearance {
@@ -467,14 +472,14 @@ impl Settings {
     }
 
     #[sismo::function("settings::publish")]
-    fn publish(&self) {
+    fn publish(&self, device: Lang) {
         let code = match self.pen.double_tap {
             PenDoubleTap::Eraser => 0,
             PenDoubleTap::LastBrush => 1,
             PenDoubleTap::Nothing => 2,
         };
         PEN_DOUBLE_TAP.store(code, std::sync::atomic::Ordering::Relaxed);
-        let lang = self.appearance.interface_lang();
+        let lang = self.appearance.interface_lang(device);
         if lang != notin_i18n::Lang::current() {
             lang.make_current();
             crate::plugins::catalog::set_lang(lang);
@@ -487,6 +492,8 @@ impl Settings {
 pub struct SettingsStore {
     state: State<Settings>,
     theme: ThemeHandle,
+    /// Supported language of the device locale, kept up to date.
+    device: State<Lang>,
 }
 
 impl std::fmt::Debug for SettingsStore {
@@ -520,12 +527,20 @@ impl SettingsStore {
         self.state.peek().clone()
     }
 
+    /// Language the interface shows; subscribes the caller to the
+    /// settings and to the device locale.
+    #[must_use]
+    pub fn interface_lang(&self) -> Lang {
+        let device = *self.device.read();
+        self.state.read().appearance.interface_lang(device)
+    }
+
     /// Edit, persist and re-apply.
     #[sismo::function("settings::update")]
     pub fn update(&mut self, edit: impl FnOnce(&mut Settings)) {
         edit(&mut self.state.write());
         let settings = self.state.peek().clone();
-        settings.publish();
+        settings.publish(*self.device.peek());
         self.theme.set(settings.appearance.into());
         if let Err(err) = settings.save() {
             log::error!("settings save: {err}");
@@ -536,14 +551,36 @@ impl SettingsStore {
 /// Load settings and install both the store and the theme root.
 #[must_use]
 pub fn use_settings_root() -> SettingsStore {
+    let mut device = use_state(device_lang);
     let state = use_state(|| {
         let settings = Settings::load();
-        settings.publish();
+        settings.publish(*device.peek());
         settings
     });
     let theme = notin_ui_kit::theme::use_theme_root(move || state.peek().appearance.into());
     use_hook(move || {
-        let store = SettingsStore { state, theme };
+        // The system language may change while the app runs, and the
+        // platform can report it only after the first read.
+        match istmo::plugins::SystemInfo::acquire() {
+            Ok(info) => {
+                let updates = info.locale_updates();
+                spawn(traced!("task::settings::locale", async move {
+                    while let Ok(locale) = updates.recv_async().await {
+                        let lang = lang_of(Some(&locale));
+                        if lang != *device.peek() {
+                            device.set(lang);
+                            state.peek().publish(lang);
+                        }
+                    }
+                }));
+            }
+            Err(err) => log::warn!("system locale updates: {err}"),
+        }
+        let store = SettingsStore {
+            state,
+            theme,
+            device,
+        };
         provide_context_for_scope_id(store, ScopeId::ROOT);
         store
     })

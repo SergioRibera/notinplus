@@ -324,7 +324,7 @@ impl Component for AppShell {
         });
         // Text is formatted at render time in the process-global
         // language, so a language change remounts the routed views.
-        let lang = use_memo(move || settings.read().appearance.interface_lang());
+        let lang = use_memo(move || settings.interface_lang());
         let insets = *crate::hooks::provide_safe_area_root().read();
         // Share the measured window area with any descendant that
         // wants to clamp its own popup/overlay inside the viewport —
