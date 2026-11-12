@@ -196,6 +196,8 @@ pub struct SyncSnapshot {
     pub name: String,
     pub trusted: Vec<TrustedDevice>,
     pub online: Vec<DeviceId>,
+    /// How each trusted device in `online` is reached.
+    pub paths: HashMap<DeviceId, ReachPath>,
     pub discovered: Vec<PeerInfo>,
     /// Offer currently shown, if the user opened pairing.
     pub offer: Option<PairingOffer>,
@@ -1631,6 +1633,11 @@ impl Service {
             name: profile.name().to_owned(),
             trusted: profile.trusted().to_vec(),
             online: self.driver.online().map(|p| p.device).collect(),
+            paths: self
+                .driver
+                .online()
+                .filter_map(|p| Some((p.device, self.driver.path_to(p.device)?)))
+                .collect(),
             discovered: self.driver.discovered().cloned().collect(),
             offer: self.driver.current_offer(),
             pairing_with: self.driver.pairing_target().map(str::to_owned),

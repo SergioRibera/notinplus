@@ -133,7 +133,11 @@ fn linked_device(
     let since = crate::format::day(device.since, crate::format::now());
     ListRow::new(device.name.clone())
         .subtitle(if online {
-            tr!("settings-devices-linked-online", "since" => since)
+            let path = snapshot.paths.get(&id).map_or_else(
+                || tr!("collab-path-lan"),
+                |p| crate::screens::collab::path_label(*p),
+            );
+            tr!("settings-devices-linked-online", "path" => path, "since" => since)
         } else {
             tr!("settings-devices-linked-offline", "since" => since)
         })

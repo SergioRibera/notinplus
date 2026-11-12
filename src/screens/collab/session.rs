@@ -74,12 +74,7 @@ impl std::fmt::Debug for SessionSheet {
 /// Reach a member: on the same network, straight across the internet,
 /// through the server, or not.
 fn path_label(path: Option<notin_sync::Path>) -> Option<String> {
-    match path {
-        Some(notin_sync::Path::Direct) => Some(tr!("collab-path-lan")),
-        Some(notin_sync::Path::Punched) => Some(tr!("collab-path-direct")),
-        Some(notin_sync::Path::Relay) => Some(tr!("collab-path-relay")),
-        None => None,
-    }
+    path.map(super::path_label)
 }
 
 /// What a person row says under the name.

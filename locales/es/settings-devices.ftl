@@ -6,7 +6,8 @@ settings-devices-this-device-hint = Este dispositivo · así te ven los demás
 settings-devices-linked = Vinculados
 settings-devices-linked-empty = Todavía no has vinculado otro dispositivo. Tus documentos se sincronizan entre los dispositivos vinculados.
 # $since: el día en que se vinculó, ya con formato.
-settings-devices-linked-online = Conectado · vinculado el { $since }
+# $path: misma red, directo o por servidor.
+settings-devices-linked-online = Conectado · { $path } · vinculado el { $since }
 settings-devices-linked-offline = Sin conexión · vinculado el { $since }
 settings-devices-confirm = ¿Seguro? Toca de nuevo
 settings-devices-remove = Quitar

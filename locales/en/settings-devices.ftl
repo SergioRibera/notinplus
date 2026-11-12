@@ -6,7 +6,8 @@ settings-devices-this-device-hint = This device · how others see you
 settings-devices-linked = Linked
 settings-devices-linked-empty = You haven't linked another device yet. Your documents sync between linked devices.
 # $since: the day it was linked, already formatted.
-settings-devices-linked-online = Connected · linked { $since }
+# $path: same network, direct or via server.
+settings-devices-linked-online = Connected · { $path } · linked { $since }
 settings-devices-linked-offline = Offline · linked { $since }
 settings-devices-confirm = Sure? Tap again
 settings-devices-remove = Remove

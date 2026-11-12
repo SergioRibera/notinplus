@@ -54,6 +54,16 @@ pub fn role_label(role: Role) -> String {
     }
 }
 
+/// How a device is reached, on screen.
+#[must_use]
+pub fn path_label(path: notin_sync::Path) -> String {
+    match path {
+        notin_sync::Path::Direct => tr!("collab-path-lan"),
+        notin_sync::Path::Punched => tr!("collab-path-direct"),
+        notin_sync::Path::Relay => tr!("collab-path-relay"),
+    }
+}
+
 /// What a mode is called on screen.
 #[must_use]
 pub fn mode_label(mode: ShareMode) -> String {
