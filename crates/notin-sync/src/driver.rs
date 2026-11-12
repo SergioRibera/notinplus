@@ -2931,9 +2931,12 @@ impl<R: Replica> SyncDriver<R> {
             .collect();
         wanted.extend(self.relay_dials());
         // Connected or no longer wanted: start from scratch next time.
-        self.redials
-            .retain(|device, _| wanted.iter().any(|(d, ..)| d == device));
-        let mut out = Vec::new();
+        let relays = &self.relays;
+        self.redials.retain(|device, _| {
+            wanted.iter().any(|(d, ..)| d == device)
+                || relays.get(device).is_some_and(|r| !r.connected)
+        });
+        let mut out = self.relay_reconnect(now);
         for (device, dial, eager) in wanted {
             let redial = self
                 .redials
@@ -3254,6 +3257,8 @@ impl<R: Replica> SyncDriver<R> {
         self.own_relay = addr.as_ref().map(RelayAddr::device);
         let server = addr.as_ref().map(ToString::to_string);
         if let Some(addr) = addr {
+            // Chosen just now: dialed at once, whatever backoff it had.
+            self.redials.remove(&addr.device());
             self.add_relay(addr);
         }
         let me = self.profile.id();
@@ -3390,7 +3395,7 @@ impl<R: Replica> SyncDriver<R> {
                 out.push(Action::Disconnect { device });
             }
         }
-        out.extend(self.relay_reconnect());
+        out.extend(self.relay_reconnect(Instant::now()));
         out
     }
 
@@ -3404,20 +3409,31 @@ impl<R: Replica> SyncDriver<R> {
             .any(|p| p.relayed && p.addr == at && p.device != relay)
     }
 
+    /// Dial every relay in use and out of reach, each on its own backoff
+    /// so one that went away is back within seconds, not at the next tick.
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::relay_reconnect"))]
-    fn relay_reconnect(&self) -> Vec<Action> {
-        self.relays
-            .values()
-            .filter(|r| !r.connected && !self.connected.contains_key(&r.device))
-            .map(|r| Action::ConnectHost {
-                host: r.addr.host.clone(),
-                public: r.addr.public,
-            })
-            .collect()
+    fn relay_reconnect(&mut self, now: Instant) -> Vec<Action> {
+        let mut out = Vec::new();
+        for relay in self.relays.values() {
+            if relay.connected || self.connected.contains_key(&relay.device) {
+                continue;
+            }
+            let redial = self
+                .redials
+                .entry(relay.device)
+                .or_insert_with(|| Redial::due(now));
+            if now < redial.next {
+                continue;
+            }
+            redial.schedule(now);
+            out.push(Action::ConnectHost {
+                host: relay.addr.host.clone(),
+                public: relay.addr.public,
+            });
+        }
+        out
     }
 
-    /// The relay a share meets at: the one it names, once linked, else
-    /// ours. Never ours in place of one it names.
     /// Whether the relay the share meets at is within reach.
     #[must_use]
     pub fn share_relay_online(&self, id: ShareId) -> bool {
@@ -3426,6 +3442,8 @@ impl<R: Replica> SyncDriver<R> {
             .is_some_and(|r| r.connected)
     }
 
+    /// The relay a share meets at: the one it names, once linked, else
+    /// ours. Never ours in place of one it names.
     fn share_relay(&self, id: ShareId) -> Option<DeviceId> {
         self.share(id)
             .and_then(|s| s.server.as_deref())

@@ -240,6 +240,10 @@ fn session_runs_live_through_the_relay_only() {
     settle(&mut owner, &mut guest, Duration::from_secs(5), |o, _| {
         o.driver.relay_online()
     });
+    assert!(
+        owner.driver.relay_online(),
+        "the owner never reached the relay"
+    );
     let invite = owner.driver.invite_for(id).unwrap();
     let invite = Invite::parse_link(&invite.to_link()).unwrap();
 
@@ -398,6 +402,47 @@ fn knows_at(device: &mut Device, of: &Device, relay: &RelayAddr) {
         .driver
         .profile_mut()
         .set_trusted_relay(id, Some(relay.to_string()));
+}
+
+#[test]
+fn a_relay_back_after_a_restart_is_dialed_again_within_seconds() {
+    let key = DeviceKey::generate();
+    let start = |port| {
+        RelayServer::start(
+            RelayConfig {
+                key: key.clone(),
+                name: "relay".into(),
+                port,
+                limits: RelayLimits::default(),
+            },
+            RelayStore::memory(),
+        )
+        .unwrap()
+    };
+    let server = start(0);
+    let port = server.local_addr().port();
+    let relay_addr = RelayAddr {
+        host: format!("127.0.0.1:{port}"),
+        public: *key.public(),
+    };
+    let mut a = Device::relay_only("Tablet");
+    let mut b = Device::relay_only("PC");
+    trust_each_other(&mut a, &mut b);
+    on_relay(&mut a, &relay_addr);
+    on_relay(&mut b, &relay_addr);
+    settle(&mut a, &mut b, Duration::from_secs(10), connected);
+    assert!(connected(&a, &b), "never met at the relay");
+    drop(server);
+    settle(&mut a, &mut b, Duration::from_secs(8), |a, b| {
+        !a.driver.relay_online() && !b.driver.relay_online()
+    });
+    let _server = start(port);
+    // Only what the app runs every second; no tick.
+    settle(&mut a, &mut b, Duration::from_secs(15), |a, b| {
+        a.driver.relay_online() && b.driver.relay_online() && connected(a, b)
+    });
+    assert!(a.driver.relay_online() && b.driver.relay_online());
+    assert!(connected(&a, &b), "never met again at the relay");
 }
 
 #[test]
