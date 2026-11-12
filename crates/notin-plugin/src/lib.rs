@@ -72,7 +72,6 @@ pub mod ui;
 pub use bytes;
 pub use notin_i18n as i18n;
 pub use notin_i18n::tr;
-pub use rkyv;
 
 notin_i18n::catalog!();
 

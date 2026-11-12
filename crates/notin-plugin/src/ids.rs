@@ -11,27 +11,12 @@
 //! trait signatures reference them without the host having to lower
 //! them to opaque bytes at the FFI boundary.
 
-use rkyv::{Archive, Deserialize, Serialize};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Globally unique stroke identifier.
 #[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Default,
-    Debug,
-    SchemaWrite,
-    SchemaRead,
-    Archive,
-    Serialize,
-    Deserialize,
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Debug, SchemaWrite, SchemaRead,
 )]
-#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct StrokeId(pub [u8; 16]);
 
 impl StrokeId {
@@ -59,22 +44,8 @@ impl std::fmt::Display for StrokeId {
 
 /// Globally unique bookmark identifier.
 #[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Default,
-    Debug,
-    SchemaWrite,
-    SchemaRead,
-    Archive,
-    Serialize,
-    Deserialize,
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Debug, SchemaWrite, SchemaRead,
 )]
-#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct BookmarkId(pub [u8; 16]);
 
 impl BookmarkId {
@@ -103,22 +74,8 @@ impl std::fmt::Display for BookmarkId {
 /// Per-install device identifier. The host persists a single value per
 /// filesystem install and stamps every emitted op with it.
 #[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Default,
-    Debug,
-    SchemaWrite,
-    SchemaRead,
-    Archive,
-    Serialize,
-    Deserialize,
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Debug, SchemaWrite, SchemaRead,
 )]
-#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct DeviceId(pub [u8; 16]);
 
 impl DeviceId {
@@ -147,22 +104,8 @@ impl std::fmt::Display for DeviceId {
 /// Per-user identifier. One `UserId` fans out across every device a
 /// user signs in on.
 #[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Default,
-    Debug,
-    SchemaWrite,
-    SchemaRead,
-    Archive,
-    Serialize,
-    Deserialize,
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Debug, SchemaWrite, SchemaRead,
 )]
-#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct UserId(pub [u8; 16]);
 
 impl UserId {
@@ -192,22 +135,8 @@ impl std::fmt::Display for UserId {
 /// Lamport tiebreak stays total across a multi-device, multi-user
 /// mesh.
 #[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Default,
-    Debug,
-    SchemaWrite,
-    SchemaRead,
-    Archive,
-    Serialize,
-    Deserialize,
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Debug, SchemaWrite, SchemaRead,
 )]
-#[rkyv(compare(PartialEq), derive(Debug))]
 pub struct ActorId {
     pub user: UserId,
     pub device: DeviceId,
@@ -216,21 +145,7 @@ pub struct ActorId {
 /// Globally orderable op identifier. `(lamport, actor)` lexicographic
 /// comparison is total and deterministic — concurrent writes converge
 /// on the same winner without external coordination.
-#[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Default,
-    Debug,
-    SchemaWrite,
-    SchemaRead,
-    Archive,
-    Serialize,
-    Deserialize,
-)]
-#[rkyv(compare(PartialEq), derive(Debug))]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug, SchemaWrite, SchemaRead)]
 pub struct OpId {
     pub lamport: u64,
     pub actor: ActorId,
