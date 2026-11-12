@@ -79,10 +79,10 @@ impl GlyphFont {
 
     const fn bytes(self) -> &'static [u8] {
         match self {
-            Self::Excalifont => include_bytes!("../assets/handwriting/fonts/excalifont.rkyv"),
-            Self::Caveat => include_bytes!("../assets/handwriting/fonts/caveat.rkyv"),
-            Self::GochiHand => include_bytes!("../assets/handwriting/fonts/gochi-hand.rkyv"),
-            Self::Handlee => include_bytes!("../assets/handwriting/fonts/handlee.rkyv"),
+            Self::Excalifont => include_bytes!("../assets/handwriting/fonts/excalifont.bin"),
+            Self::Caveat => include_bytes!("../assets/handwriting/fonts/caveat.bin"),
+            Self::GochiHand => include_bytes!("../assets/handwriting/fonts/gochi-hand.bin"),
+            Self::Handlee => include_bytes!("../assets/handwriting/fonts/handlee.bin"),
         }
     }
 

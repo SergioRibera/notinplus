@@ -1,7 +1,5 @@
 //! Recognition templates and their baked container.
 
-use rkyv::{Archive, Deserialize, Serialize};
-
 use crate::archive;
 use crate::error::HandwritingError;
 use crate::ink::{Bounds, Point, TRACE_POINTS, Trace};
@@ -23,7 +21,7 @@ pub struct Line {
 /// Traces are scaled to unit size, which erases the only cue that
 /// separates `o`/`O` or `,`/`'`; the extent brings it back when the
 /// caller knows the line.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Archive, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, wincode::SchemaWrite, wincode::SchemaRead)]
 pub struct Extent {
     pub top: f32,
     pub bottom: f32,
@@ -60,7 +58,16 @@ impl Extent {
 
 /// What a template stands for.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Archive, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    wincode::SchemaWrite,
+    wincode::SchemaRead,
 )]
 pub enum Label {
     /// A whole character, or the base of a composed one (`a` for `á`,
@@ -71,7 +78,7 @@ pub enum Label {
 }
 
 /// One reference sample.
-#[derive(Debug, Clone, PartialEq, Archive, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, wincode::SchemaWrite, wincode::SchemaRead)]
 pub struct Template {
     pub label: Label,
     /// Normalized trace points, quantized by [`Template::QUANTUM`].
@@ -151,7 +158,7 @@ impl Template {
 
 /// Everything a recognizer loads. Produced by `tools/glyph-bake`, or
 /// by any caller with its own samples.
-#[derive(Debug, Clone, Default, PartialEq, Archive, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, wincode::SchemaWrite, wincode::SchemaRead)]
 pub struct TemplateSet {
     pub format: u32,
     pub templates: Vec<Template>,
@@ -183,8 +190,8 @@ impl TemplateSet {
     ///
     /// # Errors
     ///
-    /// [`HandwritingError::Archive`] for bytes that are not a valid
-    /// archive, [`HandwritingError::Format`] for one baked by an
+    /// [`HandwritingError::Decode`] for bytes that are not a valid
+    /// file, [`HandwritingError::Format`] for one baked by an
     /// incompatible version.
     #[cfg_attr(
         feature = "sismo",
@@ -198,9 +205,9 @@ impl TemplateSet {
     ///
     /// # Errors
     ///
-    /// [`HandwritingError::Archive`] if rkyv fails to serialize.
+    /// [`HandwritingError::Encode`] if the value cannot be written.
     pub fn to_bytes(&self) -> Result<Vec<u8>, HandwritingError> {
-        Ok(archive::encode(self)?)
+        archive::encode(self)
     }
 }
 

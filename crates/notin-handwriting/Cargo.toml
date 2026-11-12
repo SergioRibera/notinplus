@@ -30,9 +30,4 @@ sismo = ["dep:sismo"]
 [dependencies]
 # Spans for the sismo profiler; off unless an app turns it on.
 sismo = { version = "0.1.1", default-features = false, optional = true }
-rkyv = { version = "0.8", default-features = false, features = [
-    "std",
-    "bytecheck",
-    "little_endian",
-    "pointer_width_32",
-] }
+wincode = { version = "0.6", default-features = false, features = ["derive", "std"] }

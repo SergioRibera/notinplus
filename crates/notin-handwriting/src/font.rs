@@ -5,14 +5,12 @@
 //! `i16` font-unit coordinates, Y flipped to grow downwards with the
 //! baseline at 0.
 
-use rkyv::{Archive, Deserialize, Serialize};
-
 use crate::archive;
 use crate::error::HandwritingError;
 use crate::ink::Point;
 
 /// Path verb; consumes [`Verb::points`] coordinates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaWrite, wincode::SchemaRead)]
 pub enum Verb {
     Move,
     Line,
@@ -44,7 +42,7 @@ pub enum PathCmd {
 }
 
 /// Outline of one character, in font units.
-#[derive(Debug, Clone, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaWrite, wincode::SchemaRead)]
 pub struct GlyphInk {
     pub glyph: char,
     pub advance: i16,
@@ -75,7 +73,7 @@ impl GlyphInk {
 }
 
 /// A font's outlines for every recognizable character.
-#[derive(Debug, Clone, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaWrite, wincode::SchemaRead)]
 pub struct FontInk {
     pub format: u32,
     pub name: String,
@@ -107,8 +105,8 @@ impl FontInk {
     ///
     /// # Errors
     ///
-    /// [`HandwritingError::Archive`] for bytes that are not a valid
-    /// archive, [`HandwritingError::Format`] for one baked by an
+    /// [`HandwritingError::Decode`] for bytes that are not a valid
+    /// file, [`HandwritingError::Format`] for one baked by an
     /// incompatible version.
     #[cfg_attr(feature = "sismo", sismo::function("handwriting::font_from_bytes"))]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, HandwritingError> {
@@ -119,9 +117,9 @@ impl FontInk {
     ///
     /// # Errors
     ///
-    /// [`HandwritingError::Archive`] if rkyv fails to serialize.
+    /// [`HandwritingError::Encode`] if the value cannot be written.
     pub fn to_bytes(&self) -> Result<Vec<u8>, HandwritingError> {
-        Ok(archive::encode(self)?)
+        archive::encode(self)
     }
 
     /// Outline for `glyph`, if the font has it.

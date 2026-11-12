@@ -87,7 +87,7 @@ impl Command {
                 [per_class] => Ok(Self::Templates {
                     dataset: dataset()?,
                     per_class: *per_class,
-                    out: out.unwrap_or_else(|| assets().join("templates.rkyv")),
+                    out: out.unwrap_or_else(|| assets().join("templates.bin")),
                 }),
                 _ => Err(usage("templates takes a single --per-class value")),
             },
@@ -134,7 +134,7 @@ impl Command {
                 for font in fonts {
                     let (ink, missing) = fonts::bake(&font, uji::GLYPHS.chars())?;
                     let stem = font.file_stem().unwrap_or_default().to_string_lossy();
-                    let out = out_dir.join(format!("{}.rkyv", fonts::kebab(&stem)));
+                    let out = out_dir.join(format!("{}.bin", fonts::kebab(&stem)));
                     let written = write(&out, &ink.to_bytes()?)?;
                     let missing: String = missing.into_iter().collect();
                     println!(

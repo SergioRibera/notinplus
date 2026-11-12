@@ -18,9 +18,8 @@ use crate::template::Line;
     Hash,
     PartialOrd,
     Ord,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    wincode::SchemaWrite,
+    wincode::SchemaRead,
 )]
 pub enum Mark {
     /// Tittle of `i` / `j`.

@@ -59,7 +59,7 @@ pub(super) fn recognizer() -> Option<&'static Recognizer> {
     RECOGNIZER
         .get_or_init(|| {
             sismo::scope!("handwriting::load_templates");
-            Recognizer::from_bytes(include_bytes!("../../assets/handwriting/templates.rkyv"))
+            Recognizer::from_bytes(include_bytes!("../../assets/handwriting/templates.bin"))
                 .inspect_err(|err| log::error!("handwriting templates: {err}"))
                 .ok()
         })

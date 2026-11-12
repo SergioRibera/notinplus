@@ -7,7 +7,7 @@ cargo run --release -p glyph-bake -- templates <ujipenchars2.txt>
 cargo run --release -p glyph-bake -- fonts assets/fonts/*.ttf
 ```
 
-## `templates.rkyv`
+## `templates.bin`
 
 Derived from **UJI Pen Characters (Version 2)** by F. Prat, M. J. Castro,
 D. Llorens, A. Marzal and J. M. Vilar, UCI Machine Learning Repository,
@@ -16,7 +16,7 @@ D. Llorens, A. Marzal and J. M. Vilar, UCI Machine Learning Repository,
 samples resampled, normalized, accents split from their letters and
 reduced to representative medoids.
 
-## `fonts/*.rkyv`
+## `fonts/*.bin`
 
 Glyph outlines extracted from the fonts in `assets/fonts/`, all under the
 SIL Open Font License 1.1:

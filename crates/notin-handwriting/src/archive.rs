@@ -1,17 +1,20 @@
-//! rkyv round-trips for the baked formats.
+//! wincode round-trips for the baked formats.
 //!
-//! Callers hand in plain byte slices (from `include_bytes!`, a file,
-//! the network); decoding copies into an aligned buffer first so no
-//! alignment burden leaks into the public API.
+//! Fixed-width little-endian integers, `u32` lengths and one-byte enum
+//! tags: the outlines and traces are mostly `i16`s and verbs, so this
+//! keeps the files smaller than any varint layout would. Any alignment
+//! is accepted.
 
-use rkyv::api::high::{HighDeserializer, HighSerializer, HighValidator};
-use rkyv::bytecheck::CheckBytes;
-use rkyv::rancor::Error;
-use rkyv::ser::allocator::ArenaHandle;
-use rkyv::util::AlignedVec;
-use rkyv::{Archive, Deserialize, Serialize};
+use wincode::config::{Configuration, DEFAULT_PREALLOCATION_SIZE_LIMIT};
+use wincode::int_encoding::{FixInt, LittleEndian};
+use wincode::len::FixIntLen;
+use wincode::{SchemaReadOwned, SchemaWrite};
 
 use crate::error::HandwritingError;
+
+/// Layout of every baked file.
+type Baked =
+    Configuration<true, DEFAULT_PREALLOCATION_SIZE_LIMIT, FixIntLen<u32>, LittleEndian, FixInt, u8>;
 
 /// A baked root type carrying its own layout version.
 pub(crate) trait Versioned {
@@ -20,17 +23,14 @@ pub(crate) trait Versioned {
     fn format(&self) -> u32;
 }
 
-/// Decodes `bytes` and rejects archives baked for another layout.
+/// Decodes `bytes` and rejects files baked for another layout.
 #[cfg_attr(feature = "sismo", sismo::function("handwriting::archive_decode"))]
 pub(crate) fn decode<T>(bytes: &[u8]) -> Result<T, HandwritingError>
 where
-    T: Archive + Versioned,
-    T::Archived:
-        for<'a> CheckBytes<HighValidator<'a, Error>> + Deserialize<T, HighDeserializer<Error>>,
+    T: SchemaReadOwned<Baked, Dst = T> + Versioned,
 {
-    let mut aligned = AlignedVec::<16>::with_capacity(bytes.len());
-    aligned.extend_from_slice(bytes);
-    let value = rkyv::from_bytes::<T, Error>(&aligned)?;
+    let value: T = wincode::config::deserialize_exact(bytes, Baked::new())
+        .map_err(HandwritingError::Decode)?;
     if value.format() == T::FORMAT {
         Ok(value)
     } else {
@@ -41,9 +41,9 @@ where
     }
 }
 
-pub(crate) fn encode<T>(value: &T) -> Result<Vec<u8>, Error>
+pub(crate) fn encode<T>(value: &T) -> Result<Vec<u8>, HandwritingError>
 where
-    T: for<'a> Serialize<HighSerializer<AlignedVec, ArenaHandle<'a>, Error>>,
+    T: SchemaWrite<Baked, Src = T>,
 {
-    rkyv::to_bytes::<Error>(value).map(|bytes| bytes.to_vec())
+    wincode::config::serialize(value, Baked::new()).map_err(HandwritingError::Encode)
 }
