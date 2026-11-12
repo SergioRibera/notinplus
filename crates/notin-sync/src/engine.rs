@@ -298,8 +298,9 @@ impl<R: Replica> SyncEngine<R> {
 
     /// New changes of `doc` for `peer` since what it last announced, and
     /// a note that it now holds them, so a burst of edits does not resend
-    /// the same bytes. `None` when `peer` never announced `doc` (the
-    /// next round covers it) or already has everything.
+    /// the same bytes; the whole document when `peer` announced without
+    /// it. `None` before `peer` announced anything (the first round
+    /// covers it) or when it already has everything.
     ///
     /// # Errors
     /// Replica failure while exporting.
@@ -312,27 +313,33 @@ impl<R: Replica> SyncEngine<R> {
         if !self.scope.covers_doc(doc) {
             return Ok(None);
         }
-        let Some(theirs) = self
-            .heard
-            .get(&peer)
-            .and_then(|h| h.sent.get(&doc).or_else(|| h.docs.get(&doc)))
-            .cloned()
-        else {
+        let Some(heard) = self.heard.get(&peer) else {
             return Ok(None);
         };
+        let theirs = heard
+            .sent
+            .get(&doc)
+            .or_else(|| heard.docs.get(&doc))
+            .cloned();
         let Some(mine) = self.replica.doc_version(doc) else {
             return Ok(None);
         };
-        if mine == theirs {
+        if theirs.as_ref() == Some(&mine) {
             return Ok(None);
         }
-        let message = match self.replica.doc_updates_since(doc, &theirs) {
-            Ok(bytes) if bytes.is_empty() => return Ok(None),
-            Ok(bytes) => Message::DocUpdates { doc, bytes },
-            Err(_) => Message::DocSnapshot {
-                doc,
-                bytes: self.replica.doc_snapshot(doc).map_err(SyncError::Replica)?,
-            },
+        let snapshot = |engine: &Self| {
+            engine
+                .replica
+                .doc_snapshot(doc)
+                .map(|bytes| Message::DocSnapshot { doc, bytes })
+                .map_err(SyncError::Replica)
+        };
+        let message = match theirs.map(|t| self.replica.doc_updates_since(doc, &t)) {
+            Some(Ok(bytes)) if bytes.is_empty() => return Ok(None),
+            Some(Ok(bytes)) => Message::DocUpdates { doc, bytes },
+            // A document it has never heard of goes whole, as a round
+            // would send it, instead of waiting for the next one.
+            None | Some(Err(_)) => snapshot(self)?,
         };
         if let Some(heard) = self.heard.get_mut(&peer) {
             heard.sent.remove(&doc);
@@ -489,6 +496,29 @@ mod tests {
         round(&mut a, &mut b);
         assert_eq!(a.status(D1), DocStatus::Synced);
         assert_eq!(b.status(D2), DocStatus::Synced);
+    }
+
+    #[test]
+    fn a_document_made_after_the_round_is_pushed_whole() {
+        let mut a = SyncEngine::new(MemReplica::default(), Scope::All);
+        let mut b = SyncEngine::new(MemReplica::default(), Scope::All);
+        a.replica_mut().mark(D1, 1, 1);
+        round(&mut a, &mut b);
+        assert!(a.push_doc(B, D2).unwrap().is_none(), "nothing there yet");
+        a.replica_mut().mark(D2, 1, 1);
+        let push = a
+            .push_doc(B, D2)
+            .unwrap()
+            .expect("the new document goes out");
+        assert!(matches!(push, Message::DocSnapshot { doc: D2, .. }));
+        b.handle(A, push).unwrap();
+        assert_eq!(marks(&b, D2), vec![(1, 1)]);
+        // Then only what changes after it.
+        a.replica_mut().mark(D2, 1, 2);
+        let push = a.push_doc(B, D2).unwrap().expect("the next edit goes out");
+        assert!(matches!(push, Message::DocUpdates { doc: D2, .. }));
+        b.handle(A, push).unwrap();
+        assert_eq!(marks(&b, D2), vec![(1, 1), (1, 2)]);
     }
 
     #[test]
