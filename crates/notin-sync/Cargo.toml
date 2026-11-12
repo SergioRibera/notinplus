@@ -30,7 +30,8 @@ sismo = ["dep:sismo"]
 [dependencies]
 # Spans for the sismo profiler; off unless an app turns it on.
 sismo = { version = "0.1.1", default-features = false, optional = true }
-zudp = { version = "0.4", features = ["security", "discovery", "relay"] }
+# Frames are our own bytes (`RawBytes`), so no zudp message codec.
+zudp = { version = "0.4", default-features = false, features = ["security", "discovery", "relay"] }
 wincode = { version = "0.6", default-features = false, features = ["derive", "std"] }
 # The wire codec and its bounded decoding.
 istmo-core = "0.1.1-alpha.5"

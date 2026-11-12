@@ -17,7 +17,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc as tmpsc;
-use zudp::{Discovery, DiscoveryConfig, PeerAddr, PeerEvent, ZudpSender, ZudpSocket};
+use zudp::{Discovery, DiscoveryConfig, PeerAddr, PeerEvent, RawBytes, ZudpSender, ZudpSocket};
 
 use super::{APP_ID, Beacon, Frame, LanConfig, Lane, NetError, NetEvent, PeerInfo};
 use crate::identity::DeviceId;
@@ -436,7 +436,7 @@ fn writer(
         while let Ok(frame) = frames.recv_async().await {
             #[cfg(feature = "sismo")]
             sismo::counter!("sync.lan.frame_bytes", frame.len());
-            if let Err(err) = sender.send_stream(frame, addr, stream).await {
+            if let Err(err) = sender.send_stream(RawBytes(frame.into()), addr, stream).await {
                 tracing::warn!(target: "notin-sync", peer = %addr, stream, "send failed: {err}");
             }
             if let Some(relayed) = &paced {
@@ -534,7 +534,7 @@ impl Node {
 
     /// A new scan for other devices, when scanning is on.
     #[cfg_attr(feature = "sismo", sismo::function("sync::lan::open_scan"))]
-    async fn open_scan(&self) -> Option<zudp::ScanStream<Vec<u8>>> {
+    async fn open_scan(&self) -> Option<zudp::ScanStream<RawBytes>> {
         if !self.config.scan {
             return None;
         }
@@ -542,7 +542,7 @@ impl Node {
             .discovery_port(self.config.discovery_port)
             .broadcast_addr(self.config.broadcast)
             .probe_interval(self.config.probe_interval);
-        match Discovery::scan_stream::<Vec<u8>>(cfg).await {
+        match Discovery::scan_stream::<RawBytes>(cfg).await {
             Ok(stream) => Some(stream),
             Err(err) => {
                 tracing::warn!(target: "notin-sync", "scan failed: {err}");
@@ -552,7 +552,7 @@ impl Node {
     }
 
     async fn send_frame(sender: &ZudpSender, addr: PeerAddr, frame: &Frame, stream: u16) {
-        if let Err(err) = sender.send_stream(frame.to_bytes(), addr, stream).await {
+        if let Err(err) = sender.send_stream(RawBytes(frame.to_bytes().into()), addr, stream).await {
             tracing::warn!(target: "notin-sync", peer = %addr, "send failed: {err}");
         }
     }
@@ -1249,7 +1249,7 @@ impl Outbound {
             .security(keypair)
             .punching(punching)
             .pin_remote_key(public)
-            .connect::<Vec<u8>>(addr);
+            .connect::<RawBytes>(addr);
         let mut conn = match tokio::time::timeout(timeout, conn).await {
             Ok(Ok(conn)) => conn,
             Ok(Err(err)) => {
@@ -1288,7 +1288,7 @@ impl Outbound {
             if internal
                 .send(Internal::Frame {
                     addr: key,
-                    bytes: packet.msg,
+                    bytes: packet.msg.0.into(),
                     key: Some(public),
                 })
                 .is_err()
@@ -1300,7 +1300,7 @@ impl Outbound {
     }
 }
 
-fn spawn_listener(mut socket: ZudpSocket<Vec<u8>>, internal: tmpsc::UnboundedSender<Internal>) {
+fn spawn_listener(mut socket: ZudpSocket<RawBytes>, internal: tmpsc::UnboundedSender<Internal>) {
     let mut events = socket.events();
     let peers = internal.clone();
     tokio::spawn(async move {
@@ -1320,7 +1320,7 @@ fn spawn_listener(mut socket: ZudpSocket<Vec<u8>>, internal: tmpsc::UnboundedSen
                     if internal
                         .send(Internal::Frame {
                             addr: packet.from,
-                            bytes: packet.msg,
+                            bytes: packet.msg.0.into(),
                             key,
                         })
                         .is_err()
@@ -1348,7 +1348,7 @@ fn decode_beacon(bytes: &[u8]) -> Option<Beacon> {
 }
 
 /// The listening socket, a relay node when the config says so.
-async fn listen(config: &LanConfig) -> Result<ZudpSocket<Vec<u8>>, zudp::Error> {
+async fn listen(config: &LanConfig) -> Result<ZudpSocket<RawBytes>, zudp::Error> {
     let mut builder = zudp::Zudp::default()
         .port(config.port)
         .rate_limit(MAX_PPS)
@@ -1362,7 +1362,7 @@ async fn listen(config: &LanConfig) -> Result<ZudpSocket<Vec<u8>>, zudp::Error> 
             move |from: &[u8; 32], to: &[u8; 32]| policy.allow(from, to),
         );
     }
-    let socket = builder.listen::<Vec<u8>>().await?;
+    let socket = builder.listen::<RawBytes>().await?;
     if let Some(tap) = config.relay.as_ref().and_then(|r| r.tap.clone()) {
         socket.set_relay_tap(Some(tap));
     }
@@ -1419,7 +1419,7 @@ async fn run(
         }
         let cfg = DiscoveryConfig::new(APP_ID, local_addr.port())
             .discovery_port(node.config.discovery_port)
-            .meta(beacon_bytes(&node.beacon));
+            .meta(RawBytes(beacon_bytes(&node.beacon).into()));
         match Discovery::advertise(cfg) {
             Ok(handle) => Some(handle),
             Err(err) => {
@@ -1448,7 +1448,7 @@ async fn run(
                     break;
                 }
                 if rename && let Some(handle) = &advertise {
-                    handle.set_meta(beacon_bytes(&node.beacon));
+                    handle.set_meta(RawBytes(beacon_bytes(&node.beacon).into()));
                 }
                 if pause {
                     advertise = None;
@@ -1472,7 +1472,7 @@ async fn run(
             found = next_peer(&mut scan) => {
                 #[cfg(feature = "sismo")]
                 sismo::scope!("sync::lan::discovered");
-                let Some(beacon) = decode_beacon(&found.meta) else { continue };
+                let Some(beacon) = decode_beacon(&found.meta.0) else { continue };
                 if beacon.is_valid() && beacon.device != node.beacon.device && !node.paused {
                     node.emit(NetEvent::Discovered(PeerInfo::from_beacon(&beacon, found.data_addr)));
                 }
@@ -1484,7 +1484,7 @@ async fn run(
 }
 
 /// Next beacon from the scanner, or never when scanning is off.
-async fn next_peer(scan: &mut Option<zudp::ScanStream<Vec<u8>>>) -> zudp::DiscoveredPeer<Vec<u8>> {
+async fn next_peer(scan: &mut Option<zudp::ScanStream<RawBytes>>) -> zudp::DiscoveredPeer<RawBytes> {
     match scan {
         Some(stream) => loop {
             match stream.next_event().await {

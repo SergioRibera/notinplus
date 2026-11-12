@@ -2915,7 +2915,7 @@ rec {
         ];
 
       };
-      "bytecheck 0.6.12" = rec {
+      "bytecheck" = rec {
         crateName = "bytecheck";
         version = "0.6.12";
         edition = "2021";
@@ -2926,12 +2926,12 @@ rec {
         dependencies = [
           {
             name = "bytecheck_derive";
-            packageId = "bytecheck_derive 0.6.12";
+            packageId = "bytecheck_derive";
             usesDefaultFeatures = false;
           }
           {
             name = "ptr_meta";
-            packageId = "ptr_meta 0.1.4";
+            packageId = "ptr_meta";
             usesDefaultFeatures = false;
           }
           {
@@ -2949,45 +2949,7 @@ rec {
         };
         resolvedDefaultFeatures = [ "simdutf8" "std" ];
       };
-      "bytecheck 0.8.3" = rec {
-        crateName = "bytecheck";
-        version = "0.8.3";
-        edition = "2021";
-        sha256 = "0a9cy6jax6g35svm5f0n9qp30mi106nb03nddf5avw2lqzm3wcr6";
-        authors = [
-          "David Koloski <djkoloski@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "bytecheck_derive";
-            packageId = "bytecheck_derive 0.8.3";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "ptr_meta";
-            packageId = "ptr_meta 0.3.2";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "rancor";
-            packageId = "rancor";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "simdutf8";
-            packageId = "simdutf8";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-        ];
-        features = {
-          "default" = [ "simdutf8" ];
-          "simdutf8" = [ "dep:simdutf8" ];
-          "uuid-1" = [ "dep:uuid-1" ];
-        };
-        resolvedDefaultFeatures = [ "simdutf8" ];
-      };
-      "bytecheck_derive 0.6.12" = rec {
+      "bytecheck_derive" = rec {
         crateName = "bytecheck_derive";
         version = "0.6.12";
         edition = "2021";
@@ -3014,35 +2976,6 @@ rec {
           "default" = [ "std" ];
         };
         resolvedDefaultFeatures = [ "std" ];
-      };
-      "bytecheck_derive 0.8.3" = rec {
-        crateName = "bytecheck_derive";
-        version = "0.8.3";
-        edition = "2021";
-        sha256 = "0saf9vj4a1q92mvlz6skfg0sl7d6adf94wvqdgqamvm9r8c7kl26";
-        procMacro = true;
-        authors = [
-          "David Koloski <djkoloski@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "proc-macro2";
-            packageId = "proc-macro2";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "quote";
-            packageId = "quote";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "syn";
-            packageId = "syn 3.0.9";
-            usesDefaultFeatures = false;
-            features = [ "clone-impls" "derive" "full" "parsing" "printing" "proc-macro" ];
-          }
-        ];
-
       };
       "bytemuck" = rec {
         crateName = "bytemuck";
@@ -16531,7 +16464,7 @@ rec {
           }
           {
             name = "rkyv";
-            packageId = "rkyv 0.7.46";
+            packageId = "rkyv";
             optional = true;
           }
           {
@@ -16800,52 +16733,6 @@ rec {
           "tokio" = [ "zbus/tokio" "dep:tokio" ];
         };
         resolvedDefaultFeatures = [ "_macos-observable" "_windows-ui-settings" "_winrt" "accent-color" "async-io" "callback" ];
-      };
-      "munge" = rec {
-        crateName = "munge";
-        version = "0.4.7";
-        edition = "2021";
-        sha256 = "032sj47l2174dirkjkhi18x92wlgdqdld4b4l5n9bfly4lgl05sy";
-        authors = [
-          "David Koloski <djkoloski@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "munge_macro";
-            packageId = "munge_macro";
-            usesDefaultFeatures = false;
-          }
-        ];
-
-      };
-      "munge_macro" = rec {
-        crateName = "munge_macro";
-        version = "0.4.7";
-        edition = "2021";
-        sha256 = "0cgrm4q8a6qm0802d08pacbv2mpcq4c47hrxc3avannlrdfg4s25";
-        procMacro = true;
-        authors = [
-          "David Koloski <djkoloski@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "proc-macro2";
-            packageId = "proc-macro2";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "quote";
-            packageId = "quote";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "syn";
-            packageId = "syn 2.0.119";
-            usesDefaultFeatures = false;
-            features = [ "clone-impls" "full" "parsing" "printing" "proc-macro" ];
-          }
-        ];
-
       };
       "mutate_once" = rec {
         crateName = "mutate_once";
@@ -17809,6 +17696,7 @@ rec {
           {
             name = "zudp";
             packageId = "zudp 0.4.0";
+            usesDefaultFeatures = false;
             features = [ "security" "discovery" "relay" ];
           }
         ];
@@ -23524,7 +23412,7 @@ rec {
         ];
 
       };
-      "ptr_meta 0.1.4" = rec {
+      "ptr_meta" = rec {
         crateName = "ptr_meta";
         version = "0.1.4";
         edition = "2018";
@@ -23535,7 +23423,7 @@ rec {
         dependencies = [
           {
             name = "ptr_meta_derive";
-            packageId = "ptr_meta_derive 0.1.4";
+            packageId = "ptr_meta_derive";
           }
         ];
         features = {
@@ -23543,30 +23431,7 @@ rec {
         };
         resolvedDefaultFeatures = [ "std" ];
       };
-      "ptr_meta 0.3.2" = rec {
-        crateName = "ptr_meta";
-        version = "0.3.2";
-        edition = "2021";
-        sha256 = "1h0cyxzaw3m9mj0gr6d59p7mxwkn3cwgg3k2x3dir4lcp4bahgbl";
-        authors = [
-          "David Koloski <djkoloski@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "ptr_meta_derive";
-            packageId = "ptr_meta_derive 0.3.2";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-        ];
-        features = {
-          "default" = [ "derive" "std" ];
-          "derive" = [ "ptr_meta_derive" ];
-          "ptr_meta_derive" = [ "dep:ptr_meta_derive" ];
-        };
-        resolvedDefaultFeatures = [ "derive" "ptr_meta_derive" "std" ];
-      };
-      "ptr_meta_derive 0.1.4" = rec {
+      "ptr_meta_derive" = rec {
         crateName = "ptr_meta_derive";
         version = "0.1.4";
         edition = "2018";
@@ -23588,37 +23453,6 @@ rec {
             name = "syn";
             packageId = "syn 1.0.109";
             features = [ "full" ];
-          }
-        ];
-
-      };
-      "ptr_meta_derive 0.3.2" = rec {
-        crateName = "ptr_meta_derive";
-        version = "0.3.2";
-        edition = "2021";
-        sha256 = "1l6b3zzdc6r8acwr2aqwx9l22i8b898rsz3svgadb1gi6ajrr38w";
-        procMacro = true;
-        authors = [
-          "David Koloski <djkoloski@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "proc-macro2";
-            packageId = "proc-macro2";
-            usesDefaultFeatures = false;
-            features = [ "proc-macro" ];
-          }
-          {
-            name = "quote";
-            packageId = "quote";
-            usesDefaultFeatures = false;
-            features = [ "proc-macro" ];
-          }
-          {
-            name = "syn";
-            packageId = "syn 3.0.9";
-            usesDefaultFeatures = false;
-            features = [ "clone-impls" "derive" "full" "parsing" "printing" "proc-macro" ];
           }
         ];
 
@@ -24288,27 +24122,6 @@ rec {
           "std" = [ "euclid/std" "itertools/use_std" "tracing/std" "tracing/attributes" "rustc-hash/std" ];
         };
         resolvedDefaultFeatures = [ "default" "std" ];
-      };
-      "rancor" = rec {
-        crateName = "rancor";
-        version = "0.1.3";
-        edition = "2021";
-        sha256 = "0wi5gplf0v6hvcv23g1m4cx2kdikdnn9qg9pdzb5bnzws1148lwv";
-        authors = [
-          "David Koloski <djkoloski@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "ptr_meta";
-            packageId = "ptr_meta 0.3.2";
-            usesDefaultFeatures = false;
-            features = [ "derive" ];
-          }
-        ];
-        features = {
-          "default" = [ "alloc" ];
-        };
-        resolvedDefaultFeatures = [ "alloc" ];
       };
       "rand 0.10.3" = rec {
         crateName = "rand";
@@ -25196,7 +25009,7 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "std" "unicode" "unicode-age" "unicode-bool" "unicode-case" "unicode-gencat" "unicode-perl" "unicode-script" "unicode-segment" ];
       };
-      "rend 0.4.2" = rec {
+      "rend" = rec {
         crateName = "rend";
         version = "0.4.2";
         edition = "2018";
@@ -25207,7 +25020,7 @@ rec {
         dependencies = [
           {
             name = "bytecheck";
-            packageId = "bytecheck 0.6.12";
+            packageId = "bytecheck";
             optional = true;
             usesDefaultFeatures = false;
           }
@@ -25220,29 +25033,6 @@ rec {
           "validation" = [ "bytecheck" ];
         };
         resolvedDefaultFeatures = [ "bytecheck" "std" "validation" ];
-      };
-      "rend 0.5.4" = rec {
-        crateName = "rend";
-        version = "0.5.4";
-        edition = "2021";
-        sha256 = "0h322w0nak1s3jwprm6i0sdn2bj1520xc47y0qa8fvpr0w3sffv6";
-        authors = [
-          "David Koloski <djkoloski@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "bytecheck";
-            packageId = "bytecheck 0.8.3";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-        ];
-        features = {
-          "bytecheck" = [ "dep:bytecheck" ];
-          "bytemuck-1" = [ "dep:bytemuck-1" ];
-          "zerocopy-0_8" = [ "dep:zerocopy" "dep:zerocopy-derive" ];
-        };
-        resolvedDefaultFeatures = [ "bytecheck" ];
       };
       "reqwest" = rec {
         crateName = "reqwest";
@@ -25786,7 +25576,7 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" "default" "dev_urandom_fallback" "wasm32_unknown_unknown_js" ];
       };
-      "rkyv 0.7.46" = rec {
+      "rkyv" = rec {
         crateName = "rkyv";
         version = "0.7.46";
         edition = "2021";
@@ -25803,7 +25593,7 @@ rec {
           }
           {
             name = "bytecheck";
-            packageId = "bytecheck 0.6.12";
+            packageId = "bytecheck";
             optional = true;
             usesDefaultFeatures = false;
           }
@@ -25820,18 +25610,18 @@ rec {
           }
           {
             name = "ptr_meta";
-            packageId = "ptr_meta 0.1.4";
+            packageId = "ptr_meta";
             usesDefaultFeatures = false;
           }
           {
             name = "rend";
-            packageId = "rend 0.4.2";
+            packageId = "rend";
             optional = true;
             usesDefaultFeatures = false;
           }
           {
             name = "rkyv_derive";
-            packageId = "rkyv_derive 0.7.46";
+            packageId = "rkyv_derive";
           }
           {
             name = "seahash";
@@ -25874,105 +25664,7 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" "archive_le" "bytecheck" "default" "hashbrown" "rend" "size_32" "std" "validation" ];
       };
-      "rkyv 0.8.18" = rec {
-        crateName = "rkyv";
-        version = "0.8.18";
-        edition = "2021";
-        sha256 = "16fkq8jyzckzjm10cv6wa5yab5vxgd7ra1hlmda085yany9n0xyr";
-        authors = [
-          "David Koloski <djkoloski@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "bytecheck";
-            packageId = "bytecheck 0.8.3";
-            optional = true;
-            usesDefaultFeatures = false;
-            features = [ "simdutf8" ];
-          }
-          {
-            name = "bytes";
-            packageId = "bytes";
-            rename = "bytes-1";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "hashbrown";
-            packageId = "hashbrown 0.17.1";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "indexmap";
-            packageId = "indexmap";
-            rename = "indexmap-2";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "munge";
-            packageId = "munge";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "ptr_meta";
-            packageId = "ptr_meta 0.3.2";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "rancor";
-            packageId = "rancor";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "rend";
-            packageId = "rend 0.5.4";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "rkyv_derive";
-            packageId = "rkyv_derive 0.8.18";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "tinyvec";
-            packageId = "tinyvec";
-            rename = "tinyvec-1";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "uuid";
-            packageId = "uuid";
-            rename = "uuid-1";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-        ];
-        features = {
-          "alloc" = [ "dep:hashbrown" "tinyvec-1?/alloc" "rancor/alloc" ];
-          "arrayvec-0_7" = [ "dep:arrayvec-0_7" ];
-          "bytecheck" = [ "dep:bytecheck" "rend/bytecheck" "rkyv_derive/bytecheck" ];
-          "bytes-1" = [ "dep:bytes-1" ];
-          "default" = [ "std" "bytecheck" ];
-          "hashbrown-0_14" = [ "dep:hashbrown-0_14" ];
-          "hashbrown-0_15" = [ "dep:hashbrown-0_15" ];
-          "hashbrown-0_16" = [ "dep:hashbrown-0_16" ];
-          "hashbrown-0_17" = [ "dep:hashbrown" ];
-          "indexmap-2" = [ "dep:indexmap-2" "alloc" ];
-          "smallvec-1" = [ "dep:smallvec-1" ];
-          "smol_str-0_2" = [ "dep:smol_str-0_2" ];
-          "smol_str-0_3" = [ "dep:smol_str-0_3" ];
-          "std" = [ "alloc" "bytes-1?/std" "indexmap-2?/std" "ptr_meta/std" "uuid-1?/std" ];
-          "thin-vec-0_2" = [ "dep:thin-vec-0_2" ];
-          "tinyvec-1" = [ "dep:tinyvec-1" ];
-          "triomphe-0_1" = [ "dep:triomphe-0_1" "alloc" ];
-          "uuid-1" = [ "dep:uuid-1" "bytecheck?/uuid-1" ];
-        };
-        resolvedDefaultFeatures = [ "alloc" "bytecheck" "default" "std" ];
-      };
-      "rkyv_derive 0.7.46" = rec {
+      "rkyv_derive" = rec {
         crateName = "rkyv_derive";
         version = "0.7.46";
         edition = "2021";
@@ -25998,39 +25690,6 @@ rec {
         features = {
         };
         resolvedDefaultFeatures = [ "archive_le" "default" ];
-      };
-      "rkyv_derive 0.8.18" = rec {
-        crateName = "rkyv_derive";
-        version = "0.8.18";
-        edition = "2021";
-        sha256 = "0vmhkfnz6b7dn1qzckqjdy39fg525salhinn8jfq7pf799hfy98w";
-        procMacro = true;
-        authors = [
-          "David Koloski <djkoloski@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "proc-macro2";
-            packageId = "proc-macro2";
-            usesDefaultFeatures = false;
-            features = [ "proc-macro" ];
-          }
-          {
-            name = "quote";
-            packageId = "quote";
-            usesDefaultFeatures = false;
-            features = [ "proc-macro" ];
-          }
-          {
-            name = "syn";
-            packageId = "syn 3.0.9";
-            usesDefaultFeatures = false;
-            features = [ "clone-impls" "derive" "parsing" "printing" "proc-macro" ];
-          }
-        ];
-        features = {
-        };
-        resolvedDefaultFeatures = [ "bytecheck" ];
       };
       "roman-numerals-rs" = rec {
         crateName = "roman-numerals-rs";
@@ -39414,12 +39073,6 @@ rec {
             packageId = "parking_lot";
           }
           {
-            name = "rkyv";
-            packageId = "rkyv 0.8.18";
-            optional = true;
-            features = [ "bytecheck" ];
-          }
-          {
             name = "snow";
             packageId = "snow";
             optional = true;
@@ -39465,7 +39118,7 @@ rec {
           "security" = [ "dep:snow" ];
           "serde" = [ "dep:serde" "dep:postcard" ];
         };
-        resolvedDefaultFeatures = [ "default" "discovery" "relay" "rkyv" "security" ];
+        resolvedDefaultFeatures = [ "discovery" "relay" "security" ];
       };
       "zune-core 0.4.12" = rec {
         crateName = "zune-core";
