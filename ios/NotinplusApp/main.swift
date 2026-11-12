@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import IstmoRuntime
 import ObjectiveC
@@ -72,8 +73,9 @@ enum DeepLinks {
 /// Files opened with the app (Files › "Open in", the share sheet) go to
 /// the Rust side on the `istmo.documents` queue as a plain path: each
 /// one is copied into the temporary directory while its security scope
-/// is open. The copy is what the app opens; changes are not written back
-/// to the original.
+/// is open, to a folder named after its URL. The copy is what the app
+/// opens; changes are not written back to the original, and a later
+/// open of the same URL replaces it.
 enum OpenedDocuments {
     private static let channel = "istmo.documents"
     private static let capacity: UInt32 = 32
@@ -89,9 +91,10 @@ enum OpenedDocuments {
         let name = url.lastPathComponent.isEmpty ? "document" : url.lastPathComponent
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("opened", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent(folder(of: url), isDirectory: true)
         let copy = dir.appendingPathComponent(name)
         do {
+            try? FileManager.default.removeItem(at: dir)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: url, to: copy)
         } catch {
@@ -106,6 +109,15 @@ enum OpenedDocuments {
         Bincode.writeVarintU32(&out, origin)
         Bincode.writeOption(&out, nil as String?) { o, s in Bincode.writeString(&o, s) }
         IstmoRuntime.shared.publishEarlyQueue(channel: channel, capacity: capacity, payload: out)
+    }
+
+    /// One folder per source, so opening the same file again lands on the
+    /// same path and the app sees the same file.
+    private static func folder(of url: URL) -> String {
+        SHA256.hash(data: Data(url.absoluteString.utf8))
+            .prefix(16)
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 }
 

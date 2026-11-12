@@ -20,9 +20,10 @@ import kotlin.concurrent.thread
  * listens is kept until it does.
  *
  * Rust reads plain paths, not `content://` URIs: each file is copied
- * into the cache first. The copy is what the app opens; changes are not
- * written back to the original, and copies older than a day are removed
- * on the next open.
+ * into the cache first, to a folder named after its URI. The copy is
+ * what the app opens; changes are not written back to the original, a
+ * later open of the same URI replaces it, and copies older than a day
+ * are removed on the next open.
  */
 object OpenedDocuments {
     private const val TAG = "OpenedDocuments"
@@ -63,7 +64,12 @@ object OpenedDocuments {
                 prune(root)
                 val name = safeName(displayName(app, uri))
                 val mime = intent.type ?: app.contentResolver.getType(uri)
-                val copy = File(File(root, UUID.randomUUID().toString()).apply { mkdirs() }, name)
+                // One folder per source, so opening the same file again
+                // lands on the same path and the app sees the same file.
+                val dir = File(root, UUID.nameUUIDFromBytes(uri.toString().toByteArray()).toString())
+                dir.deleteRecursively()
+                dir.mkdirs()
+                val copy = File(dir, name)
                 copyLimited(app, uri, copy)
                 IstmoRuntime.publishEarlyQueue(CHANNEL, CAPACITY, encode(copy, name, mime, shareOrigin))
             } catch (err: Exception) {
