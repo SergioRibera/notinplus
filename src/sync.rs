@@ -1154,9 +1154,12 @@ impl Service {
                 self.save_profile();
             }
             DriverEvent::RelayUnreachable { relay, why } => {
-                log::warn!("sync: relay {relay:?} out of reach: {why:?}");
+                // Ours is the one shown; others' are retried quietly.
                 if self.driver.relay().is_some_and(|r| r.device() == relay) {
+                    log::warn!("sync: relay {relay:?} out of reach: {why:?}");
                     self.relay_failure = Some(why);
+                } else {
+                    log::debug!("sync: relay {relay:?} out of reach: {why:?}");
                 }
             }
             DriverEvent::RelayOnline(online) => {
