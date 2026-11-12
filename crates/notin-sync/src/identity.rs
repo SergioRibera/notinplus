@@ -10,7 +10,7 @@ use subtle::ConstantTimeEq;
 
 use crate::error::IdentityError;
 
-const PROFILE_VERSION: u32 = 3;
+const PROFILE_VERSION: u32 = 4;
 
 /// Stable identifier of a device: the hash of its public key.
 #[derive(
@@ -276,6 +276,39 @@ struct ProfileFile {
     relay: Option<String>,
 }
 
+/// The third layout, whose trusted devices had no relay.
+#[derive(wincode::SchemaRead)]
+struct ProfileFileV3 {
+    version: u32,
+    public: [u8; 32],
+    private: [u8; 32],
+    name: String,
+    user_name: Option<String>,
+    trusted: Vec<TrustedDeviceV3>,
+    relay: Option<String>,
+}
+
+/// A trusted device as the first three layouts kept it.
+#[derive(wincode::SchemaRead)]
+struct TrustedDeviceV3 {
+    id: DeviceId,
+    public: [u8; 32],
+    name: String,
+    since: u64,
+}
+
+impl From<TrustedDeviceV3> for TrustedDevice {
+    fn from(old: TrustedDeviceV3) -> Self {
+        Self {
+            id: old.id,
+            public: old.public,
+            name: old.name,
+            since: old.since,
+            relay: None,
+        }
+    }
+}
+
 /// The second layout, without a user name.
 #[derive(wincode::SchemaRead)]
 struct ProfileFileV2 {
@@ -283,7 +316,7 @@ struct ProfileFileV2 {
     public: [u8; 32],
     private: [u8; 32],
     name: String,
-    trusted: Vec<TrustedDevice>,
+    trusted: Vec<TrustedDeviceV3>,
     relay: Option<String>,
 }
 
@@ -294,7 +327,7 @@ struct ProfileFileV1 {
     public: [u8; 32],
     private: [u8; 32],
     name: String,
-    trusted: Vec<TrustedDevice>,
+    trusted: Vec<TrustedDeviceV3>,
 }
 
 impl DeviceProfile {
@@ -372,6 +405,21 @@ impl DeviceProfile {
 
     /// Earlier layouts, read into the current one.
     fn decode_older(bytes: &[u8]) -> Result<ProfileFile, IdentityError> {
+        let v3: Option<ProfileFileV3> = istmo_core::codec::decode::<ProfileFileV3>(bytes)
+            .ok()
+            .map(|(file, _)| file)
+            .filter(|file| file.version == 3);
+        if let Some(old) = v3 {
+            return Ok(ProfileFile {
+                version: PROFILE_VERSION,
+                public: old.public,
+                private: old.private,
+                name: old.name,
+                user_name: old.user_name,
+                trusted: old.trusted.into_iter().map(TrustedDevice::from).collect(),
+                relay: old.relay,
+            });
+        }
         let v2: Option<ProfileFileV2> = istmo_core::codec::decode::<ProfileFileV2>(bytes)
             .ok()
             .map(|(file, _)| file)
@@ -383,7 +431,7 @@ impl DeviceProfile {
                 private: old.private,
                 name: old.name,
                 user_name: None,
-                trusted: old.trusted,
+                trusted: old.trusted.into_iter().map(TrustedDevice::from).collect(),
                 relay: old.relay,
             });
         }
@@ -398,7 +446,7 @@ impl DeviceProfile {
             private: old.private,
             name: old.name,
             user_name: None,
-            trusted: old.trusted,
+            trusted: old.trusted.into_iter().map(TrustedDevice::from).collect(),
             relay: None,
         })
     }
@@ -490,6 +538,43 @@ impl DeviceProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_profile_saved_before_trusted_devices_had_a_relay_still_loads() {
+        // The third layout, as it was written.
+        #[derive(wincode::SchemaWrite)]
+        struct Old {
+            version: u32,
+            public: [u8; 32],
+            private: [u8; 32],
+            name: String,
+            user_name: Option<String>,
+            trusted: Vec<(DeviceId, [u8; 32], String, u64)>,
+            relay: Option<String>,
+        }
+        let key = DeviceKey::generate();
+        let other = DeviceKey::generate();
+        let bytes = istmo_core::codec::encode(&Old {
+            version: 3,
+            public: key.keypair.public,
+            private: key.keypair.private,
+            name: "PC".into(),
+            user_name: Some("Sergio".into()),
+            trusted: vec![(other.id(), *other.public(), "Tablet".into(), 7)],
+            relay: Some("relay:7400/key".into()),
+        })
+        .unwrap();
+        let profile = DeviceProfile::decode(&bytes).unwrap();
+        assert_eq!(profile.id(), key.id());
+        assert_eq!(profile.user_name(), Some("Sergio"));
+        assert_eq!(profile.relay(), Some("relay:7400/key"));
+        let mut expected = TrustedDevice::new(*other.public(), "Tablet", 7);
+        expected.relay = None;
+        assert_eq!(profile.trusted(), [expected]);
+        // Saved again in the current layout, and read back the same.
+        let again = DeviceProfile::decode(&profile.encode().unwrap()).unwrap();
+        assert_eq!(again.trusted(), profile.trusted());
+    }
 
     #[test]
     fn no_secret_is_agreed_with_a_low_order_key() {
