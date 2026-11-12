@@ -1,4 +1,4 @@
-//! `latest.json`, the update manifest every stable release publishes,
+//! `latest.json`, the update manifest every release publishes,
 //! and which of its files fits this device.
 
 use std::borrow::Cow;
@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 use notin_i18n::tr;
 use serde::Deserialize;
 
-/// The newest stable release, as `latest.json` describes it.
+/// The newest release, as `latest.json` describes it.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct Release {
     /// `0.2.0`, without the `v`.

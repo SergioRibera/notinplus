@@ -1,13 +1,13 @@
 //! New versions: knowing one is out, saying so, and installing it.
 //!
-//! The release workflow publishes `latest.json` with each stable
-//! release. [`check`] reads it (from a copy kept for two days, see
-//! [`check::MAX_AGE`]); when it names a version newer than this one
-//! and the person did not skip it, Home shows a chip that opens the
-//! release notes. From there the file for this device downloads with
-//! its progress in a sheet, its SHA-256 is checked, and it goes to the
-//! system installer on Android and Windows or is shown in its folder
-//! elsewhere.
+//! The release workflow publishes `latest.json` with each release.
+//! [`check`] finds the newest one this build may move to and reads it
+//! (from a copy kept for two days, see [`check::MAX_AGE`]); when it
+//! names a version newer than this one and the person did not skip it,
+//! Home shows a chip that opens the release notes. From there the file
+//! for this device downloads with its progress in a sheet, its SHA-256
+//! is checked, and it goes to the system installer on Android and
+//! Windows or is shown in its folder elsewhere.
 
 pub mod check;
 pub mod download;
@@ -40,6 +40,8 @@ const RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
 pub enum UpdateError {
     Http(reqwest::Error),
     Manifest(serde_json::Error),
+    /// No published release carries a manifest this build may move to.
+    NoRelease,
     Io(std::io::Error),
     /// The downloaded file is not the one the manifest describes.
     Checksum,
@@ -51,6 +53,7 @@ impl std::fmt::Display for UpdateError {
         match self {
             Self::Http(err) => write!(f, "network: {err}"),
             Self::Manifest(err) => write!(f, "latest.json: {err}"),
+            Self::NoRelease => f.write_str("no release with a latest.json"),
             Self::Io(err) => write!(f, "disk: {err}"),
             Self::Checksum => f.write_str("the download does not match its SHA-256"),
             Self::Cancelled => f.write_str("cancelled"),
@@ -64,7 +67,7 @@ impl std::error::Error for UpdateError {
             Self::Http(err) => Some(err),
             Self::Manifest(err) => Some(err),
             Self::Io(err) => Some(err),
-            Self::Checksum | Self::Cancelled => None,
+            Self::NoRelease | Self::Checksum | Self::Cancelled => None,
         }
     }
 }
@@ -93,7 +96,7 @@ impl From<&UpdateError> for UpdateFailure {
     fn from(err: &UpdateError) -> Self {
         match err {
             UpdateError::Http(err) => Self::Net(err.net_failure()),
-            UpdateError::Manifest(_) => Self::Manifest,
+            UpdateError::Manifest(_) | UpdateError::NoRelease => Self::Manifest,
             UpdateError::Io(err) => Self::Disk(err.kind()),
             UpdateError::Checksum => Self::Checksum,
             UpdateError::Cancelled => Self::Cancelled,
