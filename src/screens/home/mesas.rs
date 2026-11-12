@@ -407,8 +407,10 @@ impl Component for ExternalRow {
     #[sismo::function("home::external_row")]
     fn render(&self) -> impl IntoElement {
         let p = palette();
+        let gesture = notin_ui_kit::use_press_gesture();
         let mut hovering = use_state(|| false);
         let recent = self.recent.clone();
+        let forgotten = self.recent.clone();
         let tint = match self.recent.kind() {
             Some(crate::external_files::FileKind::Pdf) => p.kinds.pdf,
             _ => p.kinds.note,
@@ -417,7 +419,7 @@ impl Component for ExternalRow {
             .recent
             .kind()
             .map_or("", crate::external_files::FileKind::badge);
-        rect()
+        let row = rect()
             .width(Size::fill())
             .height(Size::px(self.height))
             .padding((0.0, 10.0))
@@ -434,7 +436,6 @@ impl Component for ExternalRow {
                 hovering.set(notin_ui_kit::is_mouse(&e));
             })
             .on_pointer_leave(move |_| hovering.set(false))
-            .on_tap(move |_| crate::external_files::reopen(&recent))
             .child(
                 rect()
                     .width(Size::px(30.0))
@@ -464,8 +465,23 @@ impl Component for ExternalRow {
                 ))
                 .role(TextRole::Meta)
                 .lines(1),
-            )
-            .into_element()
+            );
+        gesture.apply(
+            row,
+            move || crate::external_files::reopen(&recent),
+            move |at| {
+                let forgotten = forgotten.clone();
+                crate::actions::show(
+                    vec![notin_ui_kit::ActionEntry::Item(
+                        notin_ui_kit::Action::closing(tr!("external-files-forget"), move || {
+                            forgotten.forget();
+                        })
+                        .icon(freya::icons::lucide::x()),
+                    )],
+                    at,
+                );
+            },
+        )
     }
 }
 

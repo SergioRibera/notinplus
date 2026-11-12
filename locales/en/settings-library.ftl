@@ -23,3 +23,12 @@ settings-library-usage-pdfs = Original PDFs { $size }
 settings-library-usage-trash = Trash { $size }
 settings-library-usage-others = Other apps and files { $size }
 settings-library-usage-free = Free { $size }
+settings-library-recents = Opened files
+settings-library-recents-hint = Files opened from outside the library that Home offers to continue with.
+settings-library-recents-clear = Clear recents
+settings-library-recents-count = { $count ->
+    [0] None
+    [one] { $count } file
+   *[other] { $count } files
+}
+settings-library-recents-cleared = Recents cleared

@@ -32,6 +32,11 @@ impl Recent {
         FileKind::of(&self.name)
     }
 
+    /// Stop offering it.
+    pub fn forget(&self) {
+        forget(Path::new(&self.path));
+    }
+
     /// Name of the folder it was in.
     #[must_use]
     pub fn folder(&self) -> String {
@@ -69,6 +74,13 @@ impl Recents {
             },
         );
         self.files.truncate(LIMIT);
+    }
+
+    /// Drop every file. Whether there was any.
+    fn clear(&mut self) -> bool {
+        let had = !self.files.is_empty();
+        self.files.clear();
+        had
     }
 
     /// Drop `path`. Whether it was there.
@@ -115,6 +127,12 @@ pub(super) fn remember(file: &ExternalFile) {
 pub(super) fn forget(path: &Path) {
     let path = path.to_string_lossy().into_owned();
     Recents::update(move |recents| recents.forget(&path));
+}
+
+/// Stop offering every remembered file.
+#[sismo::function("external_files::clear_recents")]
+pub fn clear_recents() {
+    Recents::update(Recents::clear);
 }
 
 /// The remembered files, kept up to date.
@@ -192,5 +210,8 @@ mod tests {
         );
         assert!(recents.forget("/tmp/7.md"));
         assert!(!recents.forget("/tmp/7.md"));
+        assert!(recents.clear());
+        assert!(recents.files.is_empty());
+        assert!(!recents.clear());
     }
 }

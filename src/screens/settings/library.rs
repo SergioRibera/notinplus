@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use freya::prelude::*;
 use notin_ui_kit::theme::palette;
-use notin_ui_kit::{Group, ListRow, ModalController, Section, Segmented, Text, TextRole, tokens};
+use notin_ui_kit::{
+    Group, ListRow, ModalController, Section, Segmented, Text, TextRole, Toast, Toasts, tokens,
+};
 
 use notin_i18n::tr;
 
@@ -217,6 +219,26 @@ fn usage_view(u: Usage) -> Element {
         .into_element()
 }
 
+/// The files opened from outside the library that Home offers, and the
+/// way to stop offering them.
+#[sismo::function("settings::library_recents_section")]
+fn recents_section(count: usize) -> Section {
+    let row = ListRow::new(tr!("settings-library-recents-clear"))
+        .subtitle(tr!("settings-library-recents-count", "count" => count))
+        .icon(freya::icons::lucide::history());
+    let row = if count == 0 {
+        row
+    } else {
+        row.on_press(|_| {
+            crate::external_files::clear_recents();
+            Toasts::get().show(Toast::new(tr!("settings-library-recents-cleared")));
+        })
+    };
+    Section::new(tr!("settings-library-recents"))
+        .child(Text::new(tr!("settings-library-recents-hint")).role(TextRole::Hint))
+        .child(Group::default().child(row))
+}
+
 /// How long the trash keeps things, and the way to it.
 #[sismo::function("settings::library_trash_section")]
 fn trash_section(retention: TrashRetention, trash_count: usize) -> Section {
@@ -258,6 +280,8 @@ impl Component for Library {
             .as_deref()
             .map_or(0, |d| crate::screens::trash::groups(d).len());
         let usage = use_usage(data);
+        let recents = crate::external_files::use_recents();
+        let recents = recents.read().len();
         let space = (*usage.read()).map_or_else(
             || {
                 Text::new(tr!("settings-library-usage-measuring"))
@@ -289,6 +313,7 @@ impl Component for Library {
                         ),
                 ),
             )
+            .child(recents_section(recents))
             .child(Section::new(tr!("settings-library-usage")).child(space))
             .into_element()
     }

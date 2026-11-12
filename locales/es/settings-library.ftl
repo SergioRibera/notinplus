@@ -23,3 +23,12 @@ settings-library-usage-pdfs = PDF originales { $size }
 settings-library-usage-trash = Papelera { $size }
 settings-library-usage-others = Otras apps y archivos { $size }
 settings-library-usage-free = Libre { $size }
+settings-library-recents = Archivos abiertos
+settings-library-recents-hint = Archivos abiertos desde fuera de la biblioteca que Inicio te ofrece para continuar.
+settings-library-recents-clear = Borrar recientes
+settings-library-recents-count = { $count ->
+    [0] Ninguno
+    [one] { $count } archivo
+   *[other] { $count } archivos
+}
+settings-library-recents-cleared = Recientes borrados

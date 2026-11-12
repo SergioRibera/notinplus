@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use freya::prelude::*;
 use notin_i18n::tr;
 
-pub use recents::{Recent, reopen, use_recents};
+pub use recents::{Recent, clear_recents, reopen, use_recents};
 pub use view::ExternalView;
 
 use crate::files::Picked;

@@ -28,3 +28,4 @@ external-files-page = p. { $page } de { $total }
 external-files-contents = Contenido
 external-files-pdf-failed = No se pudo abrir este PDF
 external-files-gone = Ya no está en { $folder }
+external-files-forget = Quitar de recientes
