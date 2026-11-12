@@ -22,13 +22,18 @@
              them into `PenCaptureView` before delegating to super for
              winit / freya (via `android_main`). `NativeActivity` was
              unusable because it takes the raw `InputQueue`, bypassing
-             the view hierarchy. -->
+             the view hierarchy.
+
+             `configChanges` lists every change the window can go through
+             (split screen, resizing, rotation, density, theme): the Rust
+             side runs once per process and cannot come back on a
+             recreated activity, so winit takes them as resizes instead. -->
         <activity
             android:name="rs.sergioribera.notinplus.NotinplusActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
-            android:configChanges="orientation|keyboardHidden|screenSize">
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboard|keyboardHidden|navigation|uiMode|fontScale|locale|layoutDirection">
             <meta-data
                 android:name="android.app.lib_name"
                 android:value="notinplus" />
