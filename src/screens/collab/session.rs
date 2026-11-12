@@ -189,12 +189,13 @@ impl SessionSheet {
                     .fill(),
             )
             .maybe_child(view.can_rename.then(|| {
-                notin_ui_kit::IconButton::new(lucide::pencil_line(), tr!("common-rename"))
-                    .on_press(move |_| {
+                notin_ui_kit::IconButton::new(lucide::pencil_line(), tr!("common-rename")).on_press(
+                    move |_| {
                         let mut draft = draft;
                         draft.set(title.clone());
                         renaming.set(true);
-                    })
+                    },
+                )
             }))
             .child(
                 notin_ui_kit::IconButton::new(lucide::x(), tr!("common-close"))

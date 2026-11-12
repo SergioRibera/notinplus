@@ -554,5 +554,11 @@ fn show_notice(notice: ShareNotice) {
             };
             toasts.show(Toast::new(text).tone(notin_ui_kit::ToastTone::Error));
         }
+        ShareNotice::RelayFull { share, title } => {
+            toasts.show(
+                Toast::new(tr!("collab-toast-relay-full", "title" => title.as_str()))
+                    .action(tr!("common-see"), move |()| session(share)),
+            );
+        }
     }
 }

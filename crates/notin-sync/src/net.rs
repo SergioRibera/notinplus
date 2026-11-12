@@ -112,8 +112,14 @@ pub enum NetEvent {
     /// false) or fell back to the relay.
     PathChanged { device: DeviceId, relayed: bool },
     /// A requested connection could not be opened. For a dial through a
-    /// relay `addr` is the relay's.
-    ConnectFailed { addr: SocketAddr, reason: String },
+    /// relay `addr` is the relay's; it is unspecified when a host name
+    /// never resolved or the relay was not connected. `public` is the
+    /// key the dial expected, when it got that far.
+    ConnectFailed {
+        addr: SocketAddr,
+        public: Option<[u8; 32]>,
+        reason: String,
+    },
     /// The transport thread is gone.
     Stopped(String),
 }

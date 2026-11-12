@@ -440,7 +440,10 @@ fn a_device_without_a_relay_meets_a_trusted_one_at_its_relay() {
     });
     assert!(connected(&a, &b), "never met at the relay it named");
     assert_eq!(b.marks(D1), vec![(1, 1)]);
-    assert!(a.driver.relay().is_none(), "took the other's relay as its own");
+    assert!(
+        a.driver.relay().is_none(),
+        "took the other's relay as its own"
+    );
 }
 
 #[test]

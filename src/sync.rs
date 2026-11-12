@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 use notin_sync::{
     Action, BlobKey, BlobKind, DeviceId, DeviceProfile, DocId, DocStatus, DriverEvent, Invite,
     JoinFailure, LanConfig, LanNode, Member, NetEvent, PairFailure, PairingCode, PairingOffer,
-    Path as ReachPath, PeerInfo, RelayAddr, Removal, Role, Share, ShareBook, ShareEdit, ShareId,
-    ShareMode, SyncDriver, TrustedDevice,
+    Path as ReachPath, PeerInfo, RelayAddr, RelayFailure, Removal, Role, Share, ShareBook,
+    ShareEdit, ShareId, ShareMode, SyncDriver, TrustedDevice,
 };
 
 use notin_i18n::tr;
@@ -184,6 +184,8 @@ pub enum ShareNotice {
     Paired { name: String },
     /// Linking with another device did not go through.
     PairFailed(PairFailure),
+    /// The share's server keeps no more of it.
+    RelayFull { share: ShareId, title: String },
 }
 
 /// What the UI reads.
@@ -215,6 +217,8 @@ pub struct SyncSnapshot {
     /// Relay in use, as configured.
     pub relay: Option<String>,
     pub relay_online: bool,
+    /// Why the relay is out of reach, while it is.
+    pub relay_failure: Option<RelayFailure>,
     pub error: Option<SyncProblem>,
 }
 
@@ -895,6 +899,10 @@ struct Service {
     error: Option<SyncProblem>,
     /// Devices that spoke another protocol version; each is reported once.
     outdated: HashSet<DeviceId>,
+    /// Why our relay was last out of reach, until it answers.
+    relay_failure: Option<RelayFailure>,
+    /// Shares whose relay said it keeps no more; each is reported once.
+    relay_full: HashSet<ShareId>,
 }
 
 impl Service {
@@ -1143,13 +1151,30 @@ impl Service {
                 self.driver.profile_mut().set_relay(Some(relay.to_string()));
                 self.save_profile();
             }
+            DriverEvent::RelayUnreachable { relay, why } => {
+                log::warn!("sync: relay {relay:?} out of reach: {why:?}");
+                if self.driver.relay().is_some_and(|r| r.device() == relay) {
+                    self.relay_failure = Some(why);
+                }
+            }
+            DriverEvent::RelayOnline(online) => {
+                if online {
+                    self.relay_failure = None;
+                }
+            }
+            DriverEvent::RelayFull(share) => {
+                if self.relay_full.insert(share)
+                    && let Some(title) = self.driver.share(share).map(|s| s.title.clone())
+                {
+                    notify(ShareNotice::RelayFull { share, title });
+                }
+            }
             // The next snapshot shows the new path, and the invitation
             // made again with the share's new key.
             DriverEvent::InviteRenewed(_)
             | DriverEvent::LeaseExpired(_)
             | DriverEvent::LeaseRenewed(_)
             | DriverEvent::PeerOnline { online: true, .. }
-            | DriverEvent::RelayOnline(_)
             | DriverEvent::PathChanged { .. } => {}
             DriverEvent::Live {
                 from,
@@ -1450,6 +1475,7 @@ impl Service {
             Cmd::Quit(_) => Vec::new(),
             Cmd::SetRelay(relay) => {
                 sismo::scope!("sync::cmd::set_relay");
+                self.relay_failure = None;
                 let parsed = relay.as_deref().map(str::parse::<RelayAddr>);
                 match parsed {
                     Some(Err(err)) => {
@@ -1626,6 +1652,7 @@ impl Service {
             last_join_failure: self.last_join_failure,
             relay: self.driver.relay().map(ToString::to_string),
             relay_online: self.driver.relay_online(),
+            relay_failure: self.relay_failure,
             files_pending: self.driver.files_pending(),
             error: self.error.clone(),
         }
@@ -1786,6 +1813,8 @@ impl Service {
             last_join_failure: None,
             error,
             outdated: HashSet::new(),
+            relay_failure: None,
+            relay_full: HashSet::new(),
         };
         service.remember_shares(None);
         let relay = service

@@ -394,7 +394,9 @@ impl Component for ShareForm {
                 )
             }))
             .maybe_child(
-                snapshot.relay.is_none()
+                snapshot
+                    .relay
+                    .is_none()
                     .then(|| Notice::new(NoticeTone::Info, tr!("collab-share-relay-hint"))),
             )
             .into_element()

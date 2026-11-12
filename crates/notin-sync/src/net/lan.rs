@@ -317,6 +317,8 @@ enum Internal {
     OutboundFailed {
         addr: PeerAddr,
         dial: Option<u64>,
+        /// The key expected, for a failure before any dial was recorded.
+        public: Option<[u8; 32]>,
         reason: String,
     },
     /// The socket of outbound channel `dial` stopped.
@@ -569,9 +571,12 @@ impl Node {
         }
         let Some(device) = self.by_addr.get(&addr).copied() else {
             // A device away from the network turns our dial down.
-            if frame == Frame::Bye && self.dials.remove(&addr).is_some() {
+            if frame == Frame::Bye
+                && let Some(dial) = self.dials.remove(&addr)
+            {
                 self.emit(NetEvent::ConnectFailed {
                     addr: socket_addr(addr),
+                    public: Some(dial.public),
                     reason: "refused".into(),
                 });
             }
@@ -867,11 +872,13 @@ impl Node {
                 Ok(Err(err)) => Internal::OutboundFailed {
                     addr: key,
                     dial: Some(dial),
+                    public: None,
                     reason: err.to_string(),
                 },
                 Err(_) => Internal::OutboundFailed {
                     addr: key,
                     dial: Some(dial),
+                    public: None,
                     reason: "handshake timed out".into(),
                 },
             };
@@ -893,6 +900,7 @@ impl Node {
         let Some(PeerAddr::Direct(relay_addr)) = self.links.get(&relay).map(|l| l.addr) else {
             self.emit(NetEvent::ConnectFailed {
                 addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+                public: Some(public),
                 reason: "relay not connected".into(),
             });
             return;
@@ -922,11 +930,13 @@ impl Node {
                 Ok(Err(err)) => Internal::OutboundFailed {
                     addr: key,
                     dial: Some(dial),
+                    public: None,
                     reason: err.to_string(),
                 },
                 Err(_) => Internal::OutboundFailed {
                     addr: key,
                     dial: Some(dial),
+                    public: None,
                     reason: "handshake timed out".into(),
                 },
             };
@@ -988,6 +998,7 @@ impl Node {
                         || Internal::OutboundFailed {
                             addr: PeerAddr::Direct(SocketAddr::from(([0, 0, 0, 0], 0))),
                             dial: None,
+                            public: Some(public),
                             reason: format!("could not resolve {host}"),
                         },
                         |addr| Internal::Resolved { addr, public },
@@ -1085,23 +1096,31 @@ impl Node {
                     pending.since = Instant::now();
                 }
             }
-            Internal::OutboundFailed { addr, dial, reason } => {
+            Internal::OutboundFailed {
+                addr,
+                dial,
+                public,
+                reason,
+            } => {
+                let mut public = public;
                 if let Some(dial) = dial {
                     if !self.is_current(addr, dial) {
                         return true;
                     }
-                    self.dials.remove(&addr);
+                    public = self.dials.remove(&addr).map(|d| d.public).or(public);
                 }
                 self.emit(NetEvent::ConnectFailed {
                     addr: socket_addr(addr),
+                    public,
                     reason,
                 });
             }
             Internal::OutboundClosed { addr, dial } => {
                 if self.is_current(addr, dial) {
-                    self.dials.remove(&addr);
+                    let public = self.dials.remove(&addr).map(|d| d.public);
                     self.emit(NetEvent::ConnectFailed {
                         addr: socket_addr(addr),
+                        public,
                         reason: "channel closed".into(),
                     });
                 }
@@ -1173,9 +1192,10 @@ impl Node {
             .map(|(addr, _)| *addr)
             .collect();
         for addr in unanswered {
-            self.dials.remove(&addr);
+            let public = self.dials.remove(&addr).map(|d| d.public);
             self.emit(NetEvent::ConnectFailed {
                 addr: socket_addr(addr),
+                public,
                 reason: "no hello back".into(),
             });
         }
@@ -1236,6 +1256,7 @@ impl Outbound {
                 let _ = internal.send(Internal::OutboundFailed {
                     addr: key,
                     dial: Some(dial),
+                    public: None,
                     reason: err.to_string(),
                 });
                 return;
@@ -1244,6 +1265,7 @@ impl Outbound {
                 let _ = internal.send(Internal::OutboundFailed {
                     addr: key,
                     dial: Some(dial),
+                    public: None,
                     reason: "handshake timed out".into(),
                 });
                 return;

@@ -225,3 +225,5 @@ collab-toast-wants-in = { $who } quiere entrar a «{ $title }»
 collab-toast-entered = Entraste a «{ $title }»
 # $title: la sesión.
 collab-toast-refused = No te dejaron entrar a «{ $title }»
+# $title: el título de la sesión.
+collab-toast-relay-full = El servidor ya no guarda más de «{ $title }»: los cambios llegan a los demás solo mientras estén conectados a la vez.

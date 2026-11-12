@@ -18,6 +18,8 @@ settings-devices-server-placeholder = relay.example.com:7400/key
 # $address: host and port of the relay server.
 settings-devices-server-online = { $address } · connected
 settings-devices-server-offline = { $address } · offline
+settings-devices-server-unresolved = { $address } · that name was not found
+settings-devices-server-no-answer = { $address } · not answering
 settings-devices-server-none = None · same network only
 settings-devices-change = Change
 

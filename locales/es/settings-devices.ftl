@@ -18,6 +18,8 @@ settings-devices-server-placeholder = relay.ejemplo.com:7400/clave
 # $address: host y puerto del servidor de retransmisión.
 settings-devices-server-online = { $address } · conectado
 settings-devices-server-offline = { $address } · sin conexión
+settings-devices-server-unresolved = { $address } · no se encontró ese nombre
+settings-devices-server-no-answer = { $address } · no responde
 settings-devices-server-none = Ninguno · solo en la misma red
 settings-devices-change = Cambiar
 

@@ -194,13 +194,23 @@ fn server_row(snapshot: &SyncSnapshot, mut editing: State<bool>, server: State<S
     }
     let relay = snapshot.relay.clone();
     let current = relay.clone().unwrap_or_default();
+    // The key after the host is for the device, not for reading.
+    let host = relay
+        .as_deref()
+        .map(|addr| addr.rsplit_once('/').map_or(addr, |(host, _)| host));
     ListRow::new(tr!("settings-devices-server"))
-        .subtitle(match &relay {
-            Some(addr) if snapshot.relay_online => {
-                tr!("settings-devices-server-online", "address" => addr.as_str())
+        .subtitle(match (host, snapshot.relay_failure) {
+            (Some(address), _) if snapshot.relay_online => {
+                tr!("settings-devices-server-online", "address" => address)
             }
-            Some(addr) => tr!("settings-devices-server-offline", "address" => addr.as_str()),
-            None => tr!("settings-devices-server-none"),
+            (Some(address), Some(notin_sync::RelayFailure::Unresolved)) => {
+                tr!("settings-devices-server-unresolved", "address" => address)
+            }
+            (Some(address), Some(notin_sync::RelayFailure::NoAnswer)) => {
+                tr!("settings-devices-server-no-answer", "address" => address)
+            }
+            (Some(address), None) => tr!("settings-devices-server-offline", "address" => address),
+            (None, _) => tr!("settings-devices-server-none"),
         })
         .icon(lucide::server())
         .trailing(Trailing::Element(

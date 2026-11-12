@@ -126,7 +126,9 @@ pub enum Payload {
     },
     /// The relay a trusted device waits at, or none: sent on every
     /// channel between trusted devices and whenever it changes.
-    Reach { relay: Option<String> },
+    Reach {
+        relay: Option<String>,
+    },
 }
 
 impl Payload {
@@ -363,6 +365,23 @@ pub enum DriverEvent {
     },
     /// A trusted device waits at another relay now; the profile changed.
     TrustedRelay(DeviceId),
+    /// A relay in use could not be reached, and why.
+    RelayUnreachable {
+        relay: DeviceId,
+        why: RelayFailure,
+    },
+    /// The share's relay keeps no more of it: what changes reaches the
+    /// others only while they are connected.
+    RelayFull(ShareId),
+}
+
+/// Why a relay was out of reach.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RelayFailure {
+    /// Its host name did not resolve.
+    Unresolved,
+    /// Nothing answered at its address, or not with its key.
+    NoAnswer,
 }
 
 /// What the app must carry out.
@@ -1713,7 +1732,9 @@ impl<R: Replica> SyncDriver<R> {
                     out.push(Action::Event(DriverEvent::PathChanged { device, path }));
                 }
             }
-            NetEvent::ConnectFailed { addr, .. } => self.on_connect_failed(addr, &mut out),
+            NetEvent::ConnectFailed { addr, public, .. } => {
+                self.on_connect_failed(addr, public, &mut out);
+            }
             NetEvent::Stopped(_) => {
                 self.mark_lease_clocks();
                 self.on_stopped(&mut out);
@@ -2001,7 +2022,24 @@ impl<R: Replica> SyncDriver<R> {
 
     /// A dial failed: a pairing or join waiting on that device fails too.
     #[cfg_attr(feature = "sismo", sismo::function("sync::driver::on_connect_failed"))]
-    fn on_connect_failed(&mut self, addr: SocketAddr, out: &mut Vec<Action>) {
+    fn on_connect_failed(
+        &mut self,
+        addr: SocketAddr,
+        public: Option<[u8; 32]>,
+        out: &mut Vec<Action>,
+    ) {
+        let relay = public
+            .map(|key| DeviceId::of_public_key(&key))
+            .filter(|device| self.relays.get(device).is_some_and(|r| !r.connected));
+        if let Some(relay) = relay {
+            let why = if addr.ip().is_unspecified() {
+                RelayFailure::Unresolved
+            } else {
+                RelayFailure::NoAnswer
+            };
+            out.push(Action::Event(DriverEvent::RelayUnreachable { relay, why }));
+            return;
+        }
         let Some(device) = self
             .discovered
             .values()
@@ -3293,7 +3331,11 @@ impl<R: Replica> SyncDriver<R> {
             .values()
             .filter(|l| self.outbox.contains_key(&l.invite.owner.device))
             .filter_map(|l| l.invite.server.as_deref());
-        let trusted = self.profile.trusted().iter().filter_map(|t| t.relay.as_deref());
+        let trusted = self
+            .profile
+            .trusted()
+            .iter()
+            .filter_map(|t| t.relay.as_deref());
         let mut wanted: Vec<RelayAddr> = shares
             .chain(joins)
             .chain(left)
@@ -3792,6 +3834,7 @@ impl<R: Replica> SyncDriver<R> {
             }
             RelayMessage::Full { share } => {
                 tracing::warn!(target: "notin-sync", "relay keeps no more for share {share:?}");
+                out.push(Action::Event(DriverEvent::RelayFull(share)));
             }
             RelayMessage::Register { .. }
             | RelayMessage::Unregister { .. }
@@ -5096,6 +5139,39 @@ mod tests {
         assert!(!out.contains(&Action::Disconnect {
             device: phone.profile.id()
         }));
+    }
+
+    #[test]
+    fn a_relay_out_of_reach_says_why_and_a_device_dial_does_not() {
+        let mut a = driver("PC");
+        let key = crate::identity::DeviceKey::generate();
+        a.set_relay(Some(RelayAddr {
+            host: "nowhere:7710".into(),
+            public: *key.public(),
+        }));
+        let failed = |addr, public| NetEvent::ConnectFailed {
+            addr,
+            public: Some(public),
+            reason: String::new(),
+        };
+        let unresolved = SocketAddr::from(([0, 0, 0, 0], 0));
+        let out = a.on_event(failed(unresolved, *key.public())).unwrap();
+        assert_eq!(
+            out,
+            vec![Action::Event(DriverEvent::RelayUnreachable {
+                relay: key.id(),
+                why: RelayFailure::Unresolved,
+            })]
+        );
+        let out = a.on_event(failed(addr(9), *key.public())).unwrap();
+        assert!(out.contains(&Action::Event(DriverEvent::RelayUnreachable {
+            relay: key.id(),
+            why: RelayFailure::NoAnswer,
+        })));
+        // Some other device: not the relay's failure.
+        let other = crate::identity::DeviceKey::generate();
+        let out = a.on_event(failed(addr(3), *other.public())).unwrap();
+        assert!(out.is_empty(), "{out:?}");
     }
 
     #[test]
