@@ -1,6 +1,6 @@
 [package]
 name = "freya-markdown-diagrams"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -18,7 +18,7 @@ sismo = ["dep:sismo"]
 # Spans for the sismo profiler; off unless an app turns it on.
 sismo = { version = "0.1.1", default-features = false, optional = true }
 freya = { version = "=0.5.0-rc.13" }
-freya-markdown-editor = { version = "0.1.0-alpha.2", path = "../freya-markdown-editor" }
+freya-markdown-editor = { version = "0.1.0-alpha.3", path = "../freya-markdown-editor" }
 mermaid-svg = "=0.7.0"
 # Skia draws neither SVG text without a font manager nor markers, so
 # diagrams are rasterized here with a bundled font.

@@ -1,6 +1,6 @@
 [package]
 name = "notin-relay"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -22,6 +22,6 @@ missing_panics_doc = "allow"
 redundant_pub_crate = "allow"
 
 [dependencies]
-notin-sync = { version = "0.1.0-alpha.2", path = "../../crates/notin-sync" }
+notin-sync = { version = "0.1.0-alpha.3", path = "../../crates/notin-sync" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
