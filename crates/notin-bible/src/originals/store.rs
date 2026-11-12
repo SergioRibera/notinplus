@@ -1,30 +1,29 @@
-//! The packs on disk, read into memory and validated once.
+//! The packs on disk, read into memory once and borrowed from there:
+//! every table is a slice of the file's bytes, checked when opened.
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use originals_format::{ArchivedPack, ArchivedSenses, FORMAT_VERSION, Origin, Testament};
-use rkyv::rancor;
-use rkyv::util::AlignedVec;
-
-type PackRef<'a> = &'a ArchivedPack;
-type SensesRef<'a> = &'a ArchivedSenses;
+use originals_format::{self as format, FORMAT_VERSION, FormatError, Origin, Testament};
 
 self_cell::self_cell!(
     struct PackCell {
-        owner: AlignedVec,
+        owner: Vec<u8>,
         #[covariant]
-        dependent: PackRef,
+        dependent: PackView,
     }
 );
 
 self_cell::self_cell!(
     struct SensesCell {
-        owner: AlignedVec,
+        owner: Vec<u8>,
         #[covariant]
-        dependent: SensesRef,
+        dependent: SensesView,
     }
 );
+
+type PackView<'a> = format::PackView<'a>;
+type SensesView<'a> = format::SensesView<'a>;
 
 impl std::fmt::Debug for PackCell {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -41,6 +40,7 @@ impl std::fmt::Debug for SensesCell {
             .finish()
     }
 }
+
 
 #[derive(Debug)]
 pub enum StoreError {
@@ -150,7 +150,6 @@ pub struct SenseView {
     pub text: String,
     pub origin: Origin,
 }
-
 impl Store {
     /// Read every pack and senses file in `dir`. A missing testament is
     /// fine (the reader shows the other); no pack at all is
@@ -159,7 +158,7 @@ impl Store {
     ///
     /// # Errors
     /// [`StoreError::Missing`] without any pack; otherwise a file that
-    /// cannot be read, is not a valid archive or has another format
+    /// cannot be read, is not a valid pack or has another format
     /// version.
     pub fn open(dir: &Path) -> Result<Self, StoreError> {
         let old = read_pack(dir, Testament::Old)?;
@@ -176,13 +175,12 @@ impl Store {
         Ok(Self { old, new, senses })
     }
 
-    fn pack(&self, testament: Testament) -> Option<&ArchivedPack> {
+    fn pack(&self, testament: Testament) -> Option<&PackView<'_>> {
         match testament {
             Testament::Old => self.old.as_ref(),
             Testament::New => self.new.as_ref(),
         }
         .map(PackCell::borrow_dependent)
-        .copied()
     }
 
     /// Whether this testament's pack is on hand.
@@ -204,7 +202,7 @@ impl Store {
     pub fn built_unix(&self) -> u64 {
         [Testament::Old, Testament::New]
             .into_iter()
-            .filter_map(|t| self.pack(t).map(|p| p.header.built_unix.to_native()))
+            .filter_map(|t| self.pack(t).map(PackView::built_unix))
             .max()
             .unwrap_or(0)
     }
@@ -222,56 +220,37 @@ impl Store {
         let testament = super::testament_of(book_id)?;
         let pack = self.pack(testament)?;
         let book = pack.book_index(&book_id.to_ascii_lowercase())?;
-        let archived = pack.verse(book, chapter, verse)?;
-        let gloss_column = pack
-            .header
-            .gloss_languages
-            .iter()
-            .position(|l| l.as_str() == language);
-        let words = archived
-            .words
-            .iter()
+        let found = pack.verse(book, chapter, verse)?;
+        let gloss_column = pack.gloss_languages().iter().position(|l| *l == language);
+        let words = found
+            .words()
             .enumerate()
             .map(|(position, word)| {
-                let gloss = gloss_column
-                    .and_then(|c| word.glosses.get(c))
-                    .and_then(|g| g.as_ref())
-                    .map(|g| pack.str(g.to_native()).to_owned())
-                    .filter(|g| !g.is_empty());
                 let affixes = word
-                    .affixes
-                    .iter()
+                    .affixes()
                     .map(|a| {
-                        let lemma = pack.lemma(a.lemma.to_native());
+                        let lemma = pack.lemma(a.lemma());
                         AffixView {
-                            strong: lemma
-                                .map(|l| l.strong.as_str().to_owned())
-                                .unwrap_or_default(),
-                            lemma: lemma
-                                .map(|l| l.lemma.as_str().to_owned())
-                                .unwrap_or_default(),
-                            gloss_en: lemma
-                                .map(|l| l.gloss_en.as_str().to_owned())
-                                .unwrap_or_default(),
-                            morph: pack.str(a.morph.to_native()).to_owned(),
+                            strong: lemma.map(|l| l.strong().to_owned()).unwrap_or_default(),
+                            lemma: lemma.map(|l| l.lemma().to_owned()).unwrap_or_default(),
+                            gloss_en: lemma.map(|l| l.gloss_en().to_owned()).unwrap_or_default(),
+                            morph: a.morph().to_owned(),
                         }
                     })
                     .collect();
                 WordView {
                     position: u16::try_from(position).unwrap_or(u16::MAX),
-                    surface: pack.str(word.surface.to_native()).to_owned(),
-                    translit: pack.str(word.translit.to_native()).to_owned(),
-                    morph: pack.str(word.morph.to_native()).to_owned(),
-                    gloss_en: word
-                        .glosses
-                        .first()
-                        .and_then(|g| g.as_ref())
-                        .map(|g| pack.str(g.to_native()).to_owned())
-                        .unwrap_or_default(),
-                    gloss,
+                    surface: word.surface().to_owned(),
+                    translit: word.translit().to_owned(),
+                    morph: word.morph().to_owned(),
+                    gloss_en: word.gloss(0).unwrap_or_default().to_owned(),
+                    gloss: gloss_column
+                        .and_then(|c| word.gloss(c))
+                        .filter(|g| !g.is_empty())
+                        .map(str::to_owned),
                     lemma: LemmaRef {
                         testament,
-                        index: word.lemma.to_native(),
+                        index: word.lemma(),
                     },
                     affixes,
                 }
@@ -288,17 +267,12 @@ impl Store {
             return Vec::new();
         };
         let mut out = Vec::new();
-        for (book, archived_book) in pack.books.iter().enumerate() {
-            let book = u8::try_from(book).unwrap_or(u8::MAX);
-            for chapter in archived_book.chapters.iter() {
-                for verse in chapter.verses.iter() {
-                    let lemmas = verse.words.iter().map(|w| w.lemma.to_native()).collect();
-                    out.push((
-                        book,
-                        chapter.number.to_native(),
-                        verse.number.to_native(),
-                        lemmas,
-                    ));
+        for (index, book) in pack.books().enumerate() {
+            let index = u8::try_from(index).unwrap_or(u8::MAX);
+            for chapter in book.chapters() {
+                for verse in chapter.verses() {
+                    let lemmas = verse.words().map(|w| w.lemma()).collect();
+                    out.push((index, chapter.number(), verse.number(), lemmas));
                 }
             }
         }
@@ -325,23 +299,18 @@ impl Store {
 
     #[must_use]
     pub fn lemma(&self, at: LemmaRef) -> Option<LemmaView> {
-        let pack = self.pack(at.testament)?;
-        let lemma = pack.lemma(at.index)?;
+        let lemma = self.pack(at.testament)?.lemma(at.index)?;
         Some(LemmaView {
-            strong: lemma.strong.as_str().to_owned(),
-            lemma: lemma.lemma.as_str().to_owned(),
-            translit: lemma.translit.as_str().to_owned(),
-            pos: lemma.pos.as_str().to_owned(),
-            gloss_en: lemma.gloss_en.as_str().to_owned(),
-            senses_en: lemma
-                .senses_en
-                .iter()
-                .map(|s| s.as_str().to_owned())
-                .collect(),
-            definition_en: lemma.definition_en.as_str().to_owned(),
-            derivation_en: lemma.derivation_en.as_str().to_owned(),
-            pronunciation_strong: lemma.pronunciation_strong.as_str().to_owned(),
-            count: lemma.occurrences.len(),
+            strong: lemma.strong().to_owned(),
+            lemma: lemma.lemma().to_owned(),
+            translit: lemma.translit().to_owned(),
+            pos: lemma.pos().to_owned(),
+            gloss_en: lemma.gloss_en().to_owned(),
+            senses_en: lemma.senses_en().map(str::to_owned).collect(),
+            definition_en: lemma.definition_en().to_owned(),
+            derivation_en: lemma.derivation_en().to_owned(),
+            pronunciation_strong: lemma.pronunciation_strong().to_owned(),
+            count: lemma.occurrences().len(),
         })
     }
 
@@ -355,15 +324,14 @@ impl Store {
             return Vec::new();
         };
         lemma
-            .occurrences
-            .iter()
+            .occurrences()
             .filter_map(|o| {
-                let book = pack.books.get(usize::from(o.book))?;
+                let book = pack.book(usize::from(o.book))?;
                 Some(Occurrence {
-                    book_id: book.id.as_str().to_owned(),
-                    chapter: o.chapter.to_native(),
-                    verse: o.verse.to_native(),
-                    position: o.position.to_native(),
+                    book_id: book.id().to_owned(),
+                    chapter: o.chapter,
+                    verse: o.verse,
+                    position: o.position,
                 })
             })
             .collect()
@@ -376,33 +344,28 @@ impl Store {
         let Some(cell) = self.senses.get(language) else {
             return Vec::new();
         };
-        let senses: &ArchivedSenses = cell.borrow_dependent();
-        senses.entry(strong).map_or_else(Vec::new, |entry| {
-            entry
-                .senses
-                .iter()
-                .map(|s| SenseView {
-                    text: s.text.as_str().to_owned(),
-                    origin: match s.origin {
-                        originals_format::ArchivedOrigin::Human => Origin::Human,
-                        originals_format::ArchivedOrigin::Wiktionary => Origin::Wiktionary,
-                        originals_format::ArchivedOrigin::Auto => Origin::Auto,
-                    },
-                })
-                .collect()
-        })
+        cell.borrow_dependent()
+            .entry(strong)
+            .map_or_else(Vec::new, |entry| {
+                entry
+                    .senses()
+                    .map(|(text, origin)| SenseView {
+                        text: text.to_owned(),
+                        origin,
+                    })
+                    .collect()
+            })
     }
 }
 
-fn read_bytes(path: &Path) -> Result<Option<AlignedVec>, StoreError> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(StoreError::Io(err)),
-    };
-    let mut aligned = AlignedVec::<16>::with_capacity(bytes.len());
-    aligned.extend_from_slice(&bytes);
-    Ok(Some(aligned))
+/// The file at `path`, or `None` when there is none. Read straight into
+/// the buffer the views borrow from: one copy of the file in memory.
+fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>, StoreError> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(StoreError::Io(err)),
+    }
 }
 
 fn file_name(path: &Path) -> String {
@@ -411,24 +374,28 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// What a failed parse of `path` means for the reader.
+fn store_error(path: &Path, err: FormatError) -> StoreError {
+    match err {
+        FormatError::Version { found } => StoreError::Version {
+            file: file_name(path),
+            found,
+        },
+        other => StoreError::Invalid {
+            file: file_name(path),
+            reason: other.to_string(),
+        },
+    }
+}
+
 fn read_pack(dir: &Path, testament: Testament) -> Result<Option<PackCell>, StoreError> {
     let path = dir.join(super::pack_file(testament));
     let Some(bytes) = read_bytes(&path)? else {
         return Ok(None);
     };
-    let cell = PackCell::try_new(bytes, |b| rkyv::access::<ArchivedPack, rancor::Error>(b))
-        .map_err(|err: rancor::Error| StoreError::Invalid {
-            file: file_name(&path),
-            reason: err.to_string(),
-        })?;
-    let found = cell.borrow_dependent().header.format_version.to_native();
-    if found != FORMAT_VERSION {
-        return Err(StoreError::Version {
-            file: file_name(&path),
-            found,
-        });
-    }
-    Ok(Some(cell))
+    PackCell::try_new(bytes, |b| PackView::parse(b))
+        .map(Some)
+        .map_err(|err| store_error(&path, err))
 }
 
 fn read_senses(dir: &Path, language: &str) -> Result<Option<SensesCell>, StoreError> {
@@ -436,19 +403,9 @@ fn read_senses(dir: &Path, language: &str) -> Result<Option<SensesCell>, StoreEr
     let Some(bytes) = read_bytes(&path)? else {
         return Ok(None);
     };
-    let cell = SensesCell::try_new(bytes, |b| rkyv::access::<ArchivedSenses, rancor::Error>(b))
-        .map_err(|err: rancor::Error| StoreError::Invalid {
-            file: file_name(&path),
-            reason: err.to_string(),
-        })?;
-    let found = cell.borrow_dependent().header.format_version.to_native();
-    if found != FORMAT_VERSION {
-        return Err(StoreError::Version {
-            file: file_name(&path),
-            found,
-        });
-    }
-    Ok(Some(cell))
+    SensesCell::try_new(bytes, |b| SensesView::parse(b))
+        .map(Some)
+        .map_err(|err| store_error(&path, err))
 }
 
 /// The testament and the key the packs use for `strong`: the number
@@ -623,12 +580,12 @@ pub(crate) mod tests {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(
             dir.join(super::super::pack_file(Testament::New)),
-            rkyv::to_bytes::<rancor::Error>(&pack).unwrap(),
+            pack.encode().unwrap(),
         )
         .unwrap();
         std::fs::write(
             dir.join(super::super::senses_file("es")),
-            rkyv::to_bytes::<rancor::Error>(&senses).unwrap(),
+            senses.encode().unwrap(),
         )
         .unwrap();
     }
@@ -672,12 +629,20 @@ pub(crate) mod tests {
         let dir = temp_dir("empty");
         std::fs::create_dir_all(&dir).unwrap();
         assert!(matches!(Store::open(&dir), Err(StoreError::Missing)));
-        std::fs::write(
-            dir.join(super::super::pack_file(Testament::Old)),
-            b"not a pack",
-        )
-        .unwrap();
+        let pack = dir.join(super::super::pack_file(Testament::Old));
+        // Our version, then nothing a pack is made of.
+        let mut damaged = FORMAT_VERSION.to_le_bytes().to_vec();
+        damaged.extend_from_slice(b"not a pack");
+        std::fs::write(&pack, damaged).unwrap();
         assert!(matches!(Store::open(&dir), Err(StoreError::Invalid { .. })));
+        // A pack of another layout is told by its version.
+        let mut older = (FORMAT_VERSION - 1).to_le_bytes().to_vec();
+        older.extend_from_slice(b"whatever it held");
+        std::fs::write(&pack, older).unwrap();
+        assert!(matches!(
+            Store::open(&dir),
+            Err(StoreError::Version { found, .. }) if found == FORMAT_VERSION - 1
+        ));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

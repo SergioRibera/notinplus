@@ -17420,11 +17420,6 @@ rec {
             features = [ "json" "blocking" "rustls-tls" ];
           }
           {
-            name = "rkyv";
-            packageId = "rkyv 0.8.18";
-            features = [ "bytecheck" ];
-          }
-          {
             name = "rusqlite";
             packageId = "rusqlite";
             features = [ "bundled" ];
@@ -21824,15 +21819,20 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/biblionlabs/extra_data_source";
-          rev = "5e6dca64597b5d83c4e5d4187bb6e4f9c9795566";
-          sha256 = "1x1xvxhmqsqwlw6xknrlvj0ri180zc7cxqf3b6jhvzw4w4nfn3la";
+          rev = "8d956625cc7117ce33d4cf57aaeb14520606915b";
+          sha256 = "0gm87s8kz4m41xjxn8ys23vp443xzn6w74h9mkw73nap4ahd0ya5";
         };
         libName = "originals_format";
         dependencies = [
           {
-            name = "rkyv";
-            packageId = "rkyv 0.8.18";
-            features = [ "bytecheck" ];
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" "zerocopy" ];
+          }
+          {
+            name = "zerocopy";
+            packageId = "zerocopy";
           }
         ];
 
@@ -34516,6 +34516,12 @@ rec {
             packageId = "wincode-derive";
             optional = true;
           }
+          {
+            name = "zerocopy";
+            packageId = "zerocopy";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
         ];
         buildDependencies = [
           {
@@ -34543,7 +34549,7 @@ rec {
           "uuid-serde-compat" = [ "uuid" ];
           "zerocopy" = [ "dep:zerocopy" ];
         };
-        resolvedDefaultFeatures = [ "alloc" "derive" "std" ];
+        resolvedDefaultFeatures = [ "alloc" "derive" "std" "zerocopy" ];
       };
       "wincode-derive" = rec {
         crateName = "wincode-derive";

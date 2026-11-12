@@ -58,8 +58,7 @@ notin-i18n = { version = "0.1.0-alpha.3", path = "../notin-i18n" }
 notin-align = { version = "0.1.0-alpha.3", path = "../notin-align" }
 # The pack format lives with its generator; path while the data repo is
 # unpublished, a git dependency pinned to a tag once it is.
-originals-format = { git = "https://github.com/biblionlabs/extra_data_source", rev = "5e6dca64597b5d83c4e5d4187bb6e4f9c9795566" }
-rkyv = { version = "0.8", features = ["bytecheck"] }
+originals-format = { git = "https://github.com/biblionlabs/extra_data_source", rev = "8d956625cc7117ce33d4cf57aaeb14520606915b" }
 self_cell = "1"
 unicode-normalization = "0.1"
 # `istmo-core` is pulled in strictly for its `path::data_dir()`

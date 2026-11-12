@@ -5492,7 +5492,6 @@ dependencies = [
  "quick-xml 0.37.5",
  "regex",
  "reqwest",
- "rkyv 0.8.18",
  "rusqlite",
  "self_cell",
  "serde",
@@ -6248,9 +6247,10 @@ dependencies = [
 [[package]]
 name = "originals-format"
 version = "0.1.0"
-source = "git+https://github.com/biblionlabs/extra_data_source?rev=5e6dca64597b5d83c4e5d4187bb6e4f9c9795566#5e6dca64597b5d83c4e5d4187bb6e4f9c9795566"
+source = "git+https://github.com/biblionlabs/extra_data_source?rev=8d956625cc7117ce33d4cf57aaeb14520606915b#8d956625cc7117ce33d4cf57aaeb14520606915b"
 dependencies = [
- "rkyv 0.8.18",
+ "wincode",
+ "zerocopy",
 ]
 
 [[package]]
@@ -10061,6 +10061,7 @@ dependencies = [
  "quote",
  "thiserror 2.0.21",
  "wincode-derive",
+ "zerocopy",
 ]
 
 [[package]]
