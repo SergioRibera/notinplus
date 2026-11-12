@@ -643,6 +643,10 @@ pub struct SyncDriver<R> {
     /// Relays no longer in use: one that shows up again is let go, never
     /// taken for an ordinary device.
     retired: HashSet<DeviceId>,
+    /// Relays told that someone may reach us there, so the one that no
+    /// longer holds for (a device revoked or moved, a relay left) hears
+    /// it, with nobody, instead of keeping the old list.
+    consented: HashSet<DeviceId>,
     /// Public keys of every device heard of, so a channel can be opened
     /// through a relay when it is not on the network.
     known_keys: HashMap<DeviceId, [u8; 32]>,
@@ -722,6 +726,7 @@ impl<R: Replica> SyncDriver<R> {
             relays: HashMap::new(),
             own_relay: None,
             retired: HashSet::new(),
+            consented: HashSet::new(),
             known_keys: HashMap::new(),
             outbox: HashMap::new(),
             parked: HashMap::new(),
@@ -2557,7 +2562,11 @@ impl<R: Replica> SyncDriver<R> {
                 };
                 let mut device = TrustedDevice::new(intent.public, name, now_ms());
                 // The link we paired by names where it waits.
-                device.relay = intent.relay.as_ref().map(ToString::to_string);
+                device.relay = intent
+                    .relay
+                    .as_ref()
+                    .filter(|addr| !self.is_peer(addr.device()))
+                    .map(ToString::to_string);
                 self.profile.trust(device.clone());
                 out.push(Action::Event(DriverEvent::Paired(device)));
                 out.extend(self.relay_consent());
@@ -3506,16 +3515,24 @@ impl<R: Replica> SyncDriver<R> {
     /// trusted one and whoever holds the open pairing link; the relay of
     /// a trusted device only hears the trusted devices waiting at it,
     /// which it already knows trust us back.
-    fn consent_at(&self, relay: DeviceId) -> Vec<Action> {
+    fn consent_at(&mut self, relay: DeviceId) -> Vec<Action> {
         let own = self.own_relay == Some(relay);
-        let keys = self
+        let keys: Vec<[u8; 32]> = self
             .profile
             .trusted()
             .iter()
             .filter(|t| own || t.relay.as_deref().and_then(relay_device) == Some(relay))
             .map(|t| t.public)
             .collect();
+        let told = !keys.is_empty();
         let trust = self.relay_send(relay, &RelayMessage::Trust { keys });
+        if trust.is_some() {
+            if told {
+                self.consented.insert(relay);
+            } else {
+                self.consented.remove(&relay);
+            }
+        }
         let expect = own.then(|| {
             let token = self
                 .offer
@@ -3545,9 +3562,14 @@ impl<R: Replica> SyncDriver<R> {
         relays
     }
 
-    /// [`Self::consent_at`] every relay of [`Self::consent_relays`].
-    fn relay_consent(&self) -> Vec<Action> {
-        self.consent_relays()
+    /// [`Self::consent_at`] every relay of [`Self::consent_relays`], and
+    /// every one told before that should hear it holds no more.
+    fn relay_consent(&mut self) -> Vec<Action> {
+        let mut relays = self.consent_relays();
+        relays.extend(self.consented.iter().copied());
+        relays.sort_unstable();
+        relays.dedup();
+        relays
             .into_iter()
             .flat_map(|relay| self.consent_at(relay))
             .collect()
@@ -3641,7 +3663,7 @@ impl<R: Replica> SyncDriver<R> {
         if self.own_relay == Some(relay) {
             out.push(Action::Event(DriverEvent::RelayOnline(true)));
         }
-        if self.consent_relays().contains(&relay) {
+        if self.consent_relays().contains(&relay) || self.consented.contains(&relay) {
             out.extend(self.consent_at(relay));
         }
         let ids: Vec<ShareId> = self
@@ -5259,6 +5281,65 @@ mod tests {
             ),
             _ => false,
         })
+    }
+
+    /// The keys `relay` was last told may reach us, in `out`.
+    fn trust_sent(out: &[Action], relay: DeviceId) -> Option<Vec<[u8; 32]>> {
+        out.iter().rev().find_map(|a| match a {
+            Action::Send { device, bytes, .. } if *device == relay => match relay_message(bytes) {
+                Some(RelayMessage::Trust { keys }) => Some(keys),
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn a_trusted_devices_relay_hears_when_it_no_longer_holds() {
+        let mut a = driver("PC");
+        let b = crate::identity::DeviceKey::generate();
+        let c = crate::identity::DeviceKey::generate();
+        let rb = crate::identity::DeviceKey::generate();
+        let at_rb = RelayAddr {
+            host: "rb:7710".into(),
+            public: *rb.public(),
+        };
+        for key in [&b, &c] {
+            let mut device = TrustedDevice::new(*key.public(), "B", 1);
+            device.relay = Some(at_rb.to_string());
+            a.profile_mut().trust(device);
+        }
+        a.tick().unwrap();
+        let out = a
+            .on_event(NetEvent::Connected(PeerInfo {
+                device: rb.id(),
+                public: *rb.public(),
+                name: "rb".into(),
+                addr: addr(9),
+                relayed: false,
+                through_relay: false,
+                session: 1,
+            }))
+            .unwrap();
+        let mut told = trust_sent(&out, rb.id()).expect("the relay hears whom we trust there");
+        told.sort_unstable();
+        let mut both = vec![*b.public(), *c.public()];
+        both.sort_unstable();
+        assert_eq!(told, both);
+        // One moves away: the relay keeps only the other.
+        let out = a
+            .on_event(NetEvent::Message {
+                from: b.id(),
+                bytes: Payload::Reach { relay: None }.to_bytes(),
+            })
+            .unwrap();
+        assert_eq!(trust_sent(&out, rb.id()), Some(vec![*c.public()]));
+        // The other is revoked: the relay keeps nobody.
+        let out = a.revoke(c.id()).unwrap();
+        assert_eq!(trust_sent(&out, rb.id()), Some(Vec::new()));
+        // Told it holds for nobody: not told again.
+        let out = a.revoke(b.id()).unwrap();
+        assert_eq!(trust_sent(&out, rb.id()), None);
     }
 
     #[test]
