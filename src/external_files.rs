@@ -329,10 +329,12 @@ impl Component for ExternalOverlay {
             return rect().into_element();
         };
         let key = session.file.path.clone();
+        // Percentages, not `fill`: an absolute child gets what the stacked
+        // siblings left of the parent, and the routed page takes it all.
         rect()
             .position(Position::new_absolute().top(0.0).left(0.0))
-            .width(Size::fill())
-            .height(Size::fill())
+            .width(Size::percent(100.))
+            .height(Size::percent(100.))
             .layer(Layer::OverlayLevel(notin_ui_kit::tokens::layer::SCREEN))
             .background(notin_ui_kit::palette().bg)
             .child(rect().expanded().key(key).child(ExternalView { session }))
