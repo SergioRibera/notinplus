@@ -124,6 +124,9 @@ pub enum Payload {
         doc: DocId,
         bytes: Vec<u8>,
     },
+    /// The relay a trusted device waits at, or none: sent on every
+    /// channel between trusted devices and whenever it changes.
+    Reach { relay: Option<String> },
 }
 
 impl Payload {
@@ -358,6 +361,8 @@ pub enum DriverEvent {
         device: DeviceId,
         path: Path,
     },
+    /// A trusted device waits at another relay now; the profile changed.
+    TrustedRelay(DeviceId),
 }
 
 /// What the app must carry out.
@@ -1844,6 +1849,7 @@ impl<R: Replica> SyncDriver<R> {
         }
         out.extend(self.punch(device));
         if self.profile.is_trusted(device) {
+            out.push(self.reach_for(device));
             out.extend(self.round_for(device)?);
         }
         for share in self.shares_with(device) {
@@ -1959,8 +1965,38 @@ impl<R: Replica> SyncDriver<R> {
                     }));
                 }
             }
+            Payload::Reach { relay } => self.on_reach(from, relay, out),
         }
         Ok(())
+    }
+
+    /// A trusted device says which relay it waits at: meet it there when
+    /// the network does not bring it.
+    fn on_reach(&mut self, from: DeviceId, relay: Option<String>, out: &mut Vec<Action>) {
+        if !self.profile.is_trusted(from) {
+            return;
+        }
+        // Kept as given only when it reads as a relay; anything else is
+        // as good as none.
+        let relay = relay
+            .and_then(|s| s.parse::<RelayAddr>().ok())
+            .filter(|addr| !self.is_peer(addr.device()))
+            .map(|addr| addr.to_string());
+        if self.profile.set_trusted_relay(from, relay) {
+            out.push(Action::Event(DriverEvent::TrustedRelay(from)));
+            out.extend(self.sync_relays());
+            out.extend(self.relay_consent());
+        }
+    }
+
+    /// Tell a trusted device which relay we wait at.
+    fn reach_for(&self, device: DeviceId) -> Action {
+        send(
+            device,
+            &Payload::Reach {
+                relay: self.relay().map(ToString::to_string),
+            },
+        )
     }
 
     /// A dial failed: a pairing or join waiting on that device fails too.
@@ -2464,6 +2500,7 @@ impl<R: Replica> SyncDriver<R> {
                     ));
                     out.push(Action::Event(DriverEvent::Paired(device)));
                     out.extend(self.relay_consent());
+                    out.push(self.reach_for(from));
                     out.push(Action::Event(DriverEvent::PeerOnline {
                         device: from,
                         online: true,
@@ -2480,10 +2517,13 @@ impl<R: Replica> SyncDriver<R> {
                 let Some(intent) = self.intent.take_if(|i| i.device == from) else {
                     return;
                 };
-                let device = TrustedDevice::new(intent.public, name, now_ms());
+                let mut device = TrustedDevice::new(intent.public, name, now_ms());
+                // The link we paired by names where it waits.
+                device.relay = intent.relay.as_ref().map(ToString::to_string);
                 self.profile.trust(device.clone());
                 out.push(Action::Event(DriverEvent::Paired(device)));
                 out.extend(self.relay_consent());
+                out.push(self.reach_for(from));
                 out.push(Action::Event(DriverEvent::PeerOnline {
                     device: from,
                     online: true,
@@ -3162,7 +3202,8 @@ pub fn relay_message(bytes: &[u8]) -> Option<RelayMessage> {
         | Payload::JoinReply { .. }
         | Payload::Keys { .. }
         | Payload::Lease { .. }
-        | Payload::Live { .. } => None,
+        | Payload::Live { .. }
+        | Payload::Reach { .. } => None,
     }
 }
 
@@ -3187,7 +3228,15 @@ impl<R: Replica> SyncDriver<R> {
                 link.share.touch(now);
             }
         }
-        self.sync_relays()
+        let mut out: Vec<Action> = self
+            .profile
+            .trusted()
+            .iter()
+            .filter(|t| self.connected.contains_key(&t.id))
+            .map(|t| self.reach_for(t.id))
+            .collect();
+        out.extend(self.sync_relays());
+        out
     }
 
     #[must_use]
@@ -3226,9 +3275,9 @@ impl<R: Replica> SyncDriver<R> {
     }
 
     /// Every relay something here meets others at: the profile's own,
-    /// those of the shares, of pending invitations and of the device we
-    /// are pairing with, and those of shares left with something still
-    /// to say there.
+    /// those of the shares, of pending invitations, of the device we are
+    /// pairing with and of trusted devices, and those of shares left
+    /// with something still to say there.
     fn wanted_relays(&self) -> Vec<RelayAddr> {
         let shares = self
             .shares
@@ -3243,9 +3292,11 @@ impl<R: Replica> SyncDriver<R> {
             .values()
             .filter(|l| self.outbox.contains_key(&l.invite.owner.device))
             .filter_map(|l| l.invite.server.as_deref());
+        let trusted = self.profile.trusted().iter().filter_map(|t| t.relay.as_deref());
         let mut wanted: Vec<RelayAddr> = shares
             .chain(joins)
             .chain(left)
+            .chain(trusted)
             .filter_map(|s| s.parse().ok())
             .chain(self.intent.as_ref().and_then(|i| i.relay.clone()))
             // Others name these: never one of the devices we talk to.
@@ -3332,9 +3383,10 @@ impl<R: Replica> SyncDriver<R> {
             })
     }
 
-    /// A connected relay `device` can be reached at: ours for a trusted
-    /// device, a share's for its members, an invitation's for its owner,
-    /// the pairing link's for the device we pair with.
+    /// A connected relay `device` can be reached at: a share's for its
+    /// members, an invitation's for its owner, the pairing link's for the
+    /// device we pair with, the one a trusted device said it waits at,
+    /// else ours.
     fn relay_for(&self, device: DeviceId) -> Option<DeviceId> {
         let shares = self
             .shares
@@ -3356,11 +3408,18 @@ impl<R: Replica> SyncDriver<R> {
             .as_ref()
             .filter(|i| i.device == device)
             .and_then(|i| i.relay.as_ref().map(RelayAddr::device));
+        let trusted = self
+            .profile
+            .trusted()
+            .iter()
+            .filter(|t| t.id == device)
+            .filter_map(|t| t.relay.as_deref().and_then(relay_device));
         let own = self.own_relay;
         shares
             .chain(joins)
             .chain(left)
             .chain(pairing)
+            .chain(trusted)
             .chain(own)
             .find(|relay| self.relays.get(relay).is_some_and(|r| r.connected))
     }
@@ -3374,25 +3433,47 @@ impl<R: Replica> SyncDriver<R> {
         })
     }
 
-    /// Tell `relay` which devices may reach us there: the trusted ones,
-    /// and whoever holds the open pairing link.
+    /// Tell `relay` which devices may reach us there. Ours hears every
+    /// trusted one and whoever holds the open pairing link; the relay of
+    /// a trusted device only hears the trusted devices waiting at it,
+    /// which it already knows trust us back.
     fn consent_at(&self, relay: DeviceId) -> Vec<Action> {
-        let keys = self.profile.trusted().iter().map(|t| t.public).collect();
-        let token = self
-            .offer
-            .filter(|o| !o.expired())
-            .map(|o| KnockToken::pairing(&o.secret));
-        self.relay_send(relay, &RelayMessage::Trust { keys })
-            .into_iter()
-            .chain(self.relay_send(relay, &RelayMessage::Expect { token }))
-            .collect()
+        let own = self.own_relay == Some(relay);
+        let keys = self
+            .profile
+            .trusted()
+            .iter()
+            .filter(|t| own || t.relay.as_deref().and_then(relay_device) == Some(relay))
+            .map(|t| t.public)
+            .collect();
+        let trust = self.relay_send(relay, &RelayMessage::Trust { keys });
+        let expect = own.then(|| {
+            let token = self
+                .offer
+                .filter(|o| !o.expired())
+                .map(|o| KnockToken::pairing(&o.secret));
+            self.relay_send(relay, &RelayMessage::Expect { token })
+        });
+        trust.into_iter().chain(expect.flatten()).collect()
     }
 
-    /// Relays that hear whom we trust and what we expect: ours only.
-    /// One a share, an invitation or a pairing link chose could map our
-    /// devices; pairing through it needs no more than our knock.
+    /// Relays that hear whom we trust: ours, and those trusted devices
+    /// wait at. One a share, an invitation or a pairing link chose could
+    /// map our devices; pairing through it needs no more than our knock.
     fn consent_relays(&self) -> Vec<DeviceId> {
-        self.own_relay.into_iter().collect()
+        let mut relays: Vec<DeviceId> = self
+            .own_relay
+            .into_iter()
+            .chain(
+                self.profile
+                    .trusted()
+                    .iter()
+                    .filter_map(|t| t.relay.as_deref().and_then(relay_device)),
+            )
+            .collect();
+        relays.sort_unstable();
+        relays.dedup();
+        relays
     }
 
     /// [`Self::consent_at`] every relay of [`Self::consent_relays`].

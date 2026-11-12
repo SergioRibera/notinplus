@@ -138,6 +138,9 @@ pub struct TrustedDevice {
     pub name: String,
     /// Unix milliseconds when the pairing happened.
     pub since: u64,
+    /// The relay it last said it waits at (`host:port/key`), so it can
+    /// be met there off the network even when ours is another.
+    pub relay: Option<String>,
 }
 
 impl TrustedDevice {
@@ -148,6 +151,7 @@ impl TrustedDevice {
             public,
             name: name.into(),
             since,
+            relay: None,
         }
     }
 }
@@ -460,6 +464,18 @@ impl DeviceProfile {
         match self.trusted.iter_mut().find(|d| d.id == device.id) {
             Some(existing) => *existing = device,
             None => self.trusted.push(device),
+        }
+    }
+
+    /// Note the relay a trusted device waits at. Returns whether that
+    /// changed anything.
+    pub fn set_trusted_relay(&mut self, id: DeviceId, relay: Option<String>) -> bool {
+        match self.trusted.iter_mut().find(|d| d.id == id) {
+            Some(device) if device.relay != relay => {
+                device.relay = relay;
+                true
+            }
+            _ => false,
         }
     }
 

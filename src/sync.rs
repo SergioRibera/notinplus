@@ -1125,6 +1125,10 @@ impl Service {
                     crate::canvas::lock(&board).forget_hand(device);
                 }
             }
+            DriverEvent::TrustedRelay(device) => {
+                log::info!("sync: {device:?} waits at another relay");
+                self.save_profile();
+            }
             DriverEvent::RelayAdopted(relay) => {
                 self.driver.profile_mut().set_relay(Some(relay.to_string()));
                 self.save_profile();

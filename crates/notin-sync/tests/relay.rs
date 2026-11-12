@@ -379,8 +379,98 @@ fn trusted_devices_sync_and_share_live_state_only_through_the_relay() {
     assert_eq!(a.driver.path_to(ib), Some(Path::Relay));
 }
 
+/// The relay `of` last told `device` it waits at.
+fn relay_named(device: &Device, of: &Device) -> Option<String> {
+    let id = of.driver.profile().id();
+    device
+        .driver
+        .profile()
+        .trusted()
+        .iter()
+        .find(|t| t.id == id)
+        .and_then(|t| t.relay.clone())
+}
+
+/// `device` learns that `of` waits at `relay`, as a pairing link tells.
+fn knows_at(device: &mut Device, of: &Device, relay: &RelayAddr) {
+    let id = of.driver.profile().id();
+    device
+        .driver
+        .profile_mut()
+        .set_trusted_relay(id, Some(relay.to_string()));
+}
+
 #[test]
-fn a_punched_channel_reports_a_direct_path() {
+fn trusted_devices_on_different_relays_meet_at_the_one_named() {
+    let (_s1, r1) = relay();
+    let (_s2, r2) = relay();
+    let mut a = Device::relay_only("Tablet");
+    let mut b = Device::relay_only("PC");
+    trust_each_other(&mut a, &mut b);
+    knows_at(&mut a, &b, &r2);
+    a.mark(D1, 1, 1);
+    b.mark(D1, 2, 1);
+    on_relay(&mut a, &r1);
+    on_relay(&mut b, &r2);
+    settle(&mut a, &mut b, Duration::from_secs(10), connected);
+    assert!(connected(&a, &b), "never met at the other's relay");
+    // Meeting there tells the other where this one waits.
+    settle(&mut a, &mut b, Duration::from_secs(5), |a, b| {
+        relay_named(b, a).is_some() && b.marks(D1).len() == 2
+    });
+    assert_eq!(relay_named(&b, &a), Some(r1.to_string()));
+    assert_eq!(relay_named(&a, &b), Some(r2.to_string()));
+    assert_eq!(b.marks(D1), vec![(1, 1), (2, 1)]);
+}
+
+#[test]
+fn a_device_without_a_relay_meets_a_trusted_one_at_its_relay() {
+    let (_server, r1) = relay();
+    let mut a = Device::relay_only("Tablet");
+    let mut b = Device::relay_only("PC");
+    trust_each_other(&mut a, &mut b);
+    knows_at(&mut a, &b, &r1);
+    a.mark(D1, 1, 1);
+    on_relay(&mut b, &r1);
+    // What the app does at start, with no relay of its own.
+    let actions = a.driver.set_relay(None);
+    a.perform(actions);
+    settle(&mut a, &mut b, Duration::from_secs(10), |a, b| {
+        connected(a, b) && b.marks(D1).len() == 1
+    });
+    assert!(connected(&a, &b), "never met at the relay it named");
+    assert_eq!(b.marks(D1), vec![(1, 1)]);
+    assert!(a.driver.relay().is_none(), "took the other's relay as its own");
+}
+
+#[test]
+fn a_trusted_device_hears_when_the_other_moves_to_another_relay() {
+    let (_s1, r1) = relay();
+    let (_s2, r2) = relay();
+    let mut a = Device::relay_only("Tablet");
+    let mut b = Device::relay_only("PC");
+    trust_each_other(&mut a, &mut b);
+    on_relay(&mut a, &r1);
+    on_relay(&mut b, &r1);
+    settle(&mut a, &mut b, Duration::from_secs(10), |a, b| {
+        connected(a, b) && relay_named(a, b).is_some()
+    });
+    assert_eq!(relay_named(&a, &b), Some(r1.to_string()));
+    on_relay(&mut b, &r2);
+    settle(&mut a, &mut b, Duration::from_secs(5), |a, b| {
+        relay_named(a, b) == Some(r2.to_string())
+    });
+    assert_eq!(relay_named(&a, &b), Some(r2.to_string()));
+    let ib = b.driver.profile().id();
+    assert!(
+        a.events
+            .iter()
+            .any(|e| matches!(e, DriverEvent::TrustedRelay(d) if *d == ib))
+    );
+}
+
+#[test]
+fn a_punched_channel_reports_a_punched_path() {
     let (_server, relay_addr) = relay();
     let mut a = Device::new("Tablet");
     let mut b = Device::new("PC");
