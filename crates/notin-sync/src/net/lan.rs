@@ -436,7 +436,10 @@ fn writer(
         while let Ok(frame) = frames.recv_async().await {
             #[cfg(feature = "sismo")]
             sismo::counter!("sync.lan.frame_bytes", frame.len());
-            if let Err(err) = sender.send_stream(RawBytes(frame.into()), addr, stream).await {
+            if let Err(err) = sender
+                .send_stream(RawBytes(frame.into()), addr, stream)
+                .await
+            {
                 tracing::warn!(target: "notin-sync", peer = %addr, stream, "send failed: {err}");
             }
             if let Some(relayed) = &paced {
@@ -552,7 +555,10 @@ impl Node {
     }
 
     async fn send_frame(sender: &ZudpSender, addr: PeerAddr, frame: &Frame, stream: u16) {
-        if let Err(err) = sender.send_stream(RawBytes(frame.to_bytes().into()), addr, stream).await {
+        if let Err(err) = sender
+            .send_stream(RawBytes(frame.to_bytes().into()), addr, stream)
+            .await
+        {
             tracing::warn!(target: "notin-sync", peer = %addr, "send failed: {err}");
         }
     }
@@ -1484,7 +1490,9 @@ async fn run(
 }
 
 /// Next beacon from the scanner, or never when scanning is off.
-async fn next_peer(scan: &mut Option<zudp::ScanStream<RawBytes>>) -> zudp::DiscoveredPeer<RawBytes> {
+async fn next_peer(
+    scan: &mut Option<zudp::ScanStream<RawBytes>>,
+) -> zudp::DiscoveredPeer<RawBytes> {
     match scan {
         Some(stream) => loop {
             match stream.next_event().await {

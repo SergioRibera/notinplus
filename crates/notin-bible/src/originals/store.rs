@@ -41,7 +41,6 @@ impl std::fmt::Debug for SensesCell {
     }
 }
 
-
 #[derive(Debug)]
 pub enum StoreError {
     /// No pack on disk at all.
