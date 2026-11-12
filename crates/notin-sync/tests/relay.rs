@@ -389,7 +389,7 @@ fn a_punched_channel_reports_a_direct_path() {
     on_relay(&mut b, &relay_addr);
     let (ia, ib) = (a.driver.profile().id(), b.driver.profile().id());
     let direct = |a: &Device, b: &Device| {
-        a.driver.path_to(ib) == Some(Path::Direct) && b.driver.path_to(ia) == Some(Path::Direct)
+        a.driver.path_to(ib) == Some(Path::Punched) && b.driver.path_to(ia) == Some(Path::Punched)
     };
     settle(&mut a, &mut b, Duration::from_secs(15), direct);
     assert!(
@@ -401,7 +401,7 @@ fn a_punched_channel_reports_a_direct_path() {
     assert!(a.events.iter().any(|e| matches!(
         e,
         DriverEvent::PathChanged {
-            path: Path::Direct,
+            path: Path::Punched,
             ..
         }
     )));

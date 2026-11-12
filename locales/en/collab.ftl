@@ -127,6 +127,7 @@ collab-kind-folder = Shared folder
 # $owner: who organizes.
 collab-state-paused = Paused · { $owner } is away
 collab-state-live-lan = Live · same network
+collab-state-live-direct = Live · direct
 collab-state-live-relay = Live · via server
 collab-state-up-to-date = Up to date
 collab-state-up-to-date-relay = Up to date · via server
@@ -149,7 +150,8 @@ collab-recent-rejoin = Go back in
 collab-recent-reopen = Reopen
 collab-path-lan = same network
 collab-path-relay = via server
-# $path: same network or via server.
+collab-path-direct = direct
+# $path: same network, direct or via server.
 collab-person-reachable = reachable { $path }
 collab-person-offline-short = offline
 collab-invitation = Invitation

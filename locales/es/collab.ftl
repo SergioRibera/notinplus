@@ -127,6 +127,7 @@ collab-kind-folder = Carpeta compartida
 # $owner: quien organiza.
 collab-state-paused = En pausa · { $owner } no está
 collab-state-live-lan = En vivo · misma red
+collab-state-live-direct = En vivo · directo
 collab-state-live-relay = En vivo · por servidor
 collab-state-up-to-date = Al día
 collab-state-up-to-date-relay = Al día · por servidor
@@ -149,7 +150,8 @@ collab-recent-rejoin = Volver a entrar
 collab-recent-reopen = Reabrir
 collab-path-lan = misma red
 collab-path-relay = por servidor
-# $path: misma red o por servidor.
+collab-path-direct = directo
+# $path: misma red, directo o por servidor.
 collab-person-reachable = se alcanza { $path }
 collab-person-offline-short = sin conexión
 collab-invitation = Invitación

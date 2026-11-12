@@ -61,12 +61,17 @@ pub(super) fn state_of(view: &ShareView, snapshot: &SyncSnapshot) -> (String, Op
         view.members
             .iter()
             .filter_map(|m| m.path)
-            .max_by_key(|p| *p == Path::Direct)
+            .min_by_key(|p| match p {
+                Path::Direct => 0,
+                Path::Punched => 1,
+                Path::Relay => 2,
+            })
     } else {
         view.owner_path
     };
     match (view.mode, here, path) {
         (_, true, Some(Path::Direct) | None) => (tr!("collab-state-live-lan"), Some(p.ok)),
+        (_, true, Some(Path::Punched)) => (tr!("collab-state-live-direct"), Some(p.ok)),
         (_, _, Some(Path::Relay)) if here || view.mode == ShareMode::Session => {
             (tr!("collab-state-live-relay"), Some(p.ok))
         }

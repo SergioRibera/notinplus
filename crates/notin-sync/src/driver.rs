@@ -445,11 +445,24 @@ pub struct PendingJoin<'a> {
 /// How a device is reached right now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Path {
-    /// A channel straight to the device: on the same network, or one
-    /// through a relay that was punched through.
+    /// A channel straight to the device, opened on the same network or
+    /// to its address.
     Direct,
+    /// A channel opened through a relay that was punched through and now
+    /// goes straight to the device.
+    Punched,
     /// Through the relay: a channel it carries, or its mailbox.
     Relay,
+}
+
+impl Path {
+    const fn of(peer: &PeerInfo) -> Self {
+        match (peer.relayed, peer.through_relay) {
+            (true, _) => Self::Relay,
+            (false, true) => Self::Punched,
+            (false, false) => Self::Direct,
+        }
+    }
 }
 
 /// What was last handed to the relay for one share, so only new
@@ -795,11 +808,7 @@ impl<R: Replica> SyncDriver<R> {
     pub fn path_to(&self, device: DeviceId) -> Option<Path> {
         let is_relay = self.relays.contains_key(&device);
         if !is_relay && let Some(peer) = self.connected.get(&device) {
-            Some(if peer.relayed {
-                Path::Relay
-            } else {
-                Path::Direct
-            })
+            Some(Path::of(peer))
         } else if self.known_keys.contains_key(&device) && self.relay_for(device).is_some() {
             Some(Path::Relay)
         } else {
@@ -1695,7 +1704,7 @@ impl<R: Replica> SyncDriver<R> {
             NetEvent::PathChanged { device, relayed } => {
                 if let Some(peer) = self.connected.get_mut(&device) {
                     peer.relayed = relayed;
-                    let path = if relayed { Path::Relay } else { Path::Direct };
+                    let path = Path::of(peer);
                     out.push(Action::Event(DriverEvent::PathChanged { device, path }));
                 }
             }
