@@ -2979,20 +2979,13 @@ rec {
             optional = true;
             usesDefaultFeatures = false;
           }
-          {
-            name = "uuid";
-            packageId = "uuid";
-            rename = "uuid-1";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
         ];
         features = {
           "default" = [ "simdutf8" ];
           "simdutf8" = [ "dep:simdutf8" ];
           "uuid-1" = [ "dep:uuid-1" ];
         };
-        resolvedDefaultFeatures = [ "simdutf8" "uuid-1" ];
+        resolvedDefaultFeatures = [ "simdutf8" ];
       };
       "bytecheck_derive 0.6.12" = rec {
         crateName = "bytecheck_derive";
@@ -17498,16 +17491,16 @@ rec {
         ];
         dependencies = [
           {
-            name = "rkyv";
-            packageId = "rkyv 0.8.18";
-            usesDefaultFeatures = false;
-            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" ];
-          }
-          {
             name = "sismo";
             packageId = "sismo";
             optional = true;
             usesDefaultFeatures = false;
+          }
+          {
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" ];
           }
         ];
         features = {
@@ -17670,12 +17663,6 @@ rec {
           {
             name = "notin-i18n";
             packageId = "notin-i18n";
-          }
-          {
-            name = "rkyv";
-            packageId = "rkyv 0.8.18";
-            usesDefaultFeatures = false;
-            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "uuid-1" "bytes-1" ];
           }
           {
             name = "sismo";
@@ -25983,7 +25970,7 @@ rec {
           "triomphe-0_1" = [ "dep:triomphe-0_1" "alloc" ];
           "uuid-1" = [ "dep:uuid-1" "bytecheck?/uuid-1" ];
         };
-        resolvedDefaultFeatures = [ "alloc" "bytecheck" "bytes-1" "default" "little_endian" "pointer_width_32" "std" "uuid-1" ];
+        resolvedDefaultFeatures = [ "alloc" "bytecheck" "default" "std" ];
       };
       "rkyv_derive 0.7.46" = rec {
         crateName = "rkyv_derive";
