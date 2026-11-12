@@ -3376,6 +3376,14 @@ impl<R: Replica> SyncDriver<R> {
 
     /// The relay a share meets at: the one it names, once linked, else
     /// ours. Never ours in place of one it names.
+    /// Whether the relay the share meets at is within reach.
+    #[must_use]
+    pub fn share_relay_online(&self, id: ShareId) -> bool {
+        self.share_relay(id)
+            .and_then(|device| self.relays.get(&device))
+            .is_some_and(|r| r.connected)
+    }
+
     fn share_relay(&self, id: ShareId) -> Option<DeviceId> {
         self.share(id)
             .and_then(|s| s.server.as_deref())

@@ -99,6 +99,12 @@ pub(super) enum Recovery {
 }
 
 impl SyncProblem {
+    /// Whether nothing reaches other devices while it lasts; a problem
+    /// saving or with one address leaves the rest running.
+    pub const fn cuts_off(&self) -> bool {
+        matches!(self, Self::Thread(_) | Self::ProfileLoad(_) | Self::Network(_))
+    }
+
     /// Whether `recovery` means this problem is over.
     pub(super) const fn cleared_by(&self, recovery: Recovery) -> bool {
         matches!(

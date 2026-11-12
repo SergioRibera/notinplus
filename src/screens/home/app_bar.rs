@@ -7,7 +7,7 @@ use notin_ui_kit::TapExt;
 use notin_ui_kit::theme::palette;
 use notin_ui_kit::{IconButton, Tag, Text, TextRole, tokens, width_class};
 
-use crate::sync::SyncSnapshot;
+use crate::sync::{SyncProblem, SyncSnapshot};
 
 /// What the sync pill says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,7 +23,15 @@ impl SyncState {
         if snapshot.trusted.is_empty() && snapshot.shares.is_empty() {
             return None;
         }
-        if snapshot.error.is_some() || (snapshot.online.is_empty() && !snapshot.relay_online) {
+        // Offline only when nothing at all is within reach: no own device,
+        // no relay, nobody in a share and no share's relay.
+        let reachable = !snapshot.online.is_empty()
+            || snapshot.relay_online
+            || snapshot
+                .shares
+                .iter()
+                .any(|s| s.relay_online || s.anyone_here(snapshot.device));
+        if snapshot.error.as_ref().is_some_and(SyncProblem::cuts_off) || !reachable {
             return Some(Self::Offline);
         }
         let pending = snapshot.files_pending

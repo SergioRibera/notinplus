@@ -71,7 +71,7 @@ impl Notice {
         // A shared document travels with the session: it is offline when
         // nobody else in it is reachable, whatever this user's own devices do.
         let snapshot = crate::sync::snapshot();
-        let offline = !share.anyone_here(snapshot.device) && !snapshot.relay_online;
+        let offline = !share.anyone_here(snapshot.device) && !share.relay_online;
         offline.then_some(Self::Offline)
     }
 }

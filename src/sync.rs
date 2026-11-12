@@ -83,6 +83,8 @@ pub struct ShareView {
     pub invite_link: String,
     /// The invitation names a relay, so it works off the network too.
     pub invite_relayed: bool,
+    /// The relay the share meets at is within reach.
+    pub relay_online: bool,
     pub can_edit: bool,
     pub can_manage: bool,
     pub can_add_docs: bool,
@@ -1531,6 +1533,7 @@ impl Service {
                 waiting_for_owner: self.driver.waiting_for_owner(share.id),
                 invite_link: invite.to_link(),
                 invite_relayed: invite.server.is_some(),
+                relay_online: self.driver.share_relay_online(share.id),
                 can_edit: share.can_edit(me),
                 can_manage: share.can_manage(me),
                 can_add_docs: share.can_add_docs(me),
