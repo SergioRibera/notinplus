@@ -563,7 +563,7 @@ pub fn use_settings_root() -> SettingsStore {
         // platform can report it only after the first read.
         match istmo::plugins::SystemInfo::acquire() {
             Ok(info) => {
-                let updates = info.locale_updates();
+                let updates = info.locale_stream();
                 spawn(traced!("task::settings::locale", async move {
                     while let Ok(locale) = updates.recv_async().await {
                         let lang = lang_of(Some(&locale));

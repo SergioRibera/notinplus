@@ -71,7 +71,12 @@ pub fn install() -> Result<Option<DocumentsPublisher>, Box<dyn std::error::Error
     runtime.register_host(istmo_camera::CameraHost::new(
         istmo_camera::DesktopCameraFactory,
     ));
-    runtime.register_host(istmo_opener::OpenerHost::new(istmo_opener::DesktopOpener));
+    runtime.register_host(istmo_opener::OpenerHost::new(
+        // Folders open as `file://` URLs; the rest keeps the default list.
+        istmo_opener::DesktopOpener::with_policy(
+            istmo_opener::SchemePolicy::default().allow("file"),
+        ),
+    ));
     runtime.register_host(istmo_installer::InstallerHost::new(
         istmo_installer::DesktopInstaller,
     ));

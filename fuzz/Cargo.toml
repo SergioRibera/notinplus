@@ -18,7 +18,7 @@ originals-format = { git = "https://github.com/biblionlabs/extra_data_source", r
 
 [patch.crates-io]
 # Same istmo as the app (see the root manifest).
-istmo-core = { git = "https://github.com/SergioRibera/istmo", rev = "b3ede16" }
+istmo-core = { git = "https://github.com/SergioRibera/istmo", rev = "421d1eb" }
 
 [[bin]]
 name = "sync"

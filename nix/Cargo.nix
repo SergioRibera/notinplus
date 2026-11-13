@@ -13225,8 +13225,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13271,8 +13271,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         libName = "istmo_android";
         authors = [
@@ -13334,8 +13334,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         libName = "istmo_build";
         authors = [
@@ -13367,6 +13367,7 @@ rec {
             name = "proc-macro2";
             packageId = "proc-macro2";
             usesDefaultFeatures = false;
+            features = [ "span-locations" ];
           }
           {
             name = "quote";
@@ -13414,8 +13415,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         libName = "istmo_camera";
         authors = [
@@ -13483,8 +13484,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         libName = "istmo_core";
         authors = [
@@ -13531,8 +13532,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         libName = "istmo_data_store";
         authors = [
@@ -13556,6 +13557,12 @@ rec {
           {
             name = "pollster";
             packageId = "pollster";
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+            usesDefaultFeatures = false;
+            features = [ "std" ];
           }
           {
             name = "wincode";
@@ -13589,8 +13596,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         libName = "istmo_file_picker";
         authors = [
@@ -13677,8 +13684,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         libName = "istmo_ios";
         authors = [
@@ -13724,8 +13731,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         procMacro = true;
         libName = "istmo_macros";
@@ -13761,8 +13768,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         libName = "istmo_opener";
         authors = [
@@ -13770,6 +13777,12 @@ rec {
           "istmo contributors"
         ];
         dependencies = [
+          {
+            name = "flume";
+            packageId = "flume";
+            usesDefaultFeatures = false;
+            features = [ "async" "select" ];
+          }
           {
             name = "istmo-build";
             packageId = "istmo-build";
@@ -13790,12 +13803,6 @@ rec {
             packageId = "istmo-build";
           }
         ];
-        devDependencies = [
-          {
-            name = "istmo-core";
-            packageId = "istmo-core";
-          }
-        ];
         features = {
           "codegen" = [ "dep:istmo-build" ];
         };
@@ -13809,8 +13816,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         libName = "istmo_pen";
         authors = [
@@ -13863,6 +13870,12 @@ rec {
             target = { target, features }: (("windows" == target."os" or null) || ("linux" == target."os" or null) || ("macos" == target."os" or null));
           }
           {
+            name = "tracing";
+            packageId = "tracing";
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
             name = "wayland-backend";
             packageId = "wayland-backend";
             target = { target, features }: ("linux" == target."os" or null);
@@ -13883,7 +13896,7 @@ rec {
             name = "windows-sys";
             packageId = "windows-sys 0.61.2";
             target = { target, features }: ("windows" == target."os" or null);
-            features = [ "Win32_Foundation" "Win32_UI_WindowsAndMessaging" "Win32_UI_Controls" "Win32_UI_Shell" "Win32_UI_Input_Pointer" "Win32_Graphics_Gdi" ];
+            features = [ "Win32_Foundation" "Win32_UI_WindowsAndMessaging" "Win32_UI_Controls" "Win32_UI_Shell" "Win32_UI_Input_Pointer" "Win32_Graphics_Gdi" "Win32_System_Threading" ];
           }
           {
             name = "x11rb";
@@ -13923,8 +13936,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         libName = "istmo_plugins";
         authors = [
@@ -13990,6 +14003,16 @@ rec {
             packageId = "istmo-plugins-schema";
           }
         ];
+        devDependencies = [
+          {
+            name = "istmo-build";
+            packageId = "istmo-build";
+          }
+          {
+            name = "istmo-plugins-schema";
+            packageId = "istmo-plugins-schema";
+          }
+        ];
         features = {
         };
         resolvedDefaultFeatures = [ "default" ];
@@ -14001,8 +14024,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         libName = "istmo_plugins_schema";
         authors = [
@@ -14025,8 +14048,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         libName = "istmo_share";
         authors = [
@@ -14092,20 +14115,6 @@ rec {
             features = [ "std" "NSArray" "NSError" "NSGeometry" "NSObject" "NSString" "NSURL" ];
           }
           {
-            name = "serde";
-            packageId = "serde";
-            usesDefaultFeatures = false;
-            target = { target, features }: ("macos" == target."os" or null);
-            features = [ "std" "derive" ];
-          }
-          {
-            name = "serde_json";
-            packageId = "serde_json";
-            usesDefaultFeatures = false;
-            target = { target, features }: ("macos" == target."os" or null);
-            features = [ "std" ];
-          }
-          {
             name = "tracing";
             packageId = "tracing";
             usesDefaultFeatures = false;
@@ -14144,18 +14153,6 @@ rec {
             name = "istmo-window";
             packageId = "istmo-window";
           }
-          {
-            name = "serde";
-            packageId = "serde";
-            usesDefaultFeatures = false;
-            features = [ "std" "derive" ];
-          }
-          {
-            name = "serde_json";
-            packageId = "serde_json";
-            usesDefaultFeatures = false;
-            features = [ "std" ];
-          }
         ];
         features = {
           "codegen" = [ "dep:istmo-build" ];
@@ -14170,8 +14167,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/SergioRibera/istmo";
-          rev = "b3ede16a884ef6c024d3835216bb8db5a8cfd2c4";
-          sha256 = "046zpidcvg63haa1rd8kmv4hpjrsnb0xg196j5jax4b56vrdwm3h";
+          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
+          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
         };
         libName = "istmo_window";
         authors = [
@@ -23333,7 +23330,7 @@ rec {
         features = {
           "default" = [ "proc-macro" ];
         };
-        resolvedDefaultFeatures = [ "default" "proc-macro" ];
+        resolvedDefaultFeatures = [ "default" "proc-macro" "span-locations" ];
       };
       "profiling" = rec {
         crateName = "profiling";

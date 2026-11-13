@@ -4199,7 +4199,7 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 [[package]]
 name = "istmo"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "istmo-android",
  "istmo-core",
@@ -4211,7 +4211,7 @@ dependencies = [
 [[package]]
 name = "istmo-android"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "android-activity",
  "flume",
@@ -4225,7 +4225,7 @@ dependencies = [
 [[package]]
 name = "istmo-build"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "embed-resource",
  "globset",
@@ -4243,7 +4243,7 @@ dependencies = [
 [[package]]
 name = "istmo-camera"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "flume",
  "istmo-build",
@@ -4257,7 +4257,7 @@ dependencies = [
 [[package]]
 name = "istmo-core"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "flume",
  "oneshot",
@@ -4269,19 +4269,20 @@ dependencies = [
 [[package]]
 name = "istmo-data-store"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "istmo-build",
  "istmo-core",
  "istmo-macros",
  "pollster",
+ "tracing",
  "wincode",
 ]
 
 [[package]]
 name = "istmo-file-picker"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "istmo-build",
  "istmo-core",
@@ -4302,7 +4303,7 @@ dependencies = [
 [[package]]
 name = "istmo-ios"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "flume",
  "istmo-core",
@@ -4314,7 +4315,7 @@ dependencies = [
 [[package]]
 name = "istmo-macros"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4324,8 +4325,9 @@ dependencies = [
 [[package]]
 name = "istmo-opener"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
+ "flume",
  "istmo-build",
  "istmo-core",
  "istmo-macros",
@@ -4334,7 +4336,7 @@ dependencies = [
 [[package]]
 name = "istmo-pen"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "block2 0.6.2",
  "flume",
@@ -4345,6 +4347,7 @@ dependencies = [
  "objc2 0.6.5",
  "pollster",
  "raw-window-handle",
+ "tracing",
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
@@ -4355,7 +4358,7 @@ dependencies = [
 [[package]]
 name = "istmo-plugins"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "flume",
  "istmo-build",
@@ -4373,7 +4376,7 @@ dependencies = [
 [[package]]
 name = "istmo-plugins-schema"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "istmo-build",
 ]
@@ -4381,7 +4384,7 @@ dependencies = [
 [[package]]
 name = "istmo-share"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "dispatch2",
  "flume",
@@ -4393,8 +4396,6 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
- "serde",
- "serde_json",
  "tracing",
  "windows",
  "windows-collections",
@@ -4403,7 +4404,7 @@ dependencies = [
 [[package]]
 name = "istmo-window"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "raw-window-handle",
 ]

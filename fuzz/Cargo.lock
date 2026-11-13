@@ -470,7 +470,7 @@ dependencies = [
 [[package]]
 name = "istmo-core"
 version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=b3ede16#b3ede16a884ef6c024d3835216bb8db5a8cfd2c4"
+source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
 dependencies = [
  "flume",
  "oneshot",

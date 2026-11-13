@@ -57,7 +57,11 @@ pub fn provide_safe_area_root() -> Memo<EdgeInsets> {
                 return;
             }
         };
-        published.set(fold_insets(sa.current_or_zero()));
+        let insets = sa.current_or_default().unwrap_or_else(|err| {
+            log::warn!("safe_area: undecodable insets: {err}");
+            SafeAreaInsets::default()
+        });
+        published.set(fold_insets(insets));
         let (tx, rx) = flume::unbounded::<EdgeInsets>();
         let stream = sa.stream();
         std::thread::spawn(move || {
