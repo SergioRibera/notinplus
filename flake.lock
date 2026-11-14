@@ -25,11 +25,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1794637524,
-        "narHash": "sha256-I7CRpiYOOgLj615gwuFmDMFMFSAk4EcI+5yQRWgAQRs=",
+        "lastModified": 1794688283,
+        "narHash": "sha256-dBnniywxSRAtWvbyYyToGNIZghqUrLBnvT7mdo85V+s=",
         "owner": "SergioRibera",
         "repo": "nix-bundle-app",
-        "rev": "3717efd52845f648b5fca26a08310ed22ac300bc",
+        "rev": "ff522efcbc34c9114016ecc4374803baf65ea89d",
         "type": "github"
       },
       "original": {
