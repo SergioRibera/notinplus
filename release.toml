@@ -2,7 +2,8 @@
 #
 # `cargo release <level> --execute` (or no level to release the current
 # version) bumps the shared workspace version, refreshes Cargo.lock, sets
-# the Android versionCode from it (pre-release-hook in Cargo.toml), commits
+# the Android versionCode from it and regenerates nix/Cargo.nix
+# (pre-release-hook in Cargo.toml), commits
 # `chore(release): <version>`, tags `v<version>` and pushes both. The tag
 # triggers `.github/workflows/release.yml`, which builds every artifact
 # and publishes the GitHub release.

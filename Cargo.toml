@@ -13,8 +13,8 @@ repository = "https://github.com/SergioRibera/notinplus"
 publish = false
 
 [package.metadata.release]
-# Android versionCode follows the released version (see release.toml).
-pre-release-hook = ["scripts/set-version-code.sh"]
+# Android versionCode and nix/Cargo.nix follow the released version (see release.toml).
+pre-release-hook = ["scripts/pre-release.sh"]
 
 [features]
 default = ["math", "diagrams"]
