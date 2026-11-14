@@ -637,12 +637,7 @@ fn choose(
                 }),
         );
     }
-    sheet
-        .footer(SheetFooter::new([Button::new(tr!("common-cancel"))
-            .ghost()
-            .on_press(|_| ModalController::get().close())
-            .into_element()]))
-        .open();
+    sheet.open();
 }
 
 #[sismo::function("flows::import_sheet")]

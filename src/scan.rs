@@ -15,7 +15,7 @@ use freya_engine::prelude::{
 use notin_i18n::tr;
 use notin_plugin::UserMessage;
 use notin_ui_kit::theme::palette;
-use notin_ui_kit::{Button, Sheet, SheetFooter, Spinner, Text, TextRole, tokens};
+use notin_ui_kit::{Sheet, Spinner, Text, TextRole, tokens};
 
 use capture::{Capture, Event};
 use frame::Picture;
@@ -96,10 +96,6 @@ pub fn scan_qr(prompt: &str) -> impl Future<Output = Outcome> + use<> {
             prompt: prompt.to_owned(),
             reply: Reply(Rc::new(RefCell::new(Some(tx)))),
         })
-        .footer(SheetFooter::new([Button::new(tr!("common-cancel"))
-            .ghost()
-            .on_press(|_| Sheet::close())
-            .into_element()]))
         .push();
     async move { rx.recv_async().await.unwrap_or(Ok(None)) }
 }

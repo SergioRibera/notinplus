@@ -9,8 +9,8 @@ use notin_i18n::tr;
 use notin_plugin::UserMessage;
 use notin_ui_kit::theme::palette;
 use notin_ui_kit::{
-    Button, EmptyState, Group, ListRow, ModalController, SearchField, Section, Sheet, SheetFooter,
-    Tag, Toast, Toasts, Trailing,
+    EmptyState, Group, ListRow, ModalController, SearchField, Section, Sheet, Tag, Toast, Toasts,
+    Trailing,
 };
 
 use crate::library::{FolderId, ItemId, LinkKind, PaneId, ROOT_FOLDER, TabTarget};
@@ -466,10 +466,6 @@ pub fn folder_picker(items: Vec<ItemId>, folders: Vec<FolderId>) {
                 });
             })),
         })
-        .footer(SheetFooter::new([Button::new(tr!("common-cancel"))
-            .ghost()
-            .on_press(|_| ModalController::get().close())
-            .into_element()]))
         .open();
 }
 

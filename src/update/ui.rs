@@ -380,23 +380,16 @@ impl Component for DownloadSheet {
                 _ => p.accent,
             }))
             .child(status)
-            .child(footer(&current, &progress, phase))
+            .maybe_child(footer(&current, phase))
     }
 }
 
-fn footer(current: &Phase, progress: &Arc<Progress>, phase: State<Phase>) -> Element {
+/// The actions once the file is here. While it downloads, and once it is
+/// handed over or failed, the header × is the way out (closing cancels
+/// a download in progress).
+fn footer(current: &Phase, phase: State<Phase>) -> Option<Element> {
     let buttons: Vec<Element> = match current {
-        Phase::Downloading => {
-            let progress = Arc::clone(progress);
-            vec![
-                Button::new(tr!("common-cancel"))
-                    .on_press(move |_| {
-                        progress.cancel();
-                        close();
-                    })
-                    .into_element(),
-            ]
-        }
+        Phase::Downloading | Phase::Handed | Phase::Failed(_) => return None,
         Phase::Ready(path) | Phase::NeedsPermission(path) => {
             let path = path.clone();
             let main = match Finish::current() {
@@ -415,15 +408,8 @@ fn footer(current: &Phase, progress: &Arc<Progress>, phase: State<Phase>) -> Ele
                 main.into_element(),
             ]
         }
-        Phase::Handed | Phase::Failed(_) => {
-            vec![
-                Button::new(tr!("common-close"))
-                    .on_press(|_| close())
-                    .into_element(),
-            ]
-        }
     };
-    SheetFooter::new(buttons).into_element()
+    Some(SheetFooter::new(buttons).into_element())
 }
 
 fn ready_text(path: &std::path::Path) -> String {
