@@ -7,12 +7,10 @@
 use std::borrow::Cow;
 
 use freya::prelude::*;
-use notin_i18n::tr;
 
+use super::dialog_header::{DialogHeader, HeaderAction, HeaderTitle};
 use super::divider::Divider;
 use super::icon::Icon;
-use super::icon_button::IconButton;
-use super::kind_badge::KindBadge;
 use super::lazy::Lazy;
 use super::list_row::strut;
 use super::scroll_content::ScrollContent;
@@ -27,13 +25,13 @@ use crate::width::{WidthClass, width_class};
 /// pinned outside the scroll.
 #[derive(Clone, PartialEq)]
 pub struct Sheet {
-    title: Option<Cow<'static, str>>,
-    /// A title that follows the sheet's content, read on every render.
-    title_state: Option<State<String>>,
+    title: Option<HeaderTitle>,
     subtitle: Option<Cow<'static, str>>,
     kind: Option<(Bytes, Color)>,
     on_back: Option<EventHandler<()>>,
+    actions: Vec<HeaderAction>,
     closable: bool,
+    on_close: Option<EventHandler<()>>,
     width: f32,
     children: Vec<Element>,
     footer: Option<Element>,
@@ -59,11 +57,12 @@ impl Default for Sheet {
     fn default() -> Self {
         Self {
             title: None,
-            title_state: None,
             subtitle: None,
             kind: None,
             on_back: None,
+            actions: Vec::new(),
             closable: true,
+            on_close: None,
             width: size::SHEET_WIDTH,
             children: Vec::new(),
             footer: None,
@@ -76,17 +75,31 @@ impl Default for Sheet {
 impl Sheet {
     #[must_use]
     pub fn titled(title: impl Into<Cow<'static, str>>) -> Self {
-        Self {
-            title: Some(title.into()),
-            ..Self::default()
-        }
+        Self::default().title(title.into())
     }
 
-    /// Title read from `title` on every render, for sheets whose content
-    /// changes what they are about (a tab switch). Wins over [`Self::titled`].
+    /// The header's title: text, a `State<String>` read on every render
+    /// (sheets whose content changes what they are about), an
+    /// [`super::InlineEdit::title`] or any element that follows live data.
+    /// The body never repeats it in a row of its own.
     #[must_use]
-    pub const fn title_state(mut self, title: State<String>) -> Self {
-        self.title_state = Some(title);
+    pub fn title(mut self, title: impl Into<HeaderTitle>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Icon in the header, before the ×, for something done to the sheet
+    /// as a whole. Phones fold more than one behind `⋯`.
+    #[must_use]
+    pub fn action(mut self, action: HeaderAction) -> Self {
+        self.actions.push(action);
+        self
+    }
+
+    /// Run `handler` once the sheet closes, however it closes.
+    #[must_use]
+    pub fn on_close(mut self, handler: impl Into<EventHandler<()>>) -> Self {
+        self.on_close = Some(handler.into());
         self
     }
 
@@ -150,13 +163,17 @@ impl Sheet {
         let compact = width_class().is_compact();
         let dismissable = self.dismissable;
         let width = self.width;
-        let modal = Modal::new(SheetCard {
+        let on_close = self.on_close.clone();
+        let mut modal = Modal::new(SheetCard {
             sheet: self,
             compact,
         })
         .dismiss_on_backdrop(dismissable)
         .dismiss_on_escape(dismissable)
         .backdrop_alpha(128);
+        if let Some(handler) = on_close {
+            modal = modal.on_close(move || handler.call(()));
+        }
         if compact {
             modal.bottom_sheet()
         } else {
@@ -190,53 +207,30 @@ struct SheetCard {
 }
 
 impl SheetCard {
-    /// Back, kind, title and close, when the sheet has any of them.
+    /// Back, kind, title, actions and close, when the sheet has any of
+    /// them.
     #[cfg_attr(feature = "sismo", sismo::function("kit::sheet_header"))]
-    fn header(&self, p: &crate::theme::Palette) -> Option<Rect> {
+    fn header(&self) -> Option<DialogHeader> {
         let sheet = &self.sheet;
-        let on_back = sheet.on_back.clone();
         let has_header = sheet.title.is_some()
-            || sheet.title_state.is_some()
             || sheet.closable
-            || on_back.is_some();
-        let title = sheet.title_state.map_or_else(
-            || sheet.title.clone().unwrap_or_default(),
-            |title| Cow::Owned(title.read().clone()),
-        );
+            || sheet.on_back.is_some()
+            || !sheet.actions.is_empty();
         has_header.then(|| {
-            rect()
-                .width(Size::fill())
-                .height(Size::px(32.0))
-                .horizontal()
-                .cross_align(Alignment::Center)
-                .content(Content::Flex)
-                .spacing(8.0)
-                .maybe_child(on_back.clone().map(|handler| {
-                    IconButton::new(freya::icons::lucide::chevron_left(), tr!("kit-sheet-back"))
-                        .size(32.0)
-                        .on_press(move |_| handler.call(()))
-                }))
-                .maybe_child(
-                    sheet
-                        .kind
-                        .clone()
-                        .map(|(icon, color)| KindBadge::new(icon, color).size(32.0)),
-                )
-                .child(
-                    label()
-                        .text(title)
-                        .font_size(text::TITLE)
-                        .font_weight(FontWeight::BOLD)
-                        .color(p.t1)
-                        .width(Size::flex(1.0))
-                        .max_lines(1)
-                        .text_overflow(TextOverflow::Ellipsis),
-                )
-                .maybe_child(sheet.closable.then(|| {
-                    IconButton::new(freya::icons::lucide::x(), tr!("kit-sheet-close"))
-                        .size(32.0)
-                        .on_press(|_| ModalController::get().close())
-                }))
+            let title = sheet
+                .title
+                .clone()
+                .unwrap_or(HeaderTitle::Text(Cow::Borrowed("")));
+            let mut header = DialogHeader::new(title)
+                .maybe_back(sheet.on_back.clone())
+                .actions(sheet.actions.clone());
+            if let Some((icon, color)) = sheet.kind.clone() {
+                header = header.kind(icon, color);
+            }
+            if !sheet.closable {
+                header = header.without_close();
+            }
+            header
         })
     }
 }
@@ -296,7 +290,7 @@ impl Component for SheetCard {
                             .background(p.line_strong),
                     )
             }))
-            .maybe_child(self.header(&p))
+            .maybe_child(self.header())
             .maybe_child(sheet.subtitle.clone().map(|sub| {
                 label()
                     .text(sub)

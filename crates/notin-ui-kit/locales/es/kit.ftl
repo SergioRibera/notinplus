@@ -31,3 +31,8 @@ kit-sheet-back = Atrás
 kit-sheet-close = Cerrar
 
 kit-color-hex = Hex
+
+kit-more = Más
+kit-edit = Editar
+kit-edit-keep = Guardar
+kit-edit-cancel = Cancelar

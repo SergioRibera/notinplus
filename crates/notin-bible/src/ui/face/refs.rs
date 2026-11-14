@@ -182,7 +182,7 @@ pub(super) fn open_sheet(reader: &Reader, refs: VerseRefs, tab: PanelTab) {
     let mut title = reader.sheet_title;
     title.set(tab_title(tab, &refs));
     Sheet::default()
-        .title_state(title)
+        .title(title)
         .subtitle(refs.count())
         .child(SheetBody {
             reader: reader.clone(),
