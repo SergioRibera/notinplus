@@ -68,6 +68,35 @@ let
     mkdir -p android/app
   '';
 
+  # istmo plugins hand the app their `native/` sources as paths into their
+  # crate. From crates.io the crate is unpacked in the build sandbox, gone
+  # once it is built: keep a copy of the source in the output and point the
+  # exported paths at it (nix/cross-crates.nix does this for git sources,
+  # already in the store).
+  keepNativeSources =
+    lib.genAttrs
+      [
+        "istmo-camera"
+        "istmo-data-store"
+        "istmo-file-picker"
+        "istmo-opener"
+        "istmo-pen"
+        "istmo-share"
+      ]
+      (
+        name: attrs:
+        (perCrate.crateOverrides.${name} or (_: { })) attrs
+        // {
+          postInstall = (attrs.postInstall or "") + ''
+            if [ -f "$lib/env" ] && [ ! -d "$src" ]; then
+              mkdir -p "$lib/source"
+              tar -xzf "$src" -C "$lib/source" --strip-components=1
+              sed -i "s|$NIX_BUILD_TOP/$sourceRoot|$lib/source|g" "$lib/env"
+            fi
+          '';
+        }
+      );
+
   mkAbi =
     abi:
     {
@@ -127,26 +156,29 @@ let
           JAVA_HOME = pkgs.jdk17.home;
         };
         nativeBuildInputs = [ pkgs.jdk17 ];
-        crateOverrides = perCrate.crateOverrides // {
-          freya-skia-bindings = _: {
-            SKIA_BINARIES_URL = "file://${skia}/skia-binaries-{key}.tar.gz";
-          };
-          # nixpkgs links the build machine's zstd; Android compiles the bundled one.
-          zstd-sys = _: { };
-          notinplus =
-            attrs:
-            perCrate.crateOverrides.notinplus attrs
-            // {
-              # The `.so` the app loads; the rlib and staticlib are unused here.
-              type = [ "cdylib" ];
-              preConfigure = withAndroidDir;
-              # What the build script generated for Gradle.
-              postInstall = ''
-                cp -r android $out/android
-                echo "$PWD" > $out/android/.build-root
-              '';
+        crateOverrides =
+          perCrate.crateOverrides
+          // keepNativeSources
+          // {
+            freya-skia-bindings = _: {
+              SKIA_BINARIES_URL = "file://${skia}/skia-binaries-{key}.tar.gz";
             };
-        };
+            # nixpkgs links the build machine's zstd; Android compiles the bundled one.
+            zstd-sys = _: { };
+            notinplus =
+              attrs:
+              perCrate.crateOverrides.notinplus attrs
+              // {
+                # The `.so` the app loads; the rlib and staticlib are unused here.
+                type = [ "cdylib" ];
+                preConfigure = withAndroidDir;
+                # What the build script generated for Gradle.
+                postInstall = ''
+                  cp -r android $out/android
+                  echo "$PWD" > $out/android/.build-root
+                '';
+              };
+          };
         buildRustCrateForBuild = perCrate.buildRustCrateForPkgs;
         desktopCrate = perCrate.crate;
       };
