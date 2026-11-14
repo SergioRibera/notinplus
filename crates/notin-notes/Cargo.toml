@@ -1,6 +1,6 @@
 [package]
 name = "notin-notes"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 edition = "2024"
 rust-version = "1.86"
 license = "MIT OR Apache-2.0"
@@ -28,9 +28,9 @@ sismo = ["dep:sismo"]
 [dependencies]
 # Spans for the sismo profiler; off unless an app turns it on.
 sismo = { version = "0.1.1", default-features = false, optional = true }
-notin-sdk = { version = "0.1.0-alpha.3", path = "../notin-sdk" }
-freya-markdown-editor = { version = "0.1.0-alpha.3", path = "../freya-markdown-editor", default-features = false, features = ["toolbar"] }
-notin-ui-kit = { version = "0.1.0-alpha.3", path = "../notin-ui-kit" }
+notin-sdk = { version = "0.1.0-alpha.4", path = "../notin-sdk" }
+freya-markdown-editor = { version = "0.1.0-alpha.4", path = "../freya-markdown-editor", default-features = false, features = ["toolbar"] }
+notin-ui-kit = { version = "0.1.0-alpha.4", path = "../notin-ui-kit" }
 async-io = "2"
 log = "0.4"
 freya = { version = "=0.5.0-rc.13", features = ["icons", "icons-lucide"] }
@@ -40,7 +40,7 @@ wincode = { version = "0.6", default-features = false, features = ["derive", "st
 
 [dev-dependencies]
 freya-testing = "=0.5.0-rc.13"
-freya-markdown-editor = { version = "0.1.0-alpha.3", path = "../freya-markdown-editor" }
+freya-markdown-editor = { version = "0.1.0-alpha.4", path = "../freya-markdown-editor" }
 
 [build-dependencies]
-notin-i18n = { version = "0.1.0-alpha.3", path = "../notin-i18n", features = ["build"] }
+notin-i18n = { version = "0.1.0-alpha.4", path = "../notin-i18n", features = ["build"] }

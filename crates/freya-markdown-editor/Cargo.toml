@@ -1,6 +1,6 @@
 [package]
 name = "freya-markdown-editor"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -25,10 +25,10 @@ freya-core = "=0.5.0-rc.13"
 freya-edit = "=0.5.0-rc.13"
 freya-engine = "=0.5.0-rc.13"
 comrak = { version = "0.56", default-features = false, features = ["attributes"] }
-notin-i18n = { version = "0.1.0-alpha.3", path = "../notin-i18n" }
+notin-i18n = { version = "0.1.0-alpha.4", path = "../notin-i18n" }
 
 [build-dependencies]
-notin-i18n = { version = "0.1.0-alpha.3", path = "../notin-i18n", features = ["build"] }
+notin-i18n = { version = "0.1.0-alpha.4", path = "../notin-i18n", features = ["build"] }
 
 [lints.rust]
 missing_debug_implementations = "warn"
