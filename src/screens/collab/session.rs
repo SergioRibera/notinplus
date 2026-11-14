@@ -8,9 +8,9 @@ use freya::prelude::*;
 use notin_sync::{DeviceId, Member, Role, ShareId, ShareMode};
 use notin_ui_kit::theme::palette;
 use notin_ui_kit::{
-    Action, ActionEntry, ActionList, Avatar, Button, ButtonVariant, Group, Icon, Leading, ListRow,
-    ModalController, Notice, NoticeTone, SearchField, Section, Segmented, Sheet, SheetFooter, Tag,
-    Text, TextField, TextRole, Trailing, tokens,
+    Action, ActionEntry, ActionList, Avatar, Button, ButtonVariant, Group, HeaderTitle, Icon,
+    InlineEdit, Leading, ListRow, ModalController, Notice, NoticeTone, SearchField, Section,
+    Segmented, Sheet, SheetFooter, Tag, Text, TextRole, Trailing, tokens,
 };
 
 use notin_i18n::tr;
@@ -29,16 +29,11 @@ const QR: f32 = 136.0;
 #[sismo::function("collab::session")]
 pub fn session(id: ShareId) {
     sismo::marker("sheet: session");
-    let renaming = State::create_in_scope(false, ScopeId::ROOT);
-    let draft = State::create_in_scope(String::new(), ScopeId::ROOT);
     Sheet::default()
+        .title(HeaderTitle::element(SessionTitle { id }))
         .width(600.0)
         .sticky()
-        .child(SessionSheet {
-            id,
-            renaming,
-            draft,
-        })
+        .child(SessionSheet { id })
         .footer(SessionFooter { id })
         .open();
 }
@@ -56,18 +51,32 @@ pub fn session_for(docs: &[ItemId]) {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SessionSheet {
     id: ShareId,
-    renaming: State<bool>,
-    draft: State<String>,
 }
 
-impl std::fmt::Debug for SessionSheet {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SessionSheet")
-            .field("id", &self.id)
-            .finish_non_exhaustive()
+/// The session's name in the sheet header, renamed in place by those
+/// who may.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SessionTitle {
+    id: ShareId,
+}
+
+impl Component for SessionTitle {
+    #[sismo::function("collab::render_session_title")]
+    fn render(&self) -> impl IntoElement {
+        let snapshot = crate::sync::use_sync().read().clone();
+        let Some(view) = snapshot.shares.iter().find(|s| s.id == self.id) else {
+            return rect().into_element();
+        };
+        let id = view.id;
+        InlineEdit::title(view.title.clone(), move |text: String| {
+            crate::sync::rename_share(id, text);
+        })
+        .edit_label(tr!("common-rename"))
+        .enabled(view.can_rename)
+        .into_element()
     }
 }
 
@@ -152,54 +161,6 @@ fn approve_sheet(view: &ShareView, member: &Member) {
 }
 
 impl SessionSheet {
-    /// Title, with renaming in place for those who may.
-    #[sismo::function("collab::session_header")]
-    fn header(&self, view: &ShareView) -> Element {
-        use freya::icons::lucide;
-        let p = palette();
-        let id = view.id;
-        let mut renaming = self.renaming;
-        let draft = self.draft;
-        if *renaming.read() {
-            return TextField::new(draft)
-                .placeholder(view.title.clone())
-                .on_submit(move |text: String| {
-                    crate::sync::rename_share(id, text);
-                    renaming.set(false);
-                })
-                .on_blur(move |()| renaming.set(false))
-                .into_element();
-        }
-        let title = view.title.clone();
-        rect()
-            .width(Size::fill())
-            .horizontal()
-            .cross_align(Alignment::Center)
-            .content(Content::Flex)
-            .spacing(8.0)
-            .child(
-                Text::new(view.title.clone())
-                    .role(TextRole::Title)
-                    .lines(2)
-                    .fill(),
-            )
-            .maybe_child(view.can_rename.then(|| {
-                notin_ui_kit::IconButton::new(lucide::pencil_line(), tr!("common-rename")).on_press(
-                    move |_| {
-                        let mut draft = draft;
-                        draft.set(title.clone());
-                        renaming.set(true);
-                    },
-                )
-            }))
-            .child(
-                notin_ui_kit::IconButton::new(lucide::x(), tr!("common-close"))
-                    .on_press(|_| ModalController::get().close()),
-            )
-            .maybe(false, |r| r.background(p.bg))
-            .into_element()
-    }
-
     #[sismo::function("collab::session_tags")]
     fn tags(view: &ShareView, snapshot: &SyncSnapshot) -> Element {
         let p = palette();
@@ -207,6 +168,8 @@ impl SessionSheet {
             .width(Size::fill())
             .horizontal()
             .spacing(6.0)
+            // Phones run out of width before the tags do.
+            .content(Content::wrap_spacing(6.0))
             .child(super::sessions::state_tag(view, snapshot))
             .child(Tag::new(if view.folder.is_some() {
                 tr!("collab-kind-folder")
@@ -236,6 +199,58 @@ impl SessionSheet {
         let link = view.invite_link.clone();
         let copy = link.clone();
         let roles = [Role::Viewer, Role::Editor, Role::CoOrganizer];
+        let entry = label_and_control(
+            tr!("collab-entry-role"),
+            Segmented::new(
+                roles.map(super::role_label),
+                roles
+                    .iter()
+                    .position(|r| *r == view.entry_role)
+                    .unwrap_or(1),
+            )
+            .on_select(move |i: usize| {
+                crate::sync::set_entry_role(id, roles[i]);
+            }),
+        );
+        let hints = rect()
+            .width(Size::fill())
+            .spacing(8.0)
+            .child(Text::new(tr!("collab-invitation-hint")).role(TextRole::Hint))
+            // No relay in the link: guests have to be nearby.
+            .maybe_child(
+                (!view.invite_relayed)
+                    .then(|| Text::new(tr!("collab-invitation-lan-only")).role(TextRole::Meta)),
+            );
+        // Beside the QR on wide sheets; under it on phones, where the
+        // column next to the QR is too narrow for the roles.
+        let compact = notin_ui_kit::width_class().is_compact();
+        let mut column = rect()
+            .width(Size::flex(1.0))
+            .spacing(8.0)
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .padding((8.0, 10.0))
+                    .corner_radius(tokens::radius::SM)
+                    .background(p.s2)
+                    .child(Text::new(link.clone()).role(TextRole::Hint).lines(2)),
+            )
+            .child(
+                rect().horizontal().spacing(8.0).child(
+                    Button::new(tr!("collab-copy-link"))
+                        .tonal()
+                        .small()
+                        .icon(lucide::copy())
+                        .on_press(move |_| super::copy_link(&copy)),
+                ),
+            );
+        let mut below = Vec::new();
+        if compact {
+            below.push(entry.into_element());
+            below.push(hints.into_element());
+        } else {
+            column = column.child(entry).child(hints);
+        }
         Section::new(tr!("collab-invitation"))
             .child(
                 rect()
@@ -256,61 +271,9 @@ impl SessionSheet {
                                     .height(Size::px(QR - 12.0)),
                             )
                     }))
-                    .child(
-                        rect()
-                            .width(Size::flex(1.0))
-                            .spacing(8.0)
-                            .child(
-                                rect()
-                                    .width(Size::fill())
-                                    .padding((8.0, 10.0))
-                                    .corner_radius(tokens::radius::SM)
-                                    .background(p.s2)
-                                    .child(Text::new(link.clone()).role(TextRole::Hint).lines(2)),
-                            )
-                            .child(
-                                rect().horizontal().spacing(8.0).child(
-                                    Button::new(tr!("collab-copy-link"))
-                                        .tonal()
-                                        .small()
-                                        .icon(lucide::copy())
-                                        .on_press(move |_| super::copy_link(&copy)),
-                                ),
-                            )
-                            .child(
-                                rect()
-                                    .width(Size::fill())
-                                    .horizontal()
-                                    .cross_align(Alignment::Center)
-                                    .content(Content::Flex)
-                                    .spacing(8.0)
-                                    .child(
-                                        Text::new(tr!("collab-entry-role"))
-                                            .role(TextRole::Strong)
-                                            .fill(),
-                                    )
-                                    .child(
-                                        Segmented::new(
-                                            roles.map(super::role_label),
-                                            roles
-                                                .iter()
-                                                .position(|r| *r == view.entry_role)
-                                                .unwrap_or(1),
-                                        )
-                                        .on_select(
-                                            move |i: usize| {
-                                                crate::sync::set_entry_role(id, roles[i]);
-                                            },
-                                        ),
-                                    ),
-                            )
-                            .child(Text::new(tr!("collab-invitation-hint")).role(TextRole::Hint))
-                            // No relay in the link: guests have to be nearby.
-                            .maybe_child((!view.invite_relayed).then(|| {
-                                Text::new(tr!("collab-invitation-lan-only")).role(TextRole::Meta)
-                            })),
-                    ),
+                    .child(column),
             )
+            .children(below)
             .into_element()
     }
 
@@ -329,20 +292,17 @@ impl SessionSheet {
                         }),
                     }),
             )
-            .child(
+            .child(row_with_choice(
                 ListRow::new(tr!("collab-who-adds-docs"))
-                    .subtitle(tr!("collab-who-adds-docs-hint"))
-                    .trailing(Trailing::Element(
-                        Segmented::new(
-                            [tr!("collab-adds-organizers"), tr!("collab-adds-editors")],
-                            usize::from(view.editors_add_docs),
-                        )
-                        .on_select(move |i: usize| {
-                            crate::sync::set_editors_add_docs(id, i == 1);
-                        })
-                        .into_element(),
-                    )),
-            )
+                    .subtitle(tr!("collab-who-adds-docs-hint")),
+                Segmented::new(
+                    [tr!("collab-adds-organizers"), tr!("collab-adds-editors")],
+                    usize::from(view.editors_add_docs),
+                )
+                .on_select(move |i: usize| {
+                    crate::sync::set_editors_add_docs(id, i == 1);
+                }),
+            ))
             .into_element()
     }
 
@@ -548,7 +508,6 @@ impl Component for SessionSheet {
         rect()
             .width(Size::fill())
             .spacing(18.0)
-            .child(self.header(&view))
             .child(Self::tags(&view, &snapshot))
             .child(Text::new(Self::status(&view)).role(TextRole::Meta))
             .maybe_child(view.paused().then(|| {
@@ -583,15 +542,14 @@ impl Component for SessionFooter {
             return rect().into_element();
         };
         let id = view.id;
-        let done = Button::new(tr!("common-done"))
-            .primary()
-            .on_press(|_| ModalController::get().close())
-            .into_element();
+        // The way out sits on the left; the header × closes.
         if view.is_owner {
-            return SheetFooter::new([end_button(id, view.mode, confirming), done]).into_element();
+            return SheetFooter::new([])
+                .leading(end_button(id, view.mode, confirming))
+                .into_element();
         }
         let leave = leave_button(&view, confirming);
-        let mut buttons = vec![leave];
+        let mut buttons = Vec::new();
         if view.paused() {
             let end = SessionEnd {
                 title: view.title,
@@ -609,8 +567,7 @@ impl Component for SessionFooter {
                     .into_element(),
             );
         }
-        buttons.push(done);
-        SheetFooter::new(buttons).into_element()
+        SheetFooter::new(buttons).leading(leave).into_element()
     }
 }
 
@@ -753,4 +710,44 @@ impl Component for AddDocs {
             .child(Icon::new(freya::icons::lucide::info()).size(0.0))
             .into_element()
     }
+}
+
+/// A label and its control on one line, or the control under the label
+/// on phones, where both do not fit side by side.
+fn label_and_control(label: String, control: Segmented) -> Element {
+    if notin_ui_kit::width_class().is_compact() {
+        return rect()
+            .width(Size::fill())
+            .spacing(8.0)
+            .child(Text::new(label).role(TextRole::Strong))
+            .child(control.full_width())
+            .into_element();
+    }
+    rect()
+        .width(Size::fill())
+        .horizontal()
+        .cross_align(Alignment::Center)
+        .content(Content::Flex)
+        .spacing(8.0)
+        .child(Text::new(label).role(TextRole::Strong).fill())
+        .child(control)
+        .into_element()
+}
+
+/// A settings row with a choice at its end, or under it on phones.
+fn row_with_choice(row: ListRow, choice: Segmented) -> Element {
+    if notin_ui_kit::width_class().is_compact() {
+        return rect()
+            .width(Size::fill())
+            .child(row)
+            .child(
+                rect()
+                    .width(Size::fill())
+                    .padding((0.0, 12.0, 10.0, 12.0))
+                    .child(choice.full_width()),
+            )
+            .into_element();
+    }
+    row.trailing(Trailing::Element(choice.into_element()))
+        .into_element()
 }

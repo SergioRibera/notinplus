@@ -20,16 +20,12 @@ pub fn sessions() {
         .width(600.0)
         .sticky()
         .child(Sessions)
-        .footer(SheetFooter::new([
-            Button::new(tr!("settings-devices-scan-or-paste"))
-                .tonal()
-                .on_press(|_| crate::screens::settings::open_link_sheet())
-                .into_element(),
-            Button::new(tr!("common-done"))
-                .primary()
-                .on_press(|_| ModalController::get().close())
-                .into_element(),
-        ]))
+        .footer(SheetFooter::new([Button::new(tr!(
+            "settings-devices-scan-or-paste"
+        ))
+        .tonal()
+        .on_press(|_| crate::screens::settings::open_link_sheet())
+        .into_element()]))
         .open();
 }
 
