@@ -15,7 +15,7 @@ mod sessions;
 use freya::prelude::*;
 use notin_ui_kit::theme::palette;
 use notin_ui_kit::{
-    IconButton, ListRow, Modal, ModalController, SearchField, Text, TextRole, tokens, width_class,
+    DialogHeader, ListRow, Modal, ModalController, SearchField, Text, TextRole, tokens, width_class,
 };
 
 use notin_i18n::tr;
@@ -200,33 +200,24 @@ fn phone_layout(
     mut sub: State<Option<Subpage>>,
     list: Rect,
 ) -> Element {
-    use freya::icons::lucide;
     let size = *Platform::get().current_window().root_size.read();
     let insets = *crate::hooks::use_safe_area_insets().read();
     let header = |title: String, back: bool| {
+        let back = back.then(|| {
+            EventHandler::new(move |()| {
+                if sub.peek().is_some() {
+                    sub.set(None);
+                } else {
+                    open.set(None);
+                }
+            })
+        });
         rect()
             .width(Size::fill())
             .height(Size::px(tokens::size::BAR))
-            .horizontal()
             .cross_align(Alignment::Center)
-            .content(Content::Flex)
-            .spacing(4.0)
-            .child(if back {
-                IconButton::new(lucide::arrow_left(), tr!("settings-back"))
-                    .on_press(move |_| {
-                        if sub.peek().is_some() {
-                            sub.set(None);
-                        } else {
-                            open.set(None);
-                        }
-                    })
-                    .into_element()
-            } else {
-                IconButton::new(lucide::x(), tr!("common-close"))
-                    .on_press(|_| ModalController::get().close())
-                    .into_element()
-            })
-            .child(Text::new(title).role(TextRole::Title).fill())
+            .main_align(Alignment::Center)
+            .child(DialogHeader::new(title).maybe_back(back))
     };
     let page = sub.read().clone();
     let (head, content) = open.read().map_or_else(
@@ -324,21 +315,12 @@ fn wide_layout(section: Section, mut sub: State<Option<Subpage>>, list: Rect) ->
                         .width(Size::fill())
                         .height(Size::px(tokens::size::BAR))
                         .padding((0.0, 12.0, 0.0, 24.0))
-                        .horizontal()
-                        .cross_align(Alignment::Center)
-                        .content(Content::Flex)
-                        .spacing(4.0)
-                        .maybe_child(page.is_some().then(|| {
-                            IconButton::new(
-                                freya::icons::lucide::arrow_left(),
-                                tr!("settings-back"),
-                            )
-                            .on_press(move |_| sub.set(None))
-                        }))
-                        .child(Text::new(title).role(TextRole::Title).fill())
+                        .main_align(Alignment::Center)
                         .child(
-                            IconButton::new(freya::icons::lucide::x(), tr!("common-close"))
-                                .on_press(|_| ModalController::get().close()),
+                            DialogHeader::new(title).maybe_back(
+                                page.is_some()
+                                    .then(|| EventHandler::new(move |()| sub.set(None))),
+                            ),
                         ),
                 )
                 .child(

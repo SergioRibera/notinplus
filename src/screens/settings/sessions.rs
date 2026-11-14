@@ -2,7 +2,7 @@
 //! invitation does, and the lasting shares this device is in.
 
 use freya::prelude::*;
-use notin_ui_kit::{Group, ListRow, Segmented, Text, TextField, TextRole, Trailing};
+use notin_ui_kit::{Group, InlineEdit, ListRow, Segmented, Text, TextRole, Trailing};
 
 use notin_i18n::tr;
 use notin_sync::ShareMode;
@@ -14,43 +14,21 @@ use crate::sync::ShareView;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Sessions;
 
-/// The name row: shown, or being typed.
+/// The name other people see, changed in place. Cleared, the device
+/// name stands in for it.
 #[sismo::function("settings::sessions_name_row")]
-fn name_row(
-    snapshot: &crate::sync::SyncSnapshot,
-    mut editing: State<bool>,
-    draft: State<String>,
-) -> ListRow {
+fn name_row(snapshot: &crate::sync::SyncSnapshot) -> InlineEdit {
     use freya::icons::lucide;
-    let shown = snapshot
-        .user_name
-        .clone()
-        .unwrap_or_else(|| snapshot.name.clone());
-    if *editing.read() {
-        let field = TextField::new(draft)
-            .placeholder(snapshot.name.clone())
-            .on_submit(move |text: String| {
-                crate::sync::set_user_name(Some(text));
-                editing.set(false);
-            })
-            .on_blur(move |()| editing.set(false));
-        return ListRow::new(tr!("settings-sessions-name"))
-            .subtitle(tr!("settings-sessions-name-hint", "device" => snapshot.name.as_str()))
-            .trailing(Trailing::Element(field.into_element()));
-    }
-    ListRow::new(shown)
-        .icon(lucide::user_round())
-        .subtitle(tr!("settings-sessions-name-hint", "device" => snapshot.name.as_str()))
-        .trailing(Trailing::Text(tr!("common-change").into()))
-        .on_press(move |_| {
-            let mut draft = draft;
-            draft.set(snapshot_user_name());
-            editing.set(true);
-        })
-}
-
-fn snapshot_user_name() -> String {
-    crate::sync::snapshot().user_name.unwrap_or_default()
+    InlineEdit::row(
+        tr!("settings-sessions-name"),
+        snapshot.user_name.clone().unwrap_or_default(),
+        |text: String| crate::sync::set_user_name((!text.is_empty()).then_some(text)),
+    )
+    .placeholder(snapshot.name.clone())
+    .edit_label(tr!("common-change"))
+    .allow_empty()
+    .icon(lucide::user_round())
+    .hint(tr!("settings-sessions-name-hint", "device" => snapshot.name.as_str()))
 }
 
 /// One lasting share, as a row that opens its session sheet.
@@ -91,8 +69,6 @@ impl Component for Sessions {
         let snapshot = crate::sync::use_sync().read().clone();
         let mut store = SettingsStore::get();
         let settings = store.read().sessions;
-        let editing = use_state(|| false);
-        let draft = use_state(String::new);
         let lasting: Vec<Element> = snapshot
             .shares
             .iter()
@@ -108,7 +84,7 @@ impl Component for Sessions {
             .spacing(24.0)
             .child(
                 notin_ui_kit::Section::new(tr!("settings-sessions-you"))
-                    .child(Group::default().child(name_row(&snapshot, editing, draft))),
+                    .child(Group::default().child(name_row(&snapshot))),
             )
             .child(
                 notin_ui_kit::Section::new(tr!("settings-sessions-defaults")).child(

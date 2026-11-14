@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use freya::prelude::*;
 use notin_ui_kit::theme::palette;
 use notin_ui_kit::{
-    Button, ButtonVariant, Group, Icon, IconButton, ListRow, ModalController, Notice, NoticeTone,
-    Section, Segmented, Sheet, SheetFooter, Text, TextField, TextRole, Trailing, tokens,
+    Button, ButtonVariant, Group, Icon, InlineEdit, ListRow, ModalController, Notice, NoticeTone,
+    Section, Segmented, Sheet, Text, TextField, TextRole, Trailing, tokens,
 };
 
 use notin_i18n::tr;
@@ -40,79 +40,20 @@ fn qr_svg(text: &str) -> Option<Bytes> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Devices;
 
-/// A row being edited in place: a field and Save. Leaving the field
-/// saves too, and the row goes back to reading.
-#[sismo::function("settings::devices_edit_row")]
-fn edit_row(
-    title: String,
-    icon: Bytes,
-    field: TextField,
-    text: State<String>,
-    width: f32,
-    mut save: impl FnMut(String) + Clone + 'static,
-) -> ListRow {
-    let mut save_typed = save.clone();
-    let mut save_left = save.clone();
-    let field = field
-        .auto_focus(true)
-        .on_submit(move |typed: String| save_typed(typed))
-        .on_blur(move |()| save_left(text.peek().clone()));
-    ListRow::new(title).icon(icon).trailing(Trailing::Element(
-        rect()
-            .horizontal()
-            .cross_align(Alignment::Center)
-            .spacing(6.0)
-            .child(rect().width(Size::px(width)).child(field))
-            .child(
-                Button::new(tr!("common-save"))
-                    .primary()
-                    .small()
-                    .on_press(move |_| save(text.peek().clone())),
-            )
-            .into_element(),
-    ))
-}
-
 /// This device's name, renamed in place.
 #[sismo::function("settings::devices_this_device")]
-fn this_device(snapshot: &SyncSnapshot, mut renaming: State<bool>, name: State<String>) -> ListRow {
+fn this_device(snapshot: &SyncSnapshot) -> InlineEdit {
     use freya::icons::lucide;
-    if renaming() {
-        let before = snapshot.name.clone();
-        return edit_row(
-            tr!("settings-devices-this-device"),
-            lucide::monitor_smartphone(),
-            TextField::new(name).max_len(40),
-            name,
-            200.0,
-            move |text: String| {
-                let text = text.trim();
-                if !text.is_empty() && text != before {
-                    crate::sync::set_device_name(text);
-                }
-                renaming.set(false);
-            },
-        );
-    }
-    let current = snapshot.name.clone();
-    ListRow::new(if snapshot.name.is_empty() {
-        tr!("settings-devices-this-device")
-    } else {
-        snapshot.name.clone()
-    })
-    .subtitle(tr!("settings-devices-this-device-hint"))
+    InlineEdit::row(
+        tr!("settings-devices-this-device"),
+        snapshot.name.clone(),
+        |text: String| crate::sync::set_device_name(text),
+    )
+    .placeholder(tr!("settings-devices-this-device"))
+    .edit_label(tr!("common-rename"))
+    .max_len(40)
     .icon(lucide::monitor_smartphone())
-    .trailing(Trailing::Element(
-        Button::new(tr!("common-rename"))
-            .ghost()
-            .small()
-            .on_press(move |_| {
-                let mut name = name;
-                name.set(current.clone());
-                renaming.set(true);
-            })
-            .into_element(),
-    ))
+    .hint(tr!("settings-devices-this-device-hint"))
 }
 
 /// A linked device; Remove asks for a second tap.
@@ -174,60 +115,45 @@ fn linked_device(
         .into_element()
 }
 
-/// The relay server, edited in place.
+/// The relay server, changed in place.
 #[sismo::function("settings::devices_server_row")]
-fn server_row(snapshot: &SyncSnapshot, mut editing: State<bool>, server: State<String>) -> ListRow {
+fn server_row(snapshot: &SyncSnapshot) -> InlineEdit {
     use freya::icons::lucide;
-    if editing() {
-        let before = snapshot.relay.clone();
-        return edit_row(
-            tr!("settings-devices-server"),
-            lucide::server(),
-            TextField::new(server).placeholder(tr!("settings-devices-server-placeholder")),
-            server,
-            240.0,
-            move |text: String| {
-                let text = text.trim().to_owned();
-                let relay = (!text.is_empty()).then_some(text);
-                if relay != before {
-                    crate::sync::set_relay(relay);
-                }
-                editing.set(false);
-            },
-        );
-    }
     let relay = snapshot.relay.clone();
-    let current = relay.clone().unwrap_or_default();
     // The key after the host is for the device, not for reading.
     let host = relay
         .as_deref()
         .map(|addr| addr.rsplit_once('/').map_or(addr, |(host, _)| host));
-    ListRow::new(tr!("settings-devices-server"))
-        .subtitle(match (host, snapshot.relay_failure) {
-            (Some(address), _) if snapshot.relay_online => {
-                tr!("settings-devices-server-online", "address" => address)
+    let status = match (host, snapshot.relay_failure) {
+        (Some(address), _) if snapshot.relay_online => {
+            tr!("settings-devices-server-online", "address" => address)
+        }
+        (Some(address), Some(notin_sync::RelayFailure::Unresolved)) => {
+            tr!("settings-devices-server-unresolved", "address" => address)
+        }
+        (Some(address), Some(notin_sync::RelayFailure::NoAnswer)) => {
+            tr!("settings-devices-server-no-answer", "address" => address)
+        }
+        (Some(address), None) => tr!("settings-devices-server-offline", "address" => address),
+        (None, _) => tr!("settings-devices-server-none"),
+    };
+    let before = relay.clone();
+    InlineEdit::row(
+        tr!("settings-devices-server"),
+        relay.unwrap_or_default(),
+        move |text: String| {
+            let relay = (!text.is_empty()).then_some(text);
+            if relay != before {
+                crate::sync::set_relay(relay);
             }
-            (Some(address), Some(notin_sync::RelayFailure::Unresolved)) => {
-                tr!("settings-devices-server-unresolved", "address" => address)
-            }
-            (Some(address), Some(notin_sync::RelayFailure::NoAnswer)) => {
-                tr!("settings-devices-server-no-answer", "address" => address)
-            }
-            (Some(address), None) => tr!("settings-devices-server-offline", "address" => address),
-            (None, _) => tr!("settings-devices-server-none"),
-        })
-        .icon(lucide::server())
-        .trailing(Trailing::Element(
-            Button::new(tr!("settings-devices-change"))
-                .ghost()
-                .small()
-                .on_press(move |_| {
-                    let mut server = server;
-                    server.set(current.clone());
-                    editing.set(true);
-                })
-                .into_element(),
-        ))
+        },
+    )
+    .shown_as(tr!("settings-devices-server"))
+    .placeholder(tr!("settings-devices-server-placeholder"))
+    .edit_label(tr!("settings-devices-change"))
+    .allow_empty()
+    .icon(lucide::server())
+    .hint(status)
 }
 
 impl Component for Devices {
@@ -235,11 +161,7 @@ impl Component for Devices {
     fn render(&self) -> impl IntoElement {
         use freya::icons::lucide;
         let snapshot = crate::sync::use_sync().read().clone();
-        let renaming = use_state(|| false);
-        let name = use_state(String::new);
         let confirm = use_state(|| None::<(String, Instant)>);
-        let editing_server = use_state(|| false);
-        let server = use_state(String::new);
         let linked: Vec<Element> = snapshot
             .trusted
             .iter()
@@ -249,7 +171,7 @@ impl Component for Devices {
         rect()
             .width(Size::fill())
             .spacing(24.0)
-            .child(Group::default().child(this_device(&snapshot, renaming, name)))
+            .child(Group::default().child(this_device(&snapshot)))
             .child(
                 Section::new(tr!("settings-devices-linked"))
                     .maybe_child(none_linked.then(|| {
@@ -274,7 +196,7 @@ impl Component for Devices {
             )
             .child(
                 Section::new(tr!("settings-devices-sync"))
-                    .child(Group::default().child(server_row(&snapshot, editing_server, server))),
+                    .child(Group::default().child(server_row(&snapshot))),
             )
             .maybe_child(
                 snapshot
@@ -290,13 +212,11 @@ impl Component for Devices {
 #[sismo::function("settings::devices_open_pairing")]
 pub fn open_pairing() {
     crate::sync::begin_pairing();
-    ModalController::get().push(
-        notin_ui_kit::Modal::new(Pairing)
-            .center()
-            .width(460.0)
-            .dismiss_on_backdrop(true)
-            .on_close(crate::sync::cancel_pairing),
-    );
+    Sheet::titled(tr!("settings-devices-pairing-title"))
+        .width(tokens::size::SHEET_WIDTH_SM)
+        .on_close(|()| crate::sync::cancel_pairing())
+        .child(Pairing)
+        .push();
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -356,19 +276,7 @@ impl Component for Pairing {
         };
         rect()
             .width(Size::fill())
-            .padding(20.0)
             .spacing(16.0)
-            .background(p.s2)
-            .border(
-                Border::new()
-                    .fill(p.line_strong)
-                    .width(1.0)
-                    .alignment(BorderAlignment::Inner),
-            )
-            .corner_radius(tokens::radius::SHEET)
-            .shadow(Shadow::new().y(16.0).blur(48.0).color(p.shadow))
-            .a11y_role(AccessibilityRole::Dialog)
-            .child(pairing_header())
             .maybe_child((!paired).then(|| {
                 Segmented::new(
                     [
@@ -381,45 +289,7 @@ impl Component for Pairing {
                 .on_select(move |i: usize| tab.set(i))
             }))
             .child(body)
-            .child(
-                rect()
-                    .width(Size::fill())
-                    .horizontal()
-                    .main_align(Alignment::End)
-                    .child(
-                        Button::new(if paired {
-                            tr!("common-done")
-                        } else {
-                            tr!("common-cancel")
-                        })
-                        .variant(if paired {
-                            ButtonVariant::Primary
-                        } else {
-                            ButtonVariant::Ghost
-                        })
-                        .on_press(|_| ModalController::get().close()),
-                    ),
-            )
     }
-}
-
-/// The Link device modal's title row, with its close button.
-#[sismo::function("settings::devices_pairing_header")]
-fn pairing_header() -> Rect {
-    rect()
-        .width(Size::fill())
-        .horizontal()
-        .cross_align(Alignment::Center)
-        .content(Content::Flex)
-        .child(
-            Text::new(tr!("settings-devices-pairing-title"))
-                .role(TextRole::Title)
-                .fill(),
-        )
-        .child(
-            IconButton::new(freya::icons::lucide::x(), tr!("common-close"))
-                .on_press(|_| ModalController::get().close()),
-        )
 }
 
 #[sismo::function("settings::devices_show_code")]
@@ -806,9 +676,5 @@ impl Component for LinkSheet {
                 Notice::new(NoticeTone::Danger, tr!("settings-devices-link-unknown"))
                     .detail(tr!("settings-devices-link-unknown-hint"))
             }))
-            .child(SheetFooter::new([Button::new(tr!("common-close"))
-                .ghost()
-                .on_press(|_| ModalController::get().close())
-                .into_element()]))
     }
 }
