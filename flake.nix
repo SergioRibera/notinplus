@@ -66,9 +66,9 @@
           summary = "Crossplatform note-taking app with handwriting and PDF annotation";
           homepage = "https://github.com/SergioRibera/notinplus";
           bundleId = "rs.sergioribera.notinplus";
-          minimumSystemVersion = "11.0";
+          macos.minimumSystemVersion = "11.0";
           # Pinned so every future MSI upgrades the previous install.
-          msiUpgradeCode = "19BFE419-C3D3-4DB6-BE04-BD4324279A4A";
+          windows.upgradeCode = "19BFE419-C3D3-4DB6-BE04-BD4324279A4A";
           downloadUrl = "https://github.com/SergioRibera/notinplus/releases/download/v${version}";
           # Same table istmo-build turns into Android intent filters and iOS
           # document types, so the platforms never disagree.
