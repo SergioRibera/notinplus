@@ -20,11 +20,12 @@ options:
   defaultConfig: Debug
 
 packages:
-  # Local istmo checkout — the SPM manifest lives at the repo root and
-  # exposes `IstmoRuntime` from `runtime/ios/Sources/IstmoRuntime`.
-  # Swap for `url:` + `from:` once a runtime version is tagged.
+  # The SPM manifest lives at the istmo repo root and exposes
+  # `IstmoRuntime`. Same version as the istmo crates; a pre-release tag
+  # only resolves with an exact version.
   IstmoRuntime:
-    path: ../../istmo
+    url: https://github.com/SergioRibera/istmo
+    exactVersion: 0.1.1-alpha.6
 
 settings:
   base:
