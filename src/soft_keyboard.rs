@@ -42,7 +42,8 @@ pub fn show_soon() {
 mod android {
     pub(super) fn show() {
         let shown = istmo::plugins::SafeArea::acquire()
-            .is_ok_and(|safe_area| safe_area.current_or_zero().ime.bottom > 0.0);
+            .and_then(|safe_area| safe_area.current_or_default())
+            .is_ok_and(|insets| insets.ime.bottom > 0.0);
         if !shown && let Some(app) = istmo::android::android_app() {
             app.show_soft_input(true);
         }

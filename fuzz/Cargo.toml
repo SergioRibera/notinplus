@@ -16,10 +16,6 @@ originals-format = { git = "https://github.com/biblionlabs/extra_data_source", r
 # main workspace and its lockfile.
 [workspace]
 
-[patch.crates-io]
-# Same istmo as the app (see the root manifest).
-istmo-core = { git = "https://github.com/SergioRibera/istmo", rev = "421d1eb" }
-
 [[bin]]
 name = "sync"
 path = "fuzz_targets/sync.rs"

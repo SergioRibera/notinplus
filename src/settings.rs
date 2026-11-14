@@ -117,7 +117,7 @@ fn lang_of(locale: Option<&istmo::plugins::Locale>) -> Lang {
 
 /// Supported language of the device locale istmo reports.
 fn device_lang() -> Lang {
-    let locale = istmo::plugins::SystemInfo::acquire()
+    let locale = istmo::plugins::SystemInfoClient::acquire()
         .and_then(|info| info.current_locale())
         .map_err(|err| log::warn!("system locale: {err}"))
         .ok()
@@ -561,7 +561,7 @@ pub fn use_settings_root() -> SettingsStore {
     use_hook(move || {
         // The system language may change while the app runs, and the
         // platform can report it only after the first read.
-        match istmo::plugins::SystemInfo::acquire() {
+        match istmo::plugins::SystemInfoClient::acquire() {
             Ok(info) => {
                 let updates = info.locale_stream();
                 spawn(traced!("task::settings::locale", async move {

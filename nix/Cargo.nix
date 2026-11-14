@@ -6996,7 +6996,7 @@ rec {
           }
           {
             name = "windows-sys";
-            packageId = "windows-sys 0.59.0";
+            packageId = "windows-sys 0.61.2";
             target = { target, features }: (target."windows" or false);
             features = [ "Win32_Foundation" "Win32_System_Diagnostics_Debug" ];
           }
@@ -12791,6 +12791,32 @@ rec {
         };
         resolvedDefaultFeatures = [ "compiled_data" ];
       };
+      "if-addrs" = rec {
+        crateName = "if-addrs";
+        version = "0.15.0";
+        edition = "2021";
+        sha256 = "0aqdnkm4g3gchcgpc8ikakam5p3jskd9jg81yxn2bbhz3rlmr860";
+        libName = "if_addrs";
+        authors = [
+          "MaidSafe Developers <dev@maidsafe.net>"
+          "Messense Lv <messense@icloud.com>"
+        ];
+        dependencies = [
+          {
+            name = "libc";
+            packageId = "libc";
+            target = { target, features }: (!("windows" == target."os" or null));
+          }
+          {
+            name = "windows-sys";
+            packageId = "windows-sys 0.61.2";
+            target = { target, features }: ("windows" == target."os" or null);
+            features = [ "Win32_Foundation" "Win32_System_IO" "Win32_System_Memory" "Win32_System_Threading" "Win32_Networking_WinSock" "Win32_NetworkManagement_IpHelper" "Win32_NetworkManagement_Ndis" ];
+          }
+        ];
+        features = {
+        };
+      };
       "im" = rec {
         crateName = "im";
         version = "15.1.0";
@@ -13220,14 +13246,9 @@ rec {
       };
       "istmo" = rec {
         crateName = "istmo";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "1xkji9nc45dlm6278c14s5hsbxrqsck8bz9vxhnpqry6pd4jvka8";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
           "istmo contributors"
@@ -13261,19 +13282,15 @@ rec {
           "default" = [ "native-activity" ];
           "game-activity" = [ "istmo-android/game-activity" ];
           "native-activity" = [ "istmo-android/native-activity" ];
+          "winit-publisher" = [ "istmo-plugins/winit-publisher" ];
         };
         resolvedDefaultFeatures = [ "game-activity" ];
       };
       "istmo-android" = rec {
         crateName = "istmo-android";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "0vk4pwwzqbdi3ghr7ipc91m9d4n5dldnzx20jlqawk6v9ngl9xkh";
         libName = "istmo_android";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13328,15 +13345,10 @@ rec {
       };
       "istmo-build" = rec {
         crateName = "istmo-build";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
         crateBin = [];
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "0nh4fllf35jj9a59p860pkl7f8vw8qaaj0y4g7mhdqhl31m2qaww";
         libName = "istmo_build";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13409,15 +13421,10 @@ rec {
       };
       "istmo-camera" = rec {
         crateName = "istmo-camera";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
         links = "istmo_camera";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "17c6d56rj4cgp2bfglrpbbs9kmpacrvwcbhh8bcrhdjmjb2w2kqh";
         libName = "istmo_camera";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13429,11 +13436,6 @@ rec {
             packageId = "flume";
             usesDefaultFeatures = false;
             features = [ "async" "select" ];
-          }
-          {
-            name = "istmo-build";
-            packageId = "istmo-build";
-            optional = true;
           }
           {
             name = "istmo-core";
@@ -13470,8 +13472,13 @@ rec {
             packageId = "istmo-build";
           }
         ];
+        devDependencies = [
+          {
+            name = "istmo-build";
+            packageId = "istmo-build";
+          }
+        ];
         features = {
-          "codegen" = [ "dep:istmo-build" ];
           "desktop" = [ "dep:nokhwa" ];
           "web" = [ "dep:wasm-bindgen" "dep:wasm-bindgen-futures" "dep:js-sys" "dep:send_wrapper" "dep:web-sys" ];
         };
@@ -13479,14 +13486,9 @@ rec {
       };
       "istmo-core" = rec {
         crateName = "istmo-core";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "017bvg0rzbprxg9hx5kmkflyz631dgsnyf009x11macsbgg9a1ik";
         libName = "istmo_core";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13516,6 +13518,11 @@ rec {
             features = [ "std" ];
           }
           {
+            name = "wasm-bindgen-futures";
+            packageId = "wasm-bindgen-futures";
+            target = { target, features }: (("wasm32" == target."arch" or null) && ("unknown" == target."os" or null));
+          }
+          {
             name = "wincode";
             packageId = "wincode";
             usesDefaultFeatures = false;
@@ -13526,26 +13533,16 @@ rec {
       };
       "istmo-data-store" = rec {
         crateName = "istmo-data-store";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
         links = "istmo_data_store";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "17sh9c479s6a33a354zw7f8wzw908da645ljygas53yggixr8570";
         libName = "istmo_data_store";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
           "istmo contributors"
         ];
         dependencies = [
-          {
-            name = "istmo-build";
-            packageId = "istmo-build";
-            optional = true;
-          }
           {
             name = "istmo-core";
             packageId = "istmo-core";
@@ -13583,33 +13580,20 @@ rec {
             packageId = "pollster";
           }
         ];
-        features = {
-          "codegen" = [ "dep:istmo-build" ];
-        };
-        resolvedDefaultFeatures = [ "default" ];
+
       };
       "istmo-file-picker" = rec {
         crateName = "istmo-file-picker";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
         links = "istmo_file_picker";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "1m95hq8h9y68cgl614iqp1jlwqvaaxndi8pc1px3j54srxznnnbi";
         libName = "istmo_file_picker";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
           "istmo contributors"
         ];
         dependencies = [
-          {
-            name = "istmo-build";
-            packageId = "istmo-build";
-            optional = true;
-          }
           {
             name = "istmo-core";
             packageId = "istmo-core";
@@ -13638,10 +13622,7 @@ rec {
             packageId = "istmo-build";
           }
         ];
-        features = {
-          "codegen" = [ "dep:istmo-build" ];
-        };
-        resolvedDefaultFeatures = [ "default" ];
+
       };
       "istmo-installer" = rec {
         crateName = "istmo-installer";
@@ -13679,14 +13660,9 @@ rec {
       };
       "istmo-ios" = rec {
         crateName = "istmo-ios";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "01vz48rxq2kay175scgd21kww4z454mp81ah21x2p83fpxbbn33d";
         libName = "istmo_ios";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13726,14 +13702,9 @@ rec {
       };
       "istmo-macros" = rec {
         crateName = "istmo-macros";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "08bb33hvzpjkaa181v2wv4sirwh353g071fpymlwmxba8cxxr288";
         procMacro = true;
         libName = "istmo_macros";
         authors = [
@@ -13762,15 +13733,10 @@ rec {
       };
       "istmo-opener" = rec {
         crateName = "istmo-opener";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
         links = "istmo_opener";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "0ay6hp83g800g6j0kbs8d7cb913hfs5lski7w2zc6r6an1988nfl";
         libName = "istmo_opener";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13782,11 +13748,6 @@ rec {
             packageId = "flume";
             usesDefaultFeatures = false;
             features = [ "async" "select" ];
-          }
-          {
-            name = "istmo-build";
-            packageId = "istmo-build";
-            optional = true;
           }
           {
             name = "istmo-core";
@@ -13803,22 +13764,14 @@ rec {
             packageId = "istmo-build";
           }
         ];
-        features = {
-          "codegen" = [ "dep:istmo-build" ];
-        };
-        resolvedDefaultFeatures = [ "default" ];
+
       };
       "istmo-pen" = rec {
         crateName = "istmo-pen";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
         links = "istmo_pen";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "1q978rq5v2p06dhsingxxk8wicwxwd5vxngnb343sr43ylnazz9y";
         libName = "istmo_pen";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13835,11 +13788,6 @@ rec {
             packageId = "flume";
             usesDefaultFeatures = false;
             features = [ "async" "select" ];
-          }
-          {
-            name = "istmo-build";
-            packageId = "istmo-build";
-            optional = true;
           }
           {
             name = "istmo-core";
@@ -13924,27 +13872,26 @@ rec {
           }
         ];
         features = {
-          "codegen" = [ "dep:istmo-build" ];
           "libinput_fallback" = [ "dep:input" "dep:libc" ];
         };
         resolvedDefaultFeatures = [ "default" ];
       };
       "istmo-plugins" = rec {
         crateName = "istmo-plugins";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "0988270jckara84494lfbx7jm27rsdfpqlgdmyh5ppaj5wsaidyq";
         libName = "istmo_plugins";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
           "istmo contributors"
         ];
         dependencies = [
+          {
+            name = "block2";
+            packageId = "block2 0.6.2";
+            target = { target, features }: ("macos" == target."os" or null);
+          }
           {
             name = "flume";
             packageId = "flume";
@@ -13958,6 +13905,11 @@ rec {
           {
             name = "istmo-macros";
             packageId = "istmo-macros";
+          }
+          {
+            name = "js-sys";
+            packageId = "js-sys";
+            target = { target, features }: (("wasm32" == target."arch" or null) && ("unknown" == target."os" or null));
           }
           {
             name = "libc";
@@ -13990,7 +13942,14 @@ rec {
             packageId = "windows-sys 0.60.2";
             usesDefaultFeatures = false;
             target = { target, features }: ("windows" == target."os" or null);
-            features = [ "Wdk_System_SystemServices" "Win32_Foundation" "Win32_Globalization" "Win32_NetworkManagement_IpHelper" "Win32_NetworkManagement_Ndis" "Win32_Networking_WinSock" "Win32_Security" "Win32_Security_Authorization" "Win32_Storage_FileSystem" "Win32_System_IO" "Win32_System_Pipes" "Win32_System_Power" "Win32_System_Registry" "Win32_System_RemoteDesktop" "Win32_System_Time" "Win32_System_SystemInformation" "Win32_System_SystemServices" "Win32_System_Threading" ];
+            features = [ "Wdk_System_SystemServices" "Win32_Devices_DeviceAndDriverInstallation" "Win32_Devices_Properties" "Win32_Foundation" "Win32_Globalization" "Win32_NetworkManagement_IpHelper" "Win32_NetworkManagement_Ndis" "Win32_Networking_WinSock" "Win32_Security" "Win32_Security_Authorization" "Win32_Storage_FileSystem" "Win32_System_IO" "Win32_System_Pipes" "Win32_System_Power" "Win32_System_Registry" "Win32_System_RemoteDesktop" "Win32_System_Time" "Win32_System_SystemInformation" "Win32_System_SystemServices" "Win32_System_Threading" ];
+          }
+          {
+            name = "zbus";
+            packageId = "zbus";
+            usesDefaultFeatures = false;
+            target = { target, features }: ("linux" == target."os" or null);
+            features = [ "blocking-api" "async-io" ];
           }
         ];
         buildDependencies = [
@@ -14019,14 +13978,9 @@ rec {
       };
       "istmo-plugins-schema" = rec {
         crateName = "istmo-plugins-schema";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "1v2i4mdg733yc9i050qx4v2krb4wdh6cllmf4scslby7q8l95c0w";
         libName = "istmo_plugins_schema";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -14042,15 +13996,10 @@ rec {
       };
       "istmo-share" = rec {
         crateName = "istmo-share";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
         links = "istmo_share";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "0n118navz90rp3zgwh8z7v245n6wfm7b5zv8c378y7nfvjgny360";
         libName = "istmo_share";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -14069,11 +14018,6 @@ rec {
             packageId = "flume";
             usesDefaultFeatures = false;
             features = [ "async" "select" ];
-          }
-          {
-            name = "istmo-build";
-            packageId = "istmo-build";
-            optional = true;
           }
           {
             name = "istmo-core";
@@ -14155,21 +14099,15 @@ rec {
           }
         ];
         features = {
-          "codegen" = [ "dep:istmo-build" ];
           "file-picker" = [ "dep:istmo-file-picker" ];
         };
         resolvedDefaultFeatures = [ "default" ];
       };
       "istmo-window" = rec {
         crateName = "istmo-window";
-        version = "0.1.1-alpha.5";
+        version = "0.1.1-alpha.6";
         edition = "2024";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/SergioRibera/istmo";
-          rev = "421d1eb70e485096cda4aeab42798ced6caa8ff3";
-          sha256 = "0ydx507zbp322zammqg57xfnckql40ikmr8vy2rzqzhjwq8xk64c";
-        };
+        sha256 = "1x9wlvgfmhc49plsvs9g0f7k7dzz90b6wxgx9q8w6h7dljd67msl";
         libName = "istmo_window";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -17692,7 +17630,7 @@ rec {
           }
           {
             name = "zudp";
-            packageId = "zudp 0.4.1";
+            packageId = "zudp 0.4.2";
             usesDefaultFeatures = false;
             features = [ "security" "discovery" "relay" ];
           }
@@ -18105,7 +18043,7 @@ rec {
         dependencies = [
           {
             name = "windows-sys";
-            packageId = "windows-sys 0.59.0";
+            packageId = "windows-sys 0.61.2";
             rename = "windows";
             target = { target, features }: (target."windows" or false);
             features = [ "Win32_Foundation" "Win32_System_Console" "Win32_Storage_FileSystem" "Win32_Security" ];
@@ -23998,7 +23936,7 @@ rec {
           }
           {
             name = "windows-sys";
-            packageId = "windows-sys 0.59.0";
+            packageId = "windows-sys 0.61.2";
             target = { target, features }: (target."windows" or false);
             features = [ "Win32_Foundation" "Win32_System_IO" "Win32_Networking_WinSock" ];
           }
@@ -26169,7 +26107,7 @@ rec {
           }
           {
             name = "windows-sys";
-            packageId = "windows-sys 0.59.0";
+            packageId = "windows-sys 0.61.2";
             target = { target, features }: (target."windows" or false);
             features = [ "Win32_Foundation" "Win32_Networking_WinSock" ];
           }
@@ -28774,7 +28712,7 @@ rec {
           }
           {
             name = "windows-sys";
-            packageId = "windows-sys 0.59.0";
+            packageId = "windows-sys 0.61.2";
             target = { target, features }: (target."windows" or false);
             features = [ "Win32_Storage_FileSystem" "Win32_Foundation" ];
           }
@@ -34142,7 +34080,7 @@ rec {
         dependencies = [
           {
             name = "windows-sys";
-            packageId = "windows-sys 0.48.0";
+            packageId = "windows-sys 0.61.2";
             target = { target, features }: (target."windows" or false);
             features = [ "Win32_Foundation" "Win32_Storage_FileSystem" "Win32_System_Console" "Win32_System_SystemInformation" ];
           }
@@ -35729,7 +35667,7 @@ rec {
           "Win32_Web" = [ "Win32" ];
           "Win32_Web_InternetExplorer" = [ "Win32_Web" ];
         };
-        resolvedDefaultFeatures = [ "Win32" "Win32_Foundation" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Console" "Win32_System_SystemInformation" "default" ];
+        resolvedDefaultFeatures = [ "Win32" "Win32_Foundation" "Win32_Storage" "Win32_Storage_FileSystem" "default" ];
       };
       "windows-sys 0.52.0" = rec {
         crateName = "windows-sys";
@@ -36236,7 +36174,7 @@ rec {
           "Win32_Web" = [ "Win32" ];
           "Win32_Web_InternetExplorer" = [ "Win32_Web" ];
         };
-        resolvedDefaultFeatures = [ "Win32" "Win32_Foundation" "Win32_NetworkManagement" "Win32_NetworkManagement_IpHelper" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Security" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Com" "Win32_System_Console" "Win32_System_Diagnostics" "Win32_System_Diagnostics_Debug" "Win32_System_IO" "Win32_System_Registry" "Win32_System_Threading" "Win32_System_Time" "Win32_UI" "Win32_UI_Shell" "default" ];
+        resolvedDefaultFeatures = [ "Win32" "Win32_Foundation" "Win32_NetworkManagement" "Win32_NetworkManagement_IpHelper" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Com" "Win32_System_IO" "Win32_System_Threading" "Win32_UI" "Win32_UI_Shell" "default" ];
       };
       "windows-sys 0.60.2" = rec {
         crateName = "windows-sys";
@@ -36501,7 +36439,7 @@ rec {
           "Win32_Web" = [ "Win32" ];
           "Win32_Web_InternetExplorer" = [ "Win32_Web" ];
         };
-        resolvedDefaultFeatures = [ "Wdk" "Wdk_System" "Wdk_System_SystemServices" "Win32" "Win32_Foundation" "Win32_Globalization" "Win32_Graphics" "Win32_Graphics_Dwm" "Win32_NetworkManagement" "Win32_NetworkManagement_IpHelper" "Win32_NetworkManagement_Ndis" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Security" "Win32_Security_Authorization" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_IO" "Win32_System_Pipes" "Win32_System_Power" "Win32_System_Registry" "Win32_System_RemoteDesktop" "Win32_System_SystemInformation" "Win32_System_SystemServices" "Win32_System_Threading" "Win32_System_Time" "default" ];
+        resolvedDefaultFeatures = [ "Wdk" "Wdk_System" "Wdk_System_SystemServices" "Win32" "Win32_Devices" "Win32_Devices_DeviceAndDriverInstallation" "Win32_Devices_Properties" "Win32_Foundation" "Win32_Globalization" "Win32_Graphics" "Win32_Graphics_Dwm" "Win32_NetworkManagement" "Win32_NetworkManagement_IpHelper" "Win32_NetworkManagement_Ndis" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Security" "Win32_Security_Authorization" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_IO" "Win32_System_Pipes" "Win32_System_Power" "Win32_System_Registry" "Win32_System_RemoteDesktop" "Win32_System_SystemInformation" "Win32_System_SystemServices" "Win32_System_Threading" "Win32_System_Time" "default" ];
       };
       "windows-sys 0.61.2" = rec {
         crateName = "windows-sys";
@@ -36763,7 +36701,7 @@ rec {
           "Win32_Web" = [ "Win32" ];
           "Win32_Web_InternetExplorer" = [ "Win32_Web" ];
         };
-        resolvedDefaultFeatures = [ "Wdk" "Wdk_Foundation" "Wdk_Storage" "Wdk_Storage_FileSystem" "Wdk_System" "Wdk_System_IO" "Win32" "Win32_Foundation" "Win32_Graphics" "Win32_Graphics_Gdi" "Win32_NetworkManagement" "Win32_NetworkManagement_IpHelper" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Security" "Win32_Security_Authorization" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Com" "Win32_System_Console" "Win32_System_IO" "Win32_System_LibraryLoader" "Win32_System_Memory" "Win32_System_Pipes" "Win32_System_SystemServices" "Win32_System_Threading" "Win32_System_WindowsProgramming" "Win32_UI" "Win32_UI_Controls" "Win32_UI_Input" "Win32_UI_Input_Pointer" "Win32_UI_Shell" "Win32_UI_Shell_Common" "Win32_UI_WindowsAndMessaging" "default" ];
+        resolvedDefaultFeatures = [ "Wdk" "Wdk_Foundation" "Wdk_Storage" "Wdk_Storage_FileSystem" "Wdk_System" "Wdk_System_IO" "Win32" "Win32_Foundation" "Win32_Graphics" "Win32_Graphics_Gdi" "Win32_NetworkManagement" "Win32_NetworkManagement_IpHelper" "Win32_NetworkManagement_Ndis" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Security" "Win32_Security_Authorization" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Com" "Win32_System_Console" "Win32_System_Diagnostics" "Win32_System_Diagnostics_Debug" "Win32_System_IO" "Win32_System_LibraryLoader" "Win32_System_Memory" "Win32_System_Pipes" "Win32_System_Registry" "Win32_System_SystemInformation" "Win32_System_SystemServices" "Win32_System_Threading" "Win32_System_Time" "Win32_System_WindowsProgramming" "Win32_UI" "Win32_UI_Controls" "Win32_UI_Input" "Win32_UI_Input_Pointer" "Win32_UI_Shell" "Win32_UI_Shell_Common" "Win32_UI_WindowsAndMessaging" "default" ];
       };
       "windows-targets 0.42.2" = rec {
         crateName = "windows-targets";
@@ -37663,7 +37601,7 @@ rec {
           }
           {
             name = "windows-sys";
-            packageId = "windows-sys 0.59.0";
+            packageId = "windows-sys 0.61.2";
             features = [ "Win32_Foundation" "Win32_System_Time" "Win32_System_Registry" "Win32_Security" "Win32_Storage_FileSystem" "Win32_System_Diagnostics_Debug" ];
           }
         ];
@@ -38302,7 +38240,7 @@ rec {
           "uuid" = [ "zvariant/uuid" ];
           "vsock" = [ "dep:vsock" "dep:async-io" ];
         };
-        resolvedDefaultFeatures = [ "async-executor" "async-fs" "async-io" "async-lock" "async-process" "async-task" "blocking" ];
+        resolvedDefaultFeatures = [ "async-executor" "async-fs" "async-io" "async-lock" "async-process" "async-task" "blocking" "blocking-api" ];
       };
       "zbus-lockstep" = rec {
         crateName = "zbus-lockstep";
@@ -38408,7 +38346,7 @@ rec {
         features = {
           "gvariant" = [ "zvariant/gvariant" "zvariant_utils/gvariant" ];
         };
-        resolvedDefaultFeatures = [ "default" ];
+        resolvedDefaultFeatures = [ "blocking-api" "default" ];
       };
       "zbus_names" = rec {
         crateName = "zbus_names";
@@ -39051,11 +38989,11 @@ rec {
         };
         resolvedDefaultFeatures = [ "discovery" "security" ];
       };
-      "zudp 0.4.1" = rec {
+      "zudp 0.4.2" = rec {
         crateName = "zudp";
-        version = "0.4.1";
+        version = "0.4.2";
         edition = "2024";
-        sha256 = "0c169w3wqx7fdrmq7g1f728p7lhg4nkhsg41krp6izkixssvd5d1";
+        sha256 = "1nibn1f24m5zzlk0lyz8wh9scs0dqx14jhqmgpdk213qri15lifr";
         dependencies = [
           {
             name = "bytes";
@@ -39064,6 +39002,11 @@ rec {
           {
             name = "dashmap";
             packageId = "dashmap";
+          }
+          {
+            name = "if-addrs";
+            packageId = "if-addrs";
+            optional = true;
           }
           {
             name = "parking_lot";
@@ -39109,6 +39052,7 @@ rec {
         ];
         features = {
           "bitcode" = [ "dep:bitcode" ];
+          "discovery" = [ "dep:if-addrs" ];
           "relay" = [ "security" ];
           "rkyv" = [ "dep:rkyv" ];
           "security" = [ "dep:snow" ];

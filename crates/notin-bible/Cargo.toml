@@ -66,7 +66,7 @@ unicode-normalization = "0.1"
 # notein data file. The transport / runtime pieces are unused — the
 # core crate itself only depends on `wincode` + `flume` + a tiny set of
 # workspace crates, so there is no hidden weight.
-istmo-core = "0.1.1-alpha.4"
+istmo-core = "0.1.1-alpha.6"
 rusqlite = { version = "0.37", features = ["bundled"] }
 regex = "1.12"
 wincode = { version = "0.6", default-features = false, features = ["derive", "std"] }

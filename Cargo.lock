@@ -2343,7 +2343,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4053,6 +4053,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "if-addrs"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0a05c691e1fae256cf7013d99dad472dc52d5543322761f83ec8d47eab40d2b"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "im"
 version = "15.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4198,8 +4208,9 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "istmo"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48cd2d49bbc6677c2dec3bfd8526d338f7a561d124307484a9b415c26c8a72f6"
 dependencies = [
  "istmo-android",
  "istmo-core",
@@ -4210,8 +4221,9 @@ dependencies = [
 
 [[package]]
 name = "istmo-android"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70f6449f4ddb4cae309540f46f1b6dc592966a48ecc693e11bb12dfc39bf646e"
 dependencies = [
  "android-activity",
  "flume",
@@ -4224,8 +4236,9 @@ dependencies = [
 
 [[package]]
 name = "istmo-build"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c2b2c6a1814e206eb79c403a914467c2377e8bcc0a09b8a4a5296e12875045a"
 dependencies = [
  "embed-resource",
  "globset",
@@ -4242,8 +4255,9 @@ dependencies = [
 
 [[package]]
 name = "istmo-camera"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "104fc1c592553698d942102ec67766ead699f45a37d3e796b88f11994d69869d"
 dependencies = [
  "flume",
  "istmo-build",
@@ -4256,20 +4270,23 @@ dependencies = [
 
 [[package]]
 name = "istmo-core"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330695de5b9aa91a424f00386ff56b6198efa99b75960ed3ebf9ae9fc1dbeb04"
 dependencies = [
  "flume",
  "oneshot",
  "pollster",
  "tracing",
+ "wasm-bindgen-futures",
  "wincode",
 ]
 
 [[package]]
 name = "istmo-data-store"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e014947b7ccf8fa2d5f3921662544320f1cf913bfc9332d418cae874084b509f"
 dependencies = [
  "istmo-build",
  "istmo-core",
@@ -4281,8 +4298,9 @@ dependencies = [
 
 [[package]]
 name = "istmo-file-picker"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71596b7fcf9a1439fa0deca2d86c576a634e65b8389260e863c8f804118625d5"
 dependencies = [
  "istmo-build",
  "istmo-core",
@@ -4302,8 +4320,9 @@ dependencies = [
 
 [[package]]
 name = "istmo-ios"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d0cbb56bf6ea02b7a105005742b29e413ce6710ed315d4ef06a0adc33227f07"
 dependencies = [
  "flume",
  "istmo-core",
@@ -4314,8 +4333,9 @@ dependencies = [
 
 [[package]]
 name = "istmo-macros"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0889dc3b436af5ca69f5d78503de2803f21c35d95cec80825253debfe1186b21"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4324,8 +4344,9 @@ dependencies = [
 
 [[package]]
 name = "istmo-opener"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4598452b0ca64c3bee0274e4d8b767084b4d86948af09a47900a037d085c62b"
 dependencies = [
  "flume",
  "istmo-build",
@@ -4335,8 +4356,9 @@ dependencies = [
 
 [[package]]
 name = "istmo-pen"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3efdaf2cf583643dc858f6d9be4be39db3c8d1ecfdd9a86133e08a5d704627e1"
 dependencies = [
  "block2 0.6.2",
  "flume",
@@ -4357,34 +4379,40 @@ dependencies = [
 
 [[package]]
 name = "istmo-plugins"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8b7a8342f52dd5ba0afed517c5dd3f9882a4f5f8e92440852594d26c1110825"
 dependencies = [
+ "block2 0.6.2",
  "flume",
  "istmo-build",
  "istmo-core",
  "istmo-macros",
  "istmo-plugins-schema",
+ "js-sys",
  "libc",
  "objc2 0.6.5",
  "pollster",
  "tracing",
  "wincode",
  "windows-sys 0.60.2",
+ "zbus",
 ]
 
 [[package]]
 name = "istmo-plugins-schema"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1cb09228c2c72faa9926ae52ca0c6c9cac3cc5261d830262627e8cf35a2551ec"
 dependencies = [
  "istmo-build",
 ]
 
 [[package]]
 name = "istmo-share"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c00c6f9fdcce1e8fce6068ffb24e75dcd842c43e1f41fefeb819a4bf95452158"
 dependencies = [
  "dispatch2",
  "flume",
@@ -4403,8 +4431,9 @@ dependencies = [
 
 [[package]]
 name = "istmo-window"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54d7639aa4ed40c3114efd756e1648ffb7338f032fe9ade94d84c1eadea63cf5"
 dependencies = [
  "raw-window-handle",
 ]
@@ -5545,7 +5574,7 @@ dependencies = [
  "tokio",
  "tracing",
  "wincode",
- "zudp 0.4.1",
+ "zudp 0.4.2",
 ]
 
 [[package]]
@@ -5633,7 +5662,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6973,7 +7002,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.5",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7543,7 +7572,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8366,7 +8395,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9937,7 +9966,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10449,7 +10478,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
 dependencies = [
  "cfg-if 1.0.5",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10884,12 +10913,13 @@ dependencies = [
 
 [[package]]
 name = "zudp"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a195b6b5ee71fe686e9e813c0da7250fd27391382ebc836b6eee74cc074f2630"
+checksum = "d9455a42cc780431db7d15434942c70d68a613e4e87b0a26fdbf54225cb02bda"
 dependencies = [
  "bytes",
  "dashmap",
+ "if-addrs",
  "parking_lot",
  "snow",
  "socket2 0.5.10",

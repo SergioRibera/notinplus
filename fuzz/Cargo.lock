@@ -459,6 +459,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
+name = "if-addrs"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0a05c691e1fae256cf7013d99dad472dc52d5543322761f83ec8d47eab40d2b"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -469,13 +479,15 @@ dependencies = [
 
 [[package]]
 name = "istmo-core"
-version = "0.1.1-alpha.5"
-source = "git+https://github.com/SergioRibera/istmo?rev=421d1eb#421d1eb70e485096cda4aeab42798ced6caa8ff3"
+version = "0.1.1-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330695de5b9aa91a424f00386ff56b6198efa99b75960ed3ebf9ae9fc1dbeb04"
 dependencies = [
  "flume",
  "oneshot",
  "pollster",
  "tracing",
+ "wasm-bindgen-futures",
  "wincode",
 ]
 
@@ -1012,6 +1024,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-bindgen-futures"
+version = "0.4.80"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e14e0327cb5368ad60ccb22d04a9827a693c95a926d8d125e9fa39e0baec501"
+dependencies = [
+ "js-sys",
+ "tokio",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "wasm-bindgen-macro"
 version = "0.2.130"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1259,12 +1282,13 @@ checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
 
 [[package]]
 name = "zudp"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a195b6b5ee71fe686e9e813c0da7250fd27391382ebc836b6eee74cc074f2630"
+checksum = "d9455a42cc780431db7d15434942c70d68a613e4e87b0a26fdbf54225cb02bda"
 dependencies = [
  "bytes",
  "dashmap",
+ "if-addrs",
  "parking_lot",
  "snow",
  "socket2 0.5.10",
