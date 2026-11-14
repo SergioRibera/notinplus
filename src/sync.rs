@@ -2012,6 +2012,12 @@ fn remember_announced(service: &Service) {
     service.driver.with_replica(|r| r.remember(&docs));
 }
 
+/// Show `snapshot` as the current state, for headless previews.
+#[cfg(test)]
+pub(crate) fn publish_preview(snapshot: SyncSnapshot) {
+    publish(snapshot);
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};

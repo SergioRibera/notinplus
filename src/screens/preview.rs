@@ -16,6 +16,7 @@ use crate::library::{
 };
 use crate::plugins::builtin::{canvas, pdf};
 
+mod dialogs;
 mod readme;
 
 const DAY: u64 = 24 * 60 * 60 * 1000;
