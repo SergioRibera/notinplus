@@ -1,0 +1,21 @@
+--- a/src/types.rs
++++ b/src/types.rs
+@@ -1101,12 +1101,16 @@
+ 
+     /// Get an iterator over all Rust types
+     pub fn rust_types(&self) -> impl Iterator<Item = &Rc<RustType>> {
+-        self.rust_types.iter()
++        let mut types: Vec<_> = self.rust_types.iter().collect();
++        types.sort_by(|a, b| a.path().cmp(b.path()));
++        types.into_iter()
+     }
+ 
+     /// Get an iterator over rust_path -> java_class mappings
+     pub fn rust_to_java_iter(&self) -> impl Iterator<Item = (&Rc<RustType>, &Rc<JavaClassName>)> {
+-        self.rust_to_java.iter()
++        let mut pairs: Vec<_> = self.rust_to_java.iter().collect();
++        pairs.sort_by(|(a, _), (b, _)| a.path().cmp(b.path()));
++        pairs.into_iter()
+     }
+ 
+     /// Get the jni crate path

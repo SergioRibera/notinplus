@@ -48,6 +48,11 @@ let
       ];
     };
     istmo-camera = _: bindgen;
+    # `bind_java_type!` emits its type checks in HashMap order, so every
+    # build of a crate using it (android-activity) gets another crate hash,
+    # and two machines filling the cache with the same paths leave
+    # dependents that do not link together. Sort them.
+    jni-macros = _: { patches = [ ./patches/jni-macros-sorted-type-checks.patch ]; };
     v4l2-sys-mit = _: bindgen;
     # cdylib: links Skia, whose GL and Wayland libraries must be found.
     notin-bible = _: { inherit buildInputs; };
