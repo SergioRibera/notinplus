@@ -642,7 +642,18 @@ pub(crate) fn mount_board(mount: CanvasMount, state: &ChromeState) -> Arc<Mutex<
         g.set_style_profile(saved.style);
         g.set_prefs_sink(prefs_tx);
     }
-    spawn_word_timer(&board);
+    spawn_idle_timer(
+        &board,
+        crate::canvas::WORD_IDLE,
+        Board::set_word_waker,
+        Board::flush_word,
+    );
+    spawn_idle_timer(
+        &board,
+        crate::canvas::HOLD_STILL,
+        Board::set_hold_waker,
+        Board::hold_elapsed,
+    );
     // Seed chrome signals from the restored board state. Done after
     // the prefs apply so overlays open on the correct preset / size
     // / mode on first paint.
@@ -753,17 +764,24 @@ pub(crate) fn canvas_chrome(
         })
 }
 
-/// Close a handwritten word once the pen rests. The board sends the open
-/// word's generation after every stroke; a newer one arriving during the
-/// wait restarts it. Exits when the board (and its sender) drops.
-fn spawn_word_timer(board: &Arc<Mutex<Board>>) {
+/// Run `fire` on the board once it has been idle for `wait` since the
+/// last generation it sent through the waker `install` sets up; a newer
+/// generation arriving during the wait restarts it. Exits when the board
+/// (and its sender) drops. Closes handwritten words and snaps held
+/// strokes to figures.
+fn spawn_idle_timer(
+    board: &Arc<Mutex<Board>>,
+    wait: std::time::Duration,
+    install: fn(&mut Board, flume::Sender<u64>),
+    fire: fn(&mut Board, u64),
+) {
     let (tx, rx) = flume::unbounded::<u64>();
-    lock(board).set_word_waker(tx);
+    install(&mut lock(board), tx);
     let board = Arc::downgrade(board);
-    spawn(traced!("task::app::word_timer", async move {
+    spawn(traced!("task::app::idle_timer", async move {
         while let Ok(mut generation) = rx.recv_async().await {
             loop {
-                async_io::Timer::after(crate::canvas::WORD_IDLE).await;
+                async_io::Timer::after(wait).await;
                 match rx.try_recv() {
                     Ok(newer) => generation = newer,
                     Err(_) => break,
@@ -772,8 +790,8 @@ fn spawn_word_timer(board: &Arc<Mutex<Board>>) {
             let Some(board) = board.upgrade() else {
                 return;
             };
-            sismo::scope!("app::flush_word");
-            lock(&board).flush_word(generation);
+            sismo::scope!("app::idle_timer_fire");
+            fire(&mut lock(&board), generation);
         }
     }));
 }

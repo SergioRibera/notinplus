@@ -52,6 +52,7 @@ use notin_beautify::Pt;
 mod beautify;
 mod ink_cache;
 mod lasso;
+mod snap;
 mod tools;
 mod touch;
 
@@ -61,6 +62,7 @@ mod text;
 
 pub use beautify::{Options as BeautifyOptions, WORD_IDLE};
 pub use ink_cache::InkCache;
+pub use snap::HOLD_STILL;
 
 pub use text::{SceneText, TextLayerView, TextScene};
 
@@ -183,6 +185,8 @@ pub struct Board {
     cached_paths: HashMap<StrokeId, Path>,
     /// Handwriting beautification: open word, line, settling fixes.
     beautify: beautify::Beautify,
+    /// Snapping a held stroke to a figure.
+    snap: snap::Snap,
     lasso: lasso::LassoState,
     touch: touch::TouchState,
     previous_preset: Option<BrushPreset>,
@@ -446,6 +450,7 @@ impl Default for Board {
             spatial: SpatialIndex::new(),
             cached_paths: HashMap::new(),
             beautify: beautify::Beautify::default(),
+            snap: snap::Snap::default(),
             lasso: lasso::LassoState::default(),
             touch: touch::TouchState::default(),
             previous_preset: None,
@@ -1062,6 +1067,8 @@ impl Board {
         // toggle does not switch a live stroke between rubber-band and
         // freehand halfway through.
         self.two_point_active = self.is_two_point_stroke_mode();
+        self.snap_reset();
+        self.snap_track(point);
         self.live_sent = 0;
         self.live_last = None;
         self.emit_live_ink(false);
@@ -1078,6 +1085,11 @@ impl Board {
         }
         if let Some((ax, ay, _, _)) = self.selection_rect {
             self.selection_rect = Some((ax, ay, point.x, point.y));
+            self.notify();
+            return;
+        }
+        if !self.two_point_active && self.active.is_some() && self.snap_track(point) {
+            self.emit_live_ink(false);
             self.notify();
             return;
         }
@@ -1159,7 +1171,7 @@ impl Board {
             self.notify_commit();
             return;
         }
-        if let Some(active) = self.active.take() {
+        if let Some(mut active) = self.active.take() {
             self.emit_live_ink_for(&active, true);
             let shape_tool = matches!(self.current_kind(), BrushKind::Shape(_));
             if shape_tool && active.shape.is_none() {
@@ -1169,9 +1181,20 @@ impl Board {
                 self.notify();
                 return;
             }
+            let held = self.take_held_figure(&mut active);
+            self.snap_reset();
+            if held.is_none() && self.arrow_head_for_last_line(&active) {
+                self.active_layer_at_begin = None;
+                self.two_point_active = false;
+                self.notify_commit();
+                return;
+            }
             self.beautify_before_commit(&active);
             let id = active.id;
             self.commit_stroke(active);
+            if let Some(shape) = held {
+                self.figure_landed(id, shape);
+            }
             self.beautify_after_commit(id);
             self.two_point_active = false;
             self.notify_commit();
@@ -1192,6 +1215,7 @@ impl Board {
             self.notify();
             return;
         }
+        self.snap_reset();
         if let Some(active) = self.active.take() {
             self.emit_live_ink_for(&active, true);
             self.active_layer_at_begin = None;
@@ -2481,8 +2505,10 @@ impl Board {
                     let scaled = (f32::from(base.a()) * layer_opacity).clamp(0.0, 255.0) as u8;
                     paint.set_color(base.with_a(scaled));
                 }
-                let path = self.brush_registry.stroke_path(preset, active);
-                canvas.draw_path(&path, &paint);
+                if !self.paint_morph(canvas, active, &paint) {
+                    let path = self.brush_registry.stroke_path(preset, active);
+                    canvas.draw_path(&path, &paint);
+                }
             }
         }
         if let Some((ax, ay, cx, cy)) = self.selection_rect {
