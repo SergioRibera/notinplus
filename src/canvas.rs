@@ -52,6 +52,7 @@ use notin_beautify::Pt;
 mod beautify;
 mod ink_cache;
 mod lasso;
+mod record;
 mod snap;
 mod tools;
 mod touch;
@@ -187,6 +188,8 @@ pub struct Board {
     beautify: beautify::Beautify,
     /// Snapping a held stroke to a figure.
     snap: snap::Snap,
+    /// Debug recording of the ink drawn (`NOTIN_RECORD_INK`).
+    recorder: Option<record::Recorder>,
     lasso: lasso::LassoState,
     touch: touch::TouchState,
     previous_preset: Option<BrushPreset>,
@@ -451,6 +454,7 @@ impl Default for Board {
             cached_paths: HashMap::new(),
             beautify: beautify::Beautify::default(),
             snap: snap::Snap::default(),
+            recorder: record::Recorder::from_env(),
             lasso: lasso::LassoState::default(),
             touch: touch::TouchState::default(),
             previous_preset: None,
@@ -1181,6 +1185,7 @@ impl Board {
                 self.notify();
                 return;
             }
+            self.record_stroke(&active);
             let held = self.take_held_figure(&mut active);
             self.snap_reset();
             if held.is_none() && self.arrow_head_for_last_line(&active) {
