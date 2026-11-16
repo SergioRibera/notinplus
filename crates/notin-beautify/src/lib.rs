@@ -12,6 +12,7 @@
 mod geom;
 mod layout;
 mod metrics;
+mod shape;
 mod smooth;
 mod style;
 #[cfg(test)]
@@ -21,6 +22,7 @@ mod word;
 pub use geom::{Heads, ShapeGeom, StrokeShape};
 pub use layout::{Row, group_lines, group_words, is_writing, joins_word, same_line};
 pub use metrics::{Bounds, Line, WordMetrics, median};
+pub use shape::{arrow_head, fit_shape, snap_ends};
 pub use smooth::{smooth_points, smooth_pressure};
 pub use style::StyleProfile;
 pub use word::{Placement, Target, correct_word};
