@@ -145,7 +145,7 @@ nix build .#windows-bundles    # Windows, cross-built from Linux
 | Path | What lives there |
 |---|---|
 | `src/` | The app shell: Home, desks, settings, sync, update checks |
-| `crates/notein-*` | Library model, plugin SDK, sync, Bible, notes, handwriting, UI kit |
+| `crates/notein-*` | Library model, plugin SDK, sync, Bible, notes, ink beautification, UI kit |
 | `crates/freya-*` | Freya components: markdown editor, PDF, math, diagrams, canvas backgrounds |
 | `tools/notin-relay` | The relay server |
 | `android/`, `ios/` | Native projects (Gradle, xcodegen) |

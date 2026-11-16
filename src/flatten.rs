@@ -149,4 +149,76 @@ mod tests {
         doc.set_layer_visible(0, false);
         assert_eq!(bounds(&doc), None);
     }
+
+    /// RGBA pixels of `doc` painted on white, 100 × 100 world units.
+    fn render(doc: &Doc) -> Vec<u8> {
+        let mut surface = freya_engine::prelude::raster_n32_premul((100, 100)).expect("raster");
+        surface
+            .canvas()
+            .clear(freya_engine::prelude::SkColor::WHITE);
+        paint(surface.canvas(), doc, ItemId::default());
+        let image = surface.image_snapshot();
+        let pixmap = image.peek_pixels().expect("raster pixels");
+        pixmap.bytes().expect("pixel bytes").to_vec()
+    }
+
+    /// Whether the pixel at `(x, y)` is inked (darker than paper).
+    fn inked(pixels: &[u8], x: usize, y: usize) -> bool {
+        let at = (y * 100 + x) * 4;
+        pixels[at..at + 3].iter().any(|c| *c < 200)
+    }
+
+    fn line_doc() -> (Doc, crate::ids::StrokeId) {
+        let mut doc = Doc::default();
+        let brush = doc
+            .register_brush(crate::brush::BrushPreset::pen())
+            .expect("brush");
+        let points = (0..=16u8)
+            .map(|i| crate::brush::InkPoint::new(f32::from(i).mul_add(5.0, 10.0), 20.0, 200, 0, 0))
+            .collect();
+        let id = doc.push_stroke(brush, [10, 10, 10, 255], points);
+        (doc, id)
+    }
+
+    #[test]
+    fn corrected_ink_paints_where_it_is_shown() {
+        let (mut doc, id) = line_doc();
+        let raw = render(&doc);
+        assert!(inked(&raw, 50, 20));
+        assert!(!inked(&raw, 50, 60));
+        doc.emit(DocOp::SetStrokeFix {
+            id,
+            fix: Some(notin_beautify::StrokeFix {
+                affine: notin_beautify::Affine::translation(0.0, 40.0),
+                smooth: notin_beautify::Smooth::Normal,
+            }),
+        });
+        let fixed = render(&doc);
+        assert!(!inked(&fixed, 50, 20));
+        assert!(inked(&fixed, 50, 60));
+    }
+
+    #[test]
+    fn a_synced_correction_paints_the_same() {
+        let (mut doc, id) = line_doc();
+        let mut replica = Doc::from_snapshot(&doc.snapshot_bytes().expect("snapshot")).expect("load");
+        let since = replica.version();
+        doc.emit(DocOp::SetStrokeShape {
+            id,
+            shape: Some(notin_beautify::StrokeShape::plain(
+                notin_beautify::ShapeGeom::Ellipse {
+                    center: notin_beautify::Pt::new(50.0, 50.0),
+                    rx: 30.0,
+                    ry: 20.0,
+                    rotation: 0.0,
+                },
+                false,
+            )),
+        });
+        replica
+            .import_updates(&doc.updates_since(&since).expect("updates"))
+            .expect("merge");
+        assert_eq!(render(&doc), render(&replica));
+        assert!(inked(&render(&replica), 80, 50));
+    }
 }
