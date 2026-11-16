@@ -35,6 +35,7 @@ ink-shape-dashed = Guiones
 ink-shape-arrow = Flecha
 ink-shape-rect = Rect.
 ink-shape-circle = Círculo
+ink-shape-triangle = Triángulo
 ink-lasso-move = Mover
 ink-lasso-move-hint = Arrastra la selección para moverla
 ink-lasso-duplicate = Duplicar

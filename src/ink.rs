@@ -759,6 +759,7 @@ impl BrushPopover {
                     ShapeMode::Arrow,
                     ShapeMode::Rect,
                     ShapeMode::Circle,
+                    ShapeMode::Triangle,
                 ];
                 let current = match kind {
                     BrushKind::Shape(m) => m,
@@ -771,6 +772,7 @@ impl BrushPopover {
                     tr!("ink-shape-arrow"),
                     tr!("ink-shape-rect"),
                     tr!("ink-shape-circle"),
+                    tr!("ink-shape-triangle"),
                 ];
                 Some(choice(tr!("ink-shape"), labels, selected, move |i| {
                     let mut guard = lock(&board);

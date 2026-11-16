@@ -482,6 +482,16 @@ impl Doc {
                     }
                 }
             }
+            DocOp::SetStrokeFix { id, fix } => {
+                if let Some(stroke) = self.stroke_mut(*id) {
+                    stroke.fix = *fix;
+                }
+            }
+            DocOp::SetStrokeShape { id, shape } => {
+                if let Some(stroke) = self.stroke_mut(*id) {
+                    stroke.shape.clone_from(shape);
+                }
+            }
         }
     }
 
@@ -726,6 +736,24 @@ impl Doc {
                     }]
                 })
                 .unwrap_or_default(),
+            DocOp::SetStrokeFix { id, .. } => self
+                .find_stroke(*id)
+                .map(|stroke| {
+                    vec![DocOp::SetStrokeFix {
+                        id: *id,
+                        fix: stroke.fix,
+                    }]
+                })
+                .unwrap_or_default(),
+            DocOp::SetStrokeShape { id, .. } => self
+                .find_stroke(*id)
+                .map(|stroke| {
+                    vec![DocOp::SetStrokeShape {
+                        id: *id,
+                        shape: stroke.shape.clone(),
+                    }]
+                })
+                .unwrap_or_default(),
         }
     }
 
@@ -845,6 +873,8 @@ impl Doc {
             cap_start: crate::brush::CapStyle::Round,
             cap_end: crate::brush::CapStyle::Round,
             points,
+            fix: None,
+            shape: None,
         };
         self.emit(DocOp::PushStroke { layer_id, stroke });
         id
@@ -872,6 +902,12 @@ impl Doc {
         self.layers
             .iter()
             .find_map(|layer| layer.strokes.iter().find(|s| s.id == id))
+    }
+
+    fn stroke_mut(&mut self, id: StrokeId) -> Option<&mut Stroke> {
+        self.layers
+            .iter_mut()
+            .find_map(|layer| layer.strokes.iter_mut().find(|s| s.id == id))
     }
 
     /// Remove the stroke with `id` from whichever layer holds it.

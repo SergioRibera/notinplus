@@ -35,6 +35,7 @@ ink-shape-dashed = Dashed
 ink-shape-arrow = Arrow
 ink-shape-rect = Rect.
 ink-shape-circle = Circle
+ink-shape-triangle = Triangle
 ink-lasso-move = Move
 ink-lasso-move-hint = Drag the selection to move it
 ink-lasso-duplicate = Duplicate

@@ -9,6 +9,7 @@ use crate::brush::{BrushPreset, Stroke};
 use crate::ids::{BookmarkId, StrokeId};
 use crate::image_box::{ImageBox, ImageBoxId};
 use crate::text_box::{TextBox, TextBoxId, TextFrame};
+use notin_beautify::{StrokeFix, StrokeShape};
 
 /// Mutation the stroke canvas plugin understands.
 ///
@@ -108,5 +109,17 @@ pub enum DocOp {
     },
     DeleteImage {
         id: ImageBoxId,
+    },
+    /// Show stroke `id` as beautified handwriting, or raw with `None`.
+    /// Last writer wins.
+    SetStrokeFix {
+        id: StrokeId,
+        fix: Option<StrokeFix>,
+    },
+    /// Show stroke `id` as a figure, or as its ink with `None`. Last
+    /// writer wins.
+    SetStrokeShape {
+        id: StrokeId,
+        shape: Option<StrokeShape>,
     },
 }

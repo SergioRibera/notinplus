@@ -36,7 +36,7 @@ use super::{BodyView, Doc, DocError, Layer};
 use crate::bookmark::Bookmark;
 use crate::brush::{BrushPreset, Stroke};
 use crate::doc_op::DocOp;
-use crate::ids::BookmarkId;
+use crate::ids::{BookmarkId, StrokeId};
 use crate::image_box::ImageBox;
 use crate::text_box::TextBox;
 
@@ -441,6 +441,26 @@ impl DocStore {
                     child_list(&layer, LAYER_IMAGES)?.delete(idx, 1)?;
                 }
             }
+            DocOp::SetStrokeFix { id, fix } => {
+                if let Some((pos, idx, stroke)) = locate_stroke(state, *id) {
+                    let next = Stroke {
+                        fix: *fix,
+                        ..stroke.clone()
+                    };
+                    let layer = self.layer_at(pos)?;
+                    child_list(&layer, LAYER_STROKES)?.set(idx, encode(&next)?)?;
+                }
+            }
+            DocOp::SetStrokeShape { id, shape } => {
+                if let Some((pos, idx, stroke)) = locate_stroke(state, *id) {
+                    let next = Stroke {
+                        shape: shape.clone(),
+                        ..stroke.clone()
+                    };
+                    let layer = self.layer_at(pos)?;
+                    child_list(&layer, LAYER_STROKES)?.set(idx, encode(&next)?)?;
+                }
+            }
         }
         Ok(())
     }
@@ -556,6 +576,16 @@ fn locate_text(state: &Doc, id: crate::text_box::TextBoxId) -> Option<(usize, us
             .enumerate()
             .find(|(_, t)| t.id == id)
             .map(|(idx, t)| (pos, idx, t))
+    })
+}
+
+fn locate_stroke(state: &Doc, id: StrokeId) -> Option<(usize, usize, &Stroke)> {
+    state.layers.iter().enumerate().find_map(|(pos, l)| {
+        l.strokes
+            .iter()
+            .enumerate()
+            .find(|(_, s)| s.id == id)
+            .map(|(idx, s)| (pos, idx, s))
     })
 }
 

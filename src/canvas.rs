@@ -47,6 +47,7 @@ use crate::spatial::SpatialIndex;
 use crate::sync::live::LiveMessage;
 use crate::text_box::TextBoxId;
 use crate::undo::UndoStack;
+use notin_beautify::Pt;
 
 mod ink_cache;
 mod lasso;
@@ -993,13 +994,10 @@ impl Board {
         sismo::scope!("canvas::rebuild_stroke_paths");
         for layer in &self.doc.layers {
             for (idx, stroke) in layer.strokes.iter().enumerate() {
-                self.spatial.insert(stroke.id, &stroke.points);
+                self.spatial.insert(stroke.id, &stroke.display_points());
                 self.stroke_index.insert(stroke.id, (layer.id, idx));
                 if let Some(preset) = self.doc.preset(stroke.brush) {
-                    let path =
-                        registry
-                            .brush(preset.kind)
-                            .build_path(preset, stroke, registry.caps());
+                    let path = registry.stroke_path(preset, stroke);
                     self.cached_paths.insert(stroke.id, path);
                 }
             }
@@ -1047,7 +1045,7 @@ impl Board {
             Some(layer) if !layer.locked => {}
             _ => return,
         }
-        let Some(brush) = self.doc.register_brush(self.current_preset) else {
+        let Some(brush) = self.doc.register_brush(self.stroke_preset()) else {
             return;
         };
         self.active_layer_at_begin = Some(target);
@@ -1076,6 +1074,10 @@ impl Board {
             self.notify();
             return;
         }
+        let shape_mode = match self.current_kind() {
+            BrushKind::Shape(mode) => Some(mode),
+            _ => None,
+        };
         let Some(active) = self.active.as_mut() else {
             return;
         };
@@ -1087,6 +1089,9 @@ impl Board {
             } else {
                 let last = active.points.len() - 1;
                 active.points[last] = point;
+            }
+            if let (Some(mode), Some(a)) = (shape_mode, active.points.first()) {
+                active.shape = mode.figure(Pt::new(a.x, a.y), Pt::new(point.x, point.y));
             }
         } else {
             active.points.push(point);
@@ -1149,6 +1154,14 @@ impl Board {
         }
         if let Some(active) = self.active.take() {
             self.emit_live_ink_for(&active, true);
+            let shape_tool = matches!(self.current_kind(), BrushKind::Shape(_));
+            if shape_tool && active.shape.is_none() {
+                // A tap with the shape tool draws nothing.
+                self.active_layer_at_begin = None;
+                self.two_point_active = false;
+                self.notify();
+                return;
+            }
             self.commit_stroke(active);
             self.two_point_active = false;
             self.notify_commit();
@@ -1486,11 +1499,11 @@ impl Board {
         let Some(stroke) = self.doc.find_stroke(anchor.stroke) else {
             return bm.anchor;
         };
-        let Some(first) = stroke.points.first() else {
+        let points = stroke.display_points();
+        let Some(first) = points.first() else {
             return bm.anchor;
         };
-        let (min_x, min_y) = stroke
-            .points
+        let (min_x, min_y) = points
             .iter()
             .fold((first.x, first.y), |(ax, ay), p| (ax.min(p.x), ay.min(p.y)));
         WorldPoint::new(
@@ -1611,11 +1624,11 @@ impl Board {
             let Some(stroke) = self.doc.find_stroke(id) else {
                 continue;
             };
-            let Some((bbx, bby)) = stroke.points.first().map(|p| (p.x, p.y)) else {
+            let points = stroke.display_points();
+            let Some((bbx, bby)) = points.first().map(|p| (p.x, p.y)) else {
                 continue;
             };
-            let (min_x, min_y) = stroke
-                .points
+            let (min_x, min_y) = points
                 .iter()
                 .fold((bbx, bby), |(ax, ay), p| (ax.min(p.x), ay.min(p.y)));
             let dx = world.x - min_x;
@@ -1704,7 +1717,12 @@ impl Board {
                 let snapshot: Vec<(StrokeId, Vec<InkPoint>)> = self
                     .doc
                     .layer(id)
-                    .map(|l| l.strokes.iter().map(|s| (s.id, s.points.clone())).collect())
+                    .map(|l| {
+                        l.strokes
+                            .iter()
+                            .map(|s| (s.id, s.display_points().into_owned()))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 self.doc.emit(DocOp::RemoveLayer { id });
                 for (sid, pts) in snapshot {
@@ -1729,14 +1747,10 @@ impl Board {
                 if let Some(preset) = preset {
                     sismo::scope!("canvas::build_stroke_path");
                     sismo::counter!("canvas.stroke_points", stroke.points.len());
-                    let path = self.brush_registry.brush(preset.kind).build_path(
-                        &preset,
-                        &stroke,
-                        self.brush_registry.caps(),
-                    );
+                    let path = self.brush_registry.stroke_path(&preset, &stroke);
                     self.cached_paths.insert(id, path);
                 }
-                self.spatial.insert(id, &stroke.points);
+                self.spatial.insert(id, &stroke.display_points());
                 if let Some(layer) = self.doc.layer(layer_id) {
                     let idx = layer
                         .strokes
@@ -1744,6 +1758,23 @@ impl Board {
                         .rposition(|s| s.id == id)
                         .unwrap_or_else(|| layer.strokes.len().saturating_sub(1));
                     self.stroke_index.insert(id, (layer_id, idx));
+                }
+            }
+            op @ (DocOp::SetStrokeFix { id, .. } | DocOp::SetStrokeShape { id, .. }) => {
+                let shown = self
+                    .doc
+                    .find_stroke(id)
+                    .map(|s| s.display_points().into_owned());
+                self.doc.emit(op);
+                if let Some(points) = shown {
+                    self.spatial.remove(id, &points);
+                }
+                if let Some(stroke) = self.doc.find_stroke(id) {
+                    self.spatial.insert(id, &stroke.display_points());
+                    if let Some(preset) = self.doc.preset(stroke.brush) {
+                        let path = self.brush_registry.stroke_path(preset, stroke);
+                        self.cached_paths.insert(id, path);
+                    }
                 }
             }
             // Layer attr, brush registry and bookmark ops don't touch
@@ -1782,7 +1813,7 @@ impl Board {
         if stroke.id != id {
             return None;
         }
-        Some((layer_id, stroke.points.clone(), idx))
+        Some((layer_id, stroke.display_points().into_owned(), idx))
     }
 
     /// Accumulate one eraser sample. Snapshots any touched original
@@ -1834,16 +1865,7 @@ impl Board {
                 let stroke = &layer.strokes[idx];
                 // Spatial query is bbox-only — confirm actual
                 // intersection before snapshotting.
-                if !split_polyline(
-                    &stroke.points,
-                    stroke.cap_start,
-                    stroke.cap_end,
-                    sample.x,
-                    sample.y,
-                    radius,
-                )
-                .touched
-                {
+                if !stroke_touches(stroke, sample.x, sample.y, radius) {
                     continue;
                 }
                 fresh.push((layer_id, stroke.clone()));
@@ -1894,12 +1916,15 @@ impl Board {
         let originals = std::mem::take(&mut session.originals);
         for (layer_id, original) in originals {
             sismo::scope!("canvas::erase_split_stroke");
-            let fragments = cumulative_split(
-                &original.points,
-                original.cap_start,
-                original.cap_end,
-                &circles,
-            );
+            // A beautified stroke or figure is cut where it is shown; the
+            // pieces keep that shape as plain ink.
+            let fragments: Vec<_> = original
+                .display()
+                .iter()
+                .flat_map(|line| {
+                    cumulative_split(line, original.cap_start, original.cap_end, &circles)
+                })
+                .collect();
             self.apply_op(DocOp::RemoveStroke { id: original.id });
             for fragment in fragments {
                 if fragment.points.len() < 2 {
@@ -1915,6 +1940,8 @@ impl Board {
                     cap_start: fragment.cap_start,
                     cap_end: fragment.cap_end,
                     points: fragment.points,
+                    fix: None,
+                    shape: None,
                 };
                 self.apply_op(DocOp::PushStroke {
                     layer_id,
@@ -1948,6 +1975,18 @@ impl Board {
             self.current_config(),
             BrushConfig::Highlighter { straight: true, .. }
         )
+    }
+
+    /// Preset committed strokes reference: the current one, except that
+    /// the shape tool draws its figures with a pen of its own width.
+    const fn stroke_preset(&self) -> BrushPreset {
+        match self.current_preset.kind {
+            BrushKind::Shape(_) => BrushPreset {
+                kind: BrushKind::Pen,
+                ..self.current_preset
+            },
+            _ => self.current_preset,
+        }
     }
 
     /// Swap the mode of the currently-active shape brush. No-op when
@@ -2005,16 +2044,7 @@ impl Board {
                 continue;
             }
             let stroke = &layer.strokes[idx];
-            if !split_polyline(
-                &stroke.points,
-                stroke.cap_start,
-                stroke.cap_end,
-                x,
-                y,
-                radius,
-            )
-            .touched
-            {
+            if !stroke_touches(stroke, x, y, radius) {
                 continue;
             }
             if best.is_none_or(|(bidx, _)| idx > bidx) {
@@ -2058,7 +2088,7 @@ impl Board {
                 continue;
             }
             let stroke = &layer.strokes[idx];
-            if polyline_intersects_rect(&stroke.points, min_x, min_y, max_x, max_y) {
+            if polyline_intersects_rect(&stroke.display_points(), min_x, min_y, max_x, max_y) {
                 targets.push(id);
             }
         }
@@ -2414,8 +2444,9 @@ impl Board {
             let scaled = (f32::from(base.a()) * remote.opacity.clamp(0.0, 1.0) * REMOTE_INK_ALPHA)
                 .clamp(0.0, 255.0) as u8;
             paint.set_color(base.with_a(scaled));
-            let path =
-                renderer.build_path(&remote.preset, &remote.stroke, self.brush_registry.caps());
+            let path = self
+                .brush_registry
+                .stroke_path(&remote.preset, &remote.stroke);
             canvas.draw_path(&path, &paint);
         }
         if let Some(active) = &self.active {
@@ -2434,7 +2465,7 @@ impl Board {
                     let scaled = (f32::from(base.a()) * layer_opacity).clamp(0.0, 255.0) as u8;
                     paint.set_color(base.with_a(scaled));
                 }
-                let path = renderer.build_path(preset, active, self.brush_registry.caps());
+                let path = self.brush_registry.stroke_path(preset, active);
                 canvas.draw_path(&path, &paint);
             }
         }
@@ -3571,6 +3602,14 @@ fn segment_hits_rect(
         && t0 < t1
 }
 
+/// Whether an eraser circle touches `stroke` where it is shown.
+fn stroke_touches(stroke: &Stroke, cx: f32, cy: f32, r: f32) -> bool {
+    stroke
+        .display()
+        .iter()
+        .any(|line| split_polyline(line, stroke.cap_start, stroke.cap_end, cx, cy, r).touched)
+}
+
 /// Clip `points` against a circle. Fragments outside the circle are
 /// preserved; parts inside are dropped, with fresh interpolated
 /// vertices inserted at every circle-boundary crossing. Cap style at
@@ -4278,5 +4317,122 @@ mod tests {
         b.end();
         // Layer hidden → eraser is a no-op there; original survives.
         assert_eq!(b.doc().layer(0).unwrap().strokes.len(), 1);
+    }
+
+    fn line(b: &mut Board, y: f32) -> StrokeId {
+        b.set_current_preset(BrushPreset::pen());
+        b.begin(pt(0.0, y));
+        for x in 1..=20u8 {
+            b.extend(pt(f32::from(x) * 5.0, y));
+        }
+        b.end();
+        b.doc()
+            .layer(0)
+            .and_then(|l| l.strokes.last())
+            .map(|s| s.id)
+            .unwrap()
+    }
+
+    fn shown_bounds(b: &Board, id: StrokeId) -> (f32, f32) {
+        let points = b
+            .doc()
+            .find_stroke(id)
+            .unwrap()
+            .display_points()
+            .into_owned();
+        let ys = points.iter().map(|p| p.y);
+        (
+            ys.clone().fold(f32::MAX, f32::min),
+            ys.fold(f32::MIN, f32::max),
+        )
+    }
+
+    #[test]
+    fn stroke_fix_moves_what_is_shown_and_undoes() {
+        let mut b = Board::default();
+        let id = line(&mut b, 10.0);
+        let fix = notin_beautify::StrokeFix {
+            affine: notin_beautify::Affine::translation(0.0, 1000.0),
+            smooth: notin_beautify::Smooth::Normal,
+        };
+        b.apply_op(DocOp::SetStrokeFix { id, fix: Some(fix) });
+        let (top, _) = shown_bounds(&b, id);
+        assert!((top - 1010.0).abs() < 0.01, "shown at {top}");
+        assert!((b.doc().find_stroke(id).unwrap().points[0].y - 10.0).abs() < f32::EPSILON);
+        assert!(!b.spatial.query_circle(50.0, 1010.0, 2.0).is_empty());
+        assert!(b.spatial.query_circle(50.0, 10.0, 2.0).is_empty());
+        assert!(b.undo());
+        let (top, _) = shown_bounds(&b, id);
+        assert!((top - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn stroke_fix_syncs_and_survives_reload() {
+        let mut a = Board::default();
+        let id = line(&mut a, 10.0);
+        let mut b = Board::default();
+        b.merge_updates(&a.doc().updates_since(&b.doc().version()).unwrap())
+            .unwrap();
+        let since = b.doc().version();
+        let fix = notin_beautify::StrokeFix {
+            affine: notin_beautify::Affine::translation(3.0, 4.0),
+            smooth: notin_beautify::Smooth::Light,
+        };
+        a.apply_op(DocOp::SetStrokeFix { id, fix: Some(fix) });
+        b.merge_updates(&a.doc().updates_since(&since).unwrap())
+            .unwrap();
+        let shown = |board: &Board| {
+            board
+                .doc()
+                .find_stroke(id)
+                .unwrap()
+                .display_points()
+                .into_owned()
+        };
+        assert_eq!(shown(&a), shown(&b));
+        let reloaded = Doc::from_snapshot(&a.doc().snapshot_bytes().unwrap()).unwrap();
+        assert_eq!(reloaded.find_stroke(id).unwrap().fix, Some(fix));
+    }
+
+    #[test]
+    fn shape_tool_commits_a_figure_with_a_pen() {
+        let mut b = Board::default();
+        b.set_current_preset(BrushPreset::shape(ShapeMode::Rect));
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(40.0, 20.0));
+        b.extend(pt(80.0, 60.0));
+        b.end();
+        let stroke = b.doc().layer(0).unwrap().strokes[0].clone();
+        assert!(matches!(
+            stroke.shape.as_ref().map(|s| &s.geom),
+            Some(notin_beautify::ShapeGeom::Polygon { points }) if points.len() == 4
+        ));
+        assert_eq!(
+            b.doc().preset(stroke.brush).map(|p| p.kind),
+            Some(BrushKind::Pen)
+        );
+
+        b.begin(pt(5.0, 5.0));
+        b.end();
+        assert_eq!(
+            b.doc().layer(0).unwrap().strokes.len(),
+            1,
+            "a tap draws nothing"
+        );
+    }
+
+    #[test]
+    fn erasing_a_figure_cuts_it_where_it_is_shown() {
+        let mut b = Board::default();
+        b.set_current_preset(BrushPreset::shape(ShapeMode::Line));
+        b.begin(pt(0.0, 0.0));
+        b.extend(pt(100.0, 0.0));
+        b.end();
+        b.set_current_preset(BrushPreset::eraser());
+        b.begin(pt(50.0, 0.0));
+        b.end();
+        let strokes = &b.doc().layer(0).unwrap().strokes;
+        assert_eq!(strokes.len(), 2);
+        assert!(strokes.iter().all(|s| !s.is_corrected()));
     }
 }

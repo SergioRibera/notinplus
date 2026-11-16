@@ -174,17 +174,17 @@ impl Board {
         let mut bounds = None;
         for layer in self.doc.layers.iter().filter(|l| l.visible && !l.locked) {
             for stroke in &layer.strokes {
+                let points = stroke.display_points();
                 #[allow(clippy::cast_precision_loss)] // point counts
-                let total = stroke.points.len().max(1) as f32;
+                let total = points.len().max(1) as f32;
                 #[allow(clippy::cast_precision_loss)]
-                let hits = stroke
-                    .points
+                let hits = points
                     .iter()
                     .filter(|p| inside(polygon, (p.x, p.y)))
                     .count() as f32;
                 if hits / total >= INSIDE_SHARE {
                     selection.strokes.push(stroke.id);
-                    for p in &stroke.points {
+                    for p in points.iter() {
                         bounds = Some(union(bounds, (p.x, p.y, p.x, p.y)));
                     }
                 }
@@ -201,11 +201,8 @@ impl Board {
         };
         let mut ops = Vec::new();
         for id in &selection.strokes {
-            if let Some((layer_id, mut stroke)) = self.doc.locate_stroke(*id) {
-                for p in &mut stroke.points {
-                    p.x += dx;
-                    p.y += dy;
-                }
+            if let Some((layer_id, stroke)) = self.doc.locate_stroke(*id) {
+                let stroke = stroke.translated(dx, dy);
                 ops.push(DocOp::RemoveStroke { id: *id });
                 ops.push(DocOp::PushStroke { layer_id, stroke });
             }
@@ -257,12 +254,9 @@ impl Board {
             ..Selection::default()
         };
         for id in &selection.strokes {
-            if let Some((layer_id, mut stroke)) = self.doc.locate_stroke(*id) {
+            if let Some((layer_id, stroke)) = self.doc.locate_stroke(*id) {
+                let mut stroke = stroke.translated(d, d);
                 stroke.id = StrokeId::new_v4();
-                for p in &mut stroke.points {
-                    p.x += d;
-                    p.y += d;
-                }
                 copy.strokes.push(stroke.id);
                 ops.push(DocOp::PushStroke { layer_id, stroke });
             }

@@ -67,6 +67,7 @@ uuid = { version = "1", features = ["v4"] }
 tar = { version = "0.4", default-features = false }
 zstd = "0.13"
 notin-plugin = { version = "0.1.0-alpha.4", path = "crates/notin-plugin", features = ["sismo"] }
+notin-beautify = { version = "0.1.0-alpha.4", path = "crates/notin-beautify", features = ["sismo"] }
 notin-ui-kit = { version = "0.1.0-alpha.4", path = "crates/notin-ui-kit", features = ["sismo"] }
 notin-sync = { version = "0.1.0-alpha.4", path = "crates/notin-sync", features = ["sismo"] }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }

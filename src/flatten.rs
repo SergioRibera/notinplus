@@ -29,7 +29,11 @@ pub fn bounds(doc: &Doc) -> Option<(f32, f32, f32, f32)> {
         }));
     };
     for layer in doc.layers.iter().filter(|l| l.visible) {
-        for p in layer.strokes.iter().flat_map(|s| s.points.iter()) {
+        for p in layer
+            .strokes
+            .iter()
+            .flat_map(|s| s.display_points().into_owned())
+        {
             grow(p.x, p.y, p.x, p.y);
         }
         for image in &layer.images {
@@ -71,9 +75,8 @@ pub fn paint(canvas: &Canvas, doc: &Doc, item: ItemId) {
             let Some(preset) = doc.preset(stroke.brush) else {
                 continue;
             };
-            let brush = registry.brush(preset.kind);
-            let path = brush.build_path(preset, stroke, registry.caps());
-            let paint: Paint = brush.paint(preset, stroke.color);
+            let path = registry.stroke_path(preset, stroke);
+            let paint: Paint = registry.brush(preset.kind).paint(preset, stroke.color);
             canvas.draw_path(&path, &paint);
         }
         for image in &layer.images {

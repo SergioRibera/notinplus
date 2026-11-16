@@ -10,7 +10,10 @@
 //! `Stroke`) are `#[istmo::message]` so a document round-trips through
 //! the wire codec without an intermediate DTO layer.
 
+use std::borrow::Cow;
+
 use freya::prelude::Color;
+use notin_beautify::{Heads, Pt, ShapeGeom, StrokeFix, StrokeShape};
 
 use crate::ids::StrokeId;
 
@@ -38,22 +41,15 @@ pub enum BrushKind {
     /// default ribbon renderer so an old doc with a plugin no longer
     /// loaded still opens.
     Custom(u16),
-    /// Geometric primitive drawn from a small set of anchor points
-    /// rather than a continuous polyline. The paired [`ShapeMode`]
-    /// picks which primitive; every shape shares the same paint
-    /// (stroke width + colour from the preset) but a different
-    /// geometry builder in [`crate::render::ShapeBrush`].
+    /// The shape tool. Only ever the current tool: committed strokes
+    /// carry a regular pen preset and the figure in
+    /// [`Stroke::shape`], so tool figures and snapped hand-drawn ones
+    /// render the same way.
     Shape(ShapeMode),
 }
 
-/// Geometric family selected when the brush kind is
-/// [`BrushKind::Shape`].
-///
-/// Every mode consumes exactly two anchor samples: the pen-down
-/// position (anchor A) and the current cursor (anchor B, updated
-/// live during drag). Extending post-commit editing to N-point
-/// polygons lives on a separate follow-up — the two-anchor rubber
-/// band is enough for the primitives in this list.
+/// Figure the shape tool draws, dragged from anchor A (pen down) to
+/// anchor B (cursor).
 #[istmo::message]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum ShapeMode {
@@ -62,12 +58,53 @@ pub enum ShapeMode {
     Line,
     /// Straight dashed segment A→B.
     Dashed,
-    /// Solid segment A→B terminating in an arrowhead at B.
+    /// Segment A→B with an arrowhead at B.
     Arrow,
-    /// Axis-aligned outline rectangle with corners at A and B.
+    /// Axis-aligned rectangle with corners at A and B.
     Rect,
-    /// Outline circle centred at A with radius `|AB|`.
+    /// Circle centred at A through B.
     Circle,
+    /// Triangle with its base along the bottom of the A–B box and its
+    /// apex centred on top.
+    Triangle,
+}
+
+impl ShapeMode {
+    /// The figure dragged from `a` to `b`. `None` while A and B coincide.
+    #[must_use]
+    pub fn figure(self, a: Pt, b: Pt) -> Option<StrokeShape> {
+        if a.distance(b) < f32::EPSILON {
+            return None;
+        }
+        let geom = match self {
+            Self::Line | Self::Dashed => ShapeGeom::Line { a, b },
+            Self::Arrow => ShapeGeom::Arrow {
+                a,
+                b,
+                heads: Heads::End,
+            },
+            Self::Rect => ShapeGeom::Polygon {
+                points: vec![a, Pt::new(b.x, a.y), b, Pt::new(a.x, b.y)],
+            },
+            Self::Circle => ShapeGeom::Ellipse {
+                center: a,
+                rx: a.distance(b),
+                ry: a.distance(b),
+                rotation: 0.0,
+            },
+            Self::Triangle => {
+                let (top, bottom) = (a.y.min(b.y), a.y.max(b.y));
+                ShapeGeom::Polygon {
+                    points: vec![
+                        Pt::new(f32::midpoint(a.x, b.x), top),
+                        Pt::new(b.x.max(a.x), bottom),
+                        Pt::new(b.x.min(a.x), bottom),
+                    ],
+                }
+            }
+        };
+        Some(StrokeShape::plain(geom, self == Self::Dashed))
+    }
 }
 
 /// Pressure→width shaping applied on top of the linear width envelope.
@@ -478,6 +515,9 @@ pub enum CapStyle {
 /// One drawn stroke. `points` are raw samples — every re-render walks
 /// them through [`BrushPreset::plan`] so zoom/resolution changes never
 /// bake into the geometry.
+///
+/// A correction ([`Self::fix`] or [`Self::shape`]) changes what is
+/// shown, never `points`.
 #[istmo::message]
 #[derive(Clone, PartialEq, Debug)]
 pub struct Stroke {
@@ -487,7 +527,19 @@ pub struct Stroke {
     pub cap_start: CapStyle,
     pub cap_end: CapStyle,
     pub points: Vec<InkPoint>,
+    /// Beautified handwriting: `points` smoothed and moved onto the line.
+    pub fix: Option<StrokeFix>,
+    /// Figure the stroke snapped to, shown instead of `points` (and of
+    /// `fix`).
+    pub shape: Option<StrokeShape>,
 }
+
+/// Largest gap between samples when a figure is traced, in world units.
+const SHAPE_STEP: f32 = 4.0;
+/// Dash and gap lengths of a dashed figure, in world units.
+const SHAPE_DASH: (f32, f32) = (10.0, 6.0);
+/// Pressure along figures that carry none (made with the shape tool).
+const SHAPE_PRESSURE: u8 = 128;
 
 impl Stroke {
     #[must_use]
@@ -499,8 +551,95 @@ impl Stroke {
             cap_start: CapStyle::Round,
             cap_end: CapStyle::Round,
             points: vec![first],
+            fix: None,
+            shape: None,
         }
     }
+
+    /// Whether what is shown differs from the raw samples.
+    #[must_use]
+    pub const fn is_corrected(&self) -> bool {
+        self.fix.is_some() || self.shape.is_some()
+    }
+
+    /// The polylines shown for this stroke: the raw samples, the fixed
+    /// handwriting, or the figure (outline, then arrow heads or dashes).
+    #[must_use]
+    pub fn display(&self) -> Vec<Cow<'_, [InkPoint]>> {
+        if let Some(shape) = &self.shape {
+            return shape
+                .polylines(SHAPE_STEP, SHAPE_DASH)
+                .into_iter()
+                .map(|line| {
+                    line.into_iter()
+                        .map(|(p, t)| {
+                            let pressure = shape.pressure_at(t).unwrap_or(SHAPE_PRESSURE);
+                            InkPoint::new(p.x, p.y, pressure, 0, 0)
+                        })
+                        .collect::<Vec<_>>()
+                        .into()
+                })
+                .collect();
+        }
+        if let Some(fix) = &self.fix {
+            return vec![fixed_points(fix, &self.points).into()];
+        }
+        vec![Cow::Borrowed(&self.points)]
+    }
+
+    /// Every point shown, all polylines together: for bounds, hit tests
+    /// and the spatial index.
+    #[must_use]
+    pub fn display_points(&self) -> Cow<'_, [InkPoint]> {
+        if !self.is_corrected() {
+            return Cow::Borrowed(&self.points);
+        }
+        self.display()
+            .into_iter()
+            .flat_map(Cow::into_owned)
+            .collect::<Vec<_>>()
+            .into()
+    }
+
+    /// The stroke moved by `(dx, dy)`: raw samples, figure and fix
+    /// together, so turning the correction off later lands in place.
+    #[must_use]
+    pub fn translated(mut self, dx: f32, dy: f32) -> Self {
+        for p in &mut self.points {
+            p.x += dx;
+            p.y += dy;
+        }
+        if let Some(shape) = &mut self.shape {
+            shape.geom = shape.geom.translated(dx, dy);
+        }
+        if let Some(fix) = &mut self.fix {
+            // Raw points moved by d: undo what the linear part does to d,
+            // then move by d.
+            let a = fix.affine;
+            fix.affine = a.translated(
+                dx - a.a.mul_add(dx, a.c * dy),
+                dy - a.b.mul_add(dx, a.d * dy),
+            );
+        }
+        self
+    }
+}
+
+/// `raw` smoothed and transformed by `fix`, pressure smoothed alike.
+fn fixed_points(fix: &StrokeFix, raw: &[InkPoint]) -> Vec<InkPoint> {
+    let positions: Vec<Pt> = raw.iter().map(|p| Pt::new(p.x, p.y)).collect();
+    let pressure: Vec<u8> = raw.iter().map(|p| p.pressure).collect();
+    let pressure = notin_beautify::smooth_pressure(&pressure, fix.smooth);
+    fix.apply(&positions)
+        .into_iter()
+        .zip(raw.iter().zip(pressure))
+        .map(|(p, (sample, pressure))| InkPoint {
+            x: p.x,
+            y: p.y,
+            pressure,
+            ..*sample
+        })
+        .collect()
 }
 
 /// Instructions for rendering one segment of a stroke.

@@ -113,6 +113,16 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
+    "notin-beautify" = rec {
+      packageId = "notin-beautify";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "notin-beautify";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "notin-bible" = rec {
       packageId = "notin-bible";
       build = internal.buildRustCrateWithFeatures {
@@ -17099,6 +17109,34 @@ rec {
         ];
 
       };
+      "notin-beautify" = rec {
+        crateName = "notin-beautify";
+        version = "0.1.0-alpha.4";
+        edition = "2024";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/notin-beautify; };
+        libName = "notin_beautify";
+        authors = [
+          "Sergio Ribera <contact@sergioribera.rs>"
+        ];
+        dependencies = [
+          {
+            name = "sismo";
+            packageId = "sismo";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "wincode";
+            packageId = "wincode";
+            usesDefaultFeatures = false;
+            features = [ "derive" "std" ];
+          }
+        ];
+        features = {
+          "sismo" = [ "dep:sismo" ];
+        };
+        resolvedDefaultFeatures = [ "sismo" ];
+      };
       "notin-bible" = rec {
         crateName = "notin-bible";
         version = "0.1.0-alpha.4";
@@ -17804,6 +17842,11 @@ rec {
           {
             name = "loro";
             packageId = "loro";
+          }
+          {
+            name = "notin-beautify";
+            packageId = "notin-beautify";
+            features = [ "sismo" ];
           }
           {
             name = "notin-bible";
