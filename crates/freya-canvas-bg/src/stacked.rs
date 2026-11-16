@@ -178,6 +178,14 @@ impl CanvasBackground for StackedPagesBackground {
         })
     }
 
+    fn rule_spacing_at(&self, x: f32, y: f32) -> Option<f32> {
+        self.layout
+            .iter()
+            .position(|pl| pl.rect.contains(x, y))
+            .and_then(|i| self.providers.get(i))
+            .and_then(|provider| provider.rule_spacing())
+    }
+
     #[cfg_attr(feature = "sismo", sismo::function("bg::stacked_paint"))]
     fn paint(&self, cx: &mut BgPaintCtx<'_>) {
         for (i, pl) in self.layout.iter().enumerate() {

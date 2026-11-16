@@ -160,6 +160,32 @@ impl Component for Pen {
                 |i| SettingsStore::get().update(|s| s.pen.double_tap = PenDoubleTap::ALL[i]),
             ))
             .child(
+                Section::new(tr!("settings-pen-writing")).child(
+                    Group::default()
+                        .child(
+                            ListRow::new(tr!("settings-pen-beautify"))
+                                .subtitle(tr!("settings-pen-beautify-hint"))
+                                .trailing(Trailing::Switch {
+                                    on: pen.beautify_writing,
+                                    on_toggle: EventHandler::new(|on| {
+                                        SettingsStore::get()
+                                            .update(|s| s.pen.beautify_writing = on);
+                                    }),
+                                }),
+                        )
+                        .child(
+                            ListRow::new(tr!("settings-pen-snap-shapes"))
+                                .subtitle(tr!("settings-pen-snap-shapes-hint"))
+                                .trailing(Trailing::Switch {
+                                    on: pen.snap_shapes,
+                                    on_toggle: EventHandler::new(|on| {
+                                        SettingsStore::get().update(|s| s.pen.snap_shapes = on);
+                                    }),
+                                }),
+                        ),
+                ),
+            )
+            .child(
                 Section::new(tr!("settings-pen-shortcuts"))
                     .child(Text::new(tr!("settings-pen-shortcuts-hint")).role(TextRole::Hint))
                     .child(

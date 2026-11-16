@@ -65,6 +65,10 @@ impl CanvasBackground for LinedBackground {
         Some(self.surface)
     }
 
+    fn rule_spacing_at(&self, _world_x: f32, _world_y: f32) -> Option<f32> {
+        (self.spacing > 0.0).then_some(self.spacing)
+    }
+
     #[allow(clippy::cast_precision_loss)]
     #[cfg_attr(feature = "sismo", sismo::function("bg::lined_paint"))]
     fn paint(&self, cx: &mut BgPaintCtx<'_>) {
@@ -126,6 +130,10 @@ impl Default for GridBackground {
 impl CanvasBackground for GridBackground {
     fn viewport_backdrop(&self) -> Option<Color> {
         Some(self.surface)
+    }
+
+    fn rule_spacing_at(&self, _world_x: f32, _world_y: f32) -> Option<f32> {
+        (self.spacing > 0.0).then_some(self.spacing)
     }
 
     #[allow(clippy::cast_precision_loss)]

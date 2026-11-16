@@ -49,6 +49,7 @@ use crate::text_box::TextBoxId;
 use crate::undo::UndoStack;
 use notin_beautify::Pt;
 
+mod beautify;
 mod ink_cache;
 mod lasso;
 mod tools;
@@ -58,6 +59,7 @@ pub use lasso::Selection;
 mod image;
 mod text;
 
+pub use beautify::{Options as BeautifyOptions, WORD_IDLE};
 pub use ink_cache::InkCache;
 
 pub use text::{SceneText, TextLayerView, TextScene};
@@ -179,6 +181,8 @@ pub struct Board {
     /// commit / erase / load — repainting is a `HashMap` lookup plus a
     /// single `draw_path` call.
     cached_paths: HashMap<StrokeId, Path>,
+    /// Handwriting beautification: open word, line, settling fixes.
+    beautify: beautify::Beautify,
     lasso: lasso::LassoState,
     touch: touch::TouchState,
     previous_preset: Option<BrushPreset>,
@@ -441,6 +445,7 @@ impl Default for Board {
             brush_configs: HashMap::new(),
             spatial: SpatialIndex::new(),
             cached_paths: HashMap::new(),
+            beautify: beautify::Beautify::default(),
             lasso: lasso::LassoState::default(),
             touch: touch::TouchState::default(),
             previous_preset: None,
@@ -961,6 +966,7 @@ impl Board {
         self.text_heights.clear();
         self.touch_text_scene();
         self.undo.clear();
+        self.forget_word();
         self.rebuild_derived();
     }
 
@@ -1048,6 +1054,7 @@ impl Board {
         let Some(brush) = self.doc.register_brush(self.stroke_preset()) else {
             return;
         };
+        self.prune_settled();
         self.active_layer_at_begin = Some(target);
         let id = self.doc.allocate_stroke_id();
         self.active = Some(Stroke::new(id, brush, self.current_color, point));
@@ -1162,7 +1169,10 @@ impl Board {
                 self.notify();
                 return;
             }
+            self.beautify_before_commit(&active);
+            let id = active.id;
             self.commit_stroke(active);
+            self.beautify_after_commit(id);
             self.two_point_active = false;
             self.notify_commit();
         }
@@ -1217,6 +1227,7 @@ impl Board {
         }
         self.end_text_session();
         self.end_image_session();
+        self.forget_word();
         let Some(entry) = self.undo.pop_undo() else {
             return false;
         };
@@ -1252,6 +1263,7 @@ impl Board {
         }
         self.end_text_session();
         self.end_image_session();
+        self.forget_word();
         let Some(entry) = self.undo.pop_redo() else {
             return false;
         };
@@ -2376,6 +2388,9 @@ impl Board {
                 sismo::scope!("canvas::paint_strokes");
                 for stroke in &layer.strokes {
                     let dragged = self.drag_offset_of_stroke(stroke.id);
+                    if self.is_settling(stroke.id) {
+                        continue;
+                    }
                     if dragged.is_none()
                         && let Some(set) = visible.as_ref()
                         && !set.contains(&stroke.id)
@@ -2449,6 +2464,7 @@ impl Board {
                 .stroke_path(&remote.preset, &remote.stroke);
             canvas.draw_path(&path, &paint);
         }
+        self.paint_settling(canvas);
         if let Some(active) = &self.active {
             sismo::scope!("canvas::paint_live_stroke");
             sismo::counter!("canvas.live_stroke_points", active.points.len());
@@ -2966,6 +2982,16 @@ pub fn drawing_surface(
         .viewport_backdrop()
         .unwrap_or_else(|| SkColor::from_rgb(250, 250, 248));
     let backdrop = Color::from_argb(backdrop.a(), backdrop.r(), backdrop.g(), backdrop.b());
+    // Pen settings and reduced motion reach the board here; the read
+    // subscribes, so a change in Settings re-applies them.
+    if let Some(settings) = crate::settings::SettingsStore::try_get() {
+        let pen = settings.read().pen;
+        lock(board).set_beautify_options(beautify::Options {
+            writing: pen.beautify_writing,
+            shapes: pen.snap_shapes,
+            animate: !notin_ui_kit::reduce_motion(),
+        });
+    }
     // Keyed per mount, so two surfaces of one board (a document open in
     // two panes) each keep their pen-pump entry.
     let id = freya::prelude::use_hook(crate::pen_pump::allocate_canvas_surface_id);

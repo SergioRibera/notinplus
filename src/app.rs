@@ -117,6 +117,7 @@ fn spawn_prefs_worker(board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
                     current_color: Some(g.current_color()),
                     size_scales: g.size_scales_snapshot(),
                     input_mode_pan: matches!(g.input_mode(), InputMode::Pan),
+                    style: g.style_profile().clone(),
                 }
             };
             if let Err(err) = prefs::save_prefs(&snapshot) {
@@ -638,8 +639,10 @@ pub(crate) fn mount_board(mount: CanvasMount, state: &ChromeState) -> Arc<Mutex<
             g.set_current_color(color);
         }
         g.set_input_mode(saved.input_mode());
+        g.set_style_profile(saved.style);
         g.set_prefs_sink(prefs_tx);
     }
+    spawn_word_timer(&board);
     // Seed chrome signals from the restored board state. Done after
     // the prefs apply so overlays open on the correct preset / size
     // / mode on first paint.
@@ -748,4 +751,29 @@ pub(crate) fn canvas_chrome(
             area: state.text_toolbar_area,
             pad,
         })
+}
+
+/// Close a handwritten word once the pen rests. The board sends the open
+/// word's generation after every stroke; a newer one arriving during the
+/// wait restarts it. Exits when the board (and its sender) drops.
+fn spawn_word_timer(board: &Arc<Mutex<Board>>) {
+    let (tx, rx) = flume::unbounded::<u64>();
+    lock(board).set_word_waker(tx);
+    let board = Arc::downgrade(board);
+    spawn(traced!("task::app::word_timer", async move {
+        while let Ok(mut generation) = rx.recv_async().await {
+            loop {
+                async_io::Timer::after(crate::canvas::WORD_IDLE).await;
+                match rx.try_recv() {
+                    Ok(newer) => generation = newer,
+                    Err(_) => break,
+                }
+            }
+            let Some(board) = board.upgrade() else {
+                return;
+            };
+            sismo::scope!("app::flush_word");
+            lock(&board).flush_word(generation);
+        }
+    }));
 }

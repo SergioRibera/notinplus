@@ -100,11 +100,24 @@ pub trait PageProvider: Send + Sync + std::fmt::Debug {
     /// current viewport zoom — implementations that cache bitmaps use
     /// it to pick a level of detail.
     fn paint(&self, canvas: &Canvas, rect: Rect, scale: f32);
+
+    /// Spacing of the page's horizontal rules, if it is ruled. Rules sit
+    /// at whole multiples of the spacing in world `y`.
+    fn rule_spacing(&self) -> Option<f32> {
+        None
+    }
 }
 
 impl PageProvider for SolidPageProvider {
     fn natural_size(&self) -> (f32, f32) {
         self.size
+    }
+
+    fn rule_spacing(&self) -> Option<f32> {
+        match self.grid {
+            Some(Grid::Lines { spacing, .. }) if spacing > 0.0 => Some(spacing),
+            _ => None,
+        }
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("bg::solid_page_paint"))]

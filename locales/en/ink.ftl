@@ -17,6 +17,7 @@ ink-undo = Undo
 ink-redo = Redo
 ink-more-tools = More tools
 ink-layers = Layers
+ink-beautify = Beautify handwriting
 ink-tools-title = Tools
 ink-size = Size
 ink-pressure = Pressure

@@ -218,6 +218,10 @@ pub struct PenSettings {
     /// Ignore hand contacts while the pen is down.
     pub palm_rejection: bool,
     pub double_tap: PenDoubleTap,
+    /// Straighten and even out each handwritten word once it is done.
+    pub beautify_writing: bool,
+    /// Holding the pen still at the end of a stroke snaps it to a figure.
+    pub snap_shapes: bool,
     /// The two bubbles above the + button.
     pub fab_shortcuts: [Option<EntryKey>; 2],
 }
@@ -228,6 +232,8 @@ impl Default for PenSettings {
             finger_draws: FingerDraw::Automatic,
             palm_rejection: true,
             double_tap: PenDoubleTap::Eraser,
+            beautify_writing: true,
+            snap_shapes: true,
             fab_shortcuts: [None, None],
         }
     }

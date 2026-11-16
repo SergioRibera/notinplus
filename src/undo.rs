@@ -134,6 +134,29 @@ impl UndoStack {
         self.depth = 0;
     }
 
+    /// Newest undoable action.
+    #[must_use]
+    pub fn top(&self) -> Option<&UndoEntry> {
+        self.undo.last()
+    }
+
+    /// Fold `forward` (with `inverse`, in the order it must be applied)
+    /// into the newest entry, as if it had been part of that action.
+    /// `false`, and nothing changes, without an entry or inside a
+    /// transaction.
+    #[sismo::function("undo::amend_top")]
+    pub fn amend_top(&mut self, forward: Vec<DocOp>, inverse: Vec<DocOp>) -> bool {
+        if self.depth > 0 {
+            return false;
+        }
+        let Some(top) = self.undo.last_mut() else {
+            return false;
+        };
+        top.forward.extend(forward);
+        top.inverse.splice(0..0, inverse);
+        true
+    }
+
     #[must_use]
     pub const fn in_tx(&self) -> bool {
         self.depth > 0

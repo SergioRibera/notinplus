@@ -52,6 +52,8 @@ pub struct Prefs {
     /// as `bool` so a future `InputMode` variant doesn't force a schema
     /// bump on existing files.
     pub input_mode_pan: bool,
+    /// The writer's handwriting style, learned from beautified words.
+    pub style: notin_beautify::StyleProfile,
 }
 
 impl Prefs {

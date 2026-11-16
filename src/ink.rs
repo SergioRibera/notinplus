@@ -570,6 +570,17 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
                     })
                     .into_element()
             },
+            notin_ui_kit::ListRow::new(tr!("ink-beautify"))
+                .icon(lucide::wand_sparkles())
+                .trailing(notin_ui_kit::Trailing::Switch {
+                    on: crate::settings::SettingsStore::try_get()
+                        .is_some_and(|s| s.peek().pen.beautify_writing),
+                    on_toggle: EventHandler::new(|on| {
+                        crate::settings::SettingsStore::get()
+                            .update(|s| s.pen.beautify_writing = on);
+                    }),
+                })
+                .into_element(),
             {
                 let board = Arc::clone(board);
                 notin_ui_kit::ListRow::new(tr!("ink-layers"))

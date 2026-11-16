@@ -10,7 +10,7 @@ settings-section-about = Acerca de
 
 # Palabras separadas por comas que encuentran cada sección desde la búsqueda.
 settings-keywords-appearance = tema, noche, día, sepia, contraste, oled, color, acento, texto, tamaño, movimiento, oscuro, claro, idioma
-settings-keywords-pen = dedo, palma, doble toque, goma, escritura, atajos, lápiz, pen, stylus
+settings-keywords-pen = dedo, palma, doble toque, goma, escritura, embellecer, figuras, atajos, lápiz, pen, stylus
 settings-keywords-notes = markdown, formato, referencias, al lado, marcas, citas
 settings-keywords-library = papelera, exportar, importar, espacio, copia, backup, días, almacenamiento
 settings-keywords-devices = vincular, sincronizar, código, qr, escanear, enlace, servidor, nombre, dispositivo

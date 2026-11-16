@@ -239,6 +239,13 @@ pub trait CanvasBackground: Send + Sync + std::fmt::Debug {
         None
     }
 
+    /// Spacing of the horizontal rules under world point `(x, y)`, if
+    /// the paper there is ruled. Rules sit at whole multiples of the
+    /// spacing in world `y`, so handwriting can be set on them.
+    fn rule_spacing_at(&self, _world_x: f32, _world_y: f32) -> Option<f32> {
+        None
+    }
+
     /// Draw the background in world coordinates.
     fn paint(&self, cx: &mut BgPaintCtx<'_>);
 

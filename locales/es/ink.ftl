@@ -17,6 +17,7 @@ ink-undo = Deshacer
 ink-redo = Rehacer
 ink-more-tools = Más herramientas
 ink-layers = Capas
+ink-beautify = Embellecer escritura
 ink-tools-title = Herramientas
 ink-size = Grosor
 ink-pressure = Presión
