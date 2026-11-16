@@ -1796,7 +1796,9 @@ impl Board {
                     self.stroke_index.insert(id, (layer_id, idx));
                 }
             }
-            op @ (DocOp::SetStrokeFix { id, .. } | DocOp::SetStrokeShape { id, .. }) => {
+            op @ (DocOp::SetStrokeFix { id, .. }
+            | DocOp::SetStrokeShape { id, .. }
+            | DocOp::MoveStroke { id, .. }) => {
                 let shown = self
                     .doc
                     .find_stroke(id)

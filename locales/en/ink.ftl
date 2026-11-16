@@ -40,6 +40,8 @@ ink-shape-triangle = Triangle
 ink-lasso-move = Move
 ink-lasso-move-hint = Drag the selection to move it
 ink-lasso-duplicate = Duplicate
+ink-lasso-beautify = Beautify
+ink-lasso-original = Original
 ink-lasso-delete = Delete
 ink-zoom-reset = Back to 100%
 # $percent: zoom level as a whole number.

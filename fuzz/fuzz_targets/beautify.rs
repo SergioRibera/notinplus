@@ -1,9 +1,11 @@
-//! Any ink: beautifying it never panics, never yields NaN, and a word
-//! correction always stays a small change.
+//! Any ink: beautifying it or fitting figures never panics, never yields
+//! NaN, and a word correction always stays a small change.
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use notin_beautify::{Line, Pt, Smooth, Target, correct_word, smooth_points};
+use notin_beautify::{
+    Context, Line, Pt, Smooth, Target, beautify_all, correct_word, fit_shape, smooth_points,
+};
 
 /// Strokes from raw bytes: 4 bytes per point, a 0xFF x-byte splits.
 fn strokes(data: &[u8]) -> Vec<Vec<Pt>> {
@@ -26,6 +28,11 @@ fn strokes(data: &[u8]) -> Vec<Vec<Pt>> {
 fuzz_target!(|data: &[u8]| {
     let ink = strokes(data);
     for stroke in &ink {
+        for strict in [false, true] {
+            if let Some(geom) = fit_shape(stroke, strict) {
+                assert!(geom.trace(4.0).iter().all(|p| p.x.is_finite() && p.y.is_finite()));
+            }
+        }
         for level in [Smooth::Light, Smooth::Normal] {
             let out = smooth_points(stroke, level);
             assert_eq!(out.len(), stroke.len());
@@ -33,6 +40,7 @@ fuzz_target!(|data: &[u8]| {
         }
     }
     let refs: Vec<&[Pt]> = ink.iter().map(Vec::as_slice).collect();
+    let _ = beautify_all(&refs, &Context::default());
     let target = Target {
         baseline: Some(Line::horizontal(300.0)),
         x_height: Some(20.0),

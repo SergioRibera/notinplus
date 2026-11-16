@@ -492,6 +492,11 @@ impl Doc {
                     stroke.shape.clone_from(shape);
                 }
             }
+            DocOp::MoveStroke { id, dx, dy } => {
+                if let Some(stroke) = self.stroke_mut(*id) {
+                    stroke.translate(*dx, *dy);
+                }
+            }
         }
     }
 
@@ -754,6 +759,11 @@ impl Doc {
                     }]
                 })
                 .unwrap_or_default(),
+            DocOp::MoveStroke { id, dx, dy } => vec![DocOp::MoveStroke {
+                id: *id,
+                dx: -dx,
+                dy: -dy,
+            }],
         }
     }
 

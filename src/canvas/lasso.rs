@@ -3,7 +3,10 @@
 
 use freya_engine::prelude::{Canvas, Color as SkColor, Paint, PaintStyle, PathBuilder, PathEffect};
 
+use notin_beautify::{Context, Outcome, Pt, StrokeShape, beautify_all};
+
 use super::Board;
+use crate::brush::Stroke;
 use crate::doc_op::DocOp;
 use crate::ids::StrokeId;
 
@@ -36,6 +39,14 @@ impl Selection {
     pub const fn offset(&self) -> (f32, f32) {
         self.offset
     }
+}
+
+/// A selected stroke as beautifying reads it.
+struct SelectedInk {
+    id: StrokeId,
+    points: Vec<Pt>,
+    /// Points with their pressure.
+    ink: Vec<(Pt, u8)>,
 }
 
 /// Lasso state on the board: the loop being drawn and what it caught.
@@ -199,14 +210,11 @@ impl Board {
         let Some(selection) = self.lasso.selection.clone() else {
             return;
         };
-        let mut ops = Vec::new();
-        for id in &selection.strokes {
-            if let Some((layer_id, stroke)) = self.doc.locate_stroke(*id) {
-                let stroke = stroke.translated(dx, dy);
-                ops.push(DocOp::RemoveStroke { id: *id });
-                ops.push(DocOp::PushStroke { layer_id, stroke });
-            }
-        }
+        let ops = selection
+            .strokes
+            .iter()
+            .map(|id| DocOp::MoveStroke { id: *id, dx, dy })
+            .collect();
         self.apply_ops_as_one(ops);
         if let Some(s) = self.lasso.selection.as_mut() {
             s.bounds = (
@@ -277,6 +285,138 @@ impl Board {
             .map(|id| DocOp::RemoveStroke { id: *id })
             .collect();
         self.apply_ops_as_one(ops);
+    }
+
+    /// Beautify the selected ink: handwriting is corrected word by word
+    /// on its lines, loose strokes that pass as figures snap. Works on any
+    /// ink (old, received, written with the switch off) and recomputes
+    /// ink already beautified. One undo step.
+    #[sismo::function("lasso::beautify")]
+    pub fn selection_beautify(&mut self) {
+        let Some(selection) = self.lasso.selection.clone() else {
+            return;
+        };
+        let strokes: Vec<SelectedInk> = selection
+            .strokes
+            .iter()
+            .filter_map(|id| self.doc.find_stroke(*id))
+            .filter(|s| {
+                self.doc
+                    .preset(s.brush)
+                    .is_some_and(|p| super::beautify::writes(p.kind))
+            })
+            .map(|s| {
+                let ink: Vec<(Pt, u8)> = s
+                    .points
+                    .iter()
+                    .map(|p| (Pt::new(p.x, p.y), p.pressure))
+                    .collect();
+                SelectedInk {
+                    id: s.id,
+                    points: ink.iter().map(|(p, _)| *p).collect(),
+                    ink,
+                }
+            })
+            .collect();
+        let refs: Vec<&[Pt]> = strokes.iter().map(|s| s.points.as_slice()).collect();
+        let background = std::sync::Arc::clone(&self.background);
+        let rules = move |p: Pt| background.rule_spacing_at(p.x, p.y);
+        let context = Context {
+            slant: self.style_profile().slant(),
+            rules: Some(&rules),
+        };
+        let mut ops = Vec::new();
+        for outcome in beautify_all(&refs, &context) {
+            match outcome {
+                Outcome::Word {
+                    strokes: members,
+                    fix,
+                } => {
+                    for i in members {
+                        let id = strokes[i].id;
+                        ops.push(DocOp::SetStrokeShape { id, shape: None });
+                        ops.push(DocOp::SetStrokeFix { id, fix: Some(fix) });
+                    }
+                }
+                Outcome::Shape { stroke, geom } => {
+                    let SelectedInk { id, ink, .. } = &strokes[stroke];
+                    ops.push(DocOp::SetStrokeFix { id: *id, fix: None });
+                    ops.push(DocOp::SetStrokeShape {
+                        id: *id,
+                        shape: Some(StrokeShape::from_ink(geom, ink)),
+                    });
+                }
+            }
+        }
+        // Skip what would not change, so a second press is a no-op.
+        ops.retain(|op| match op {
+            DocOp::SetStrokeFix { id, fix } => {
+                self.doc.find_stroke(*id).is_some_and(|s| s.fix != *fix)
+            }
+            DocOp::SetStrokeShape { id, shape } => {
+                self.doc.find_stroke(*id).is_some_and(|s| s.shape != *shape)
+            }
+            _ => true,
+        });
+        self.apply_ops_as_one(ops);
+        self.refresh_selection_bounds();
+    }
+
+    /// Bring the selected ink back to how it was drawn.
+    #[sismo::function("lasso::original")]
+    pub fn selection_original(&mut self) {
+        let Some(selection) = self.lasso.selection.clone() else {
+            return;
+        };
+        let mut ops = Vec::new();
+        for stroke in selection
+            .strokes
+            .iter()
+            .filter_map(|id| self.doc.find_stroke(*id))
+        {
+            if stroke.fix.is_some() {
+                ops.push(DocOp::SetStrokeFix {
+                    id: stroke.id,
+                    fix: None,
+                });
+            }
+            if stroke.shape.is_some() {
+                ops.push(DocOp::SetStrokeShape {
+                    id: stroke.id,
+                    shape: None,
+                });
+            }
+        }
+        self.apply_ops_as_one(ops);
+        self.refresh_selection_bounds();
+    }
+
+    /// Whether any selected stroke shows a correction.
+    #[must_use]
+    pub fn selection_is_corrected(&self) -> bool {
+        self.lasso.selection.as_ref().is_some_and(|s| {
+            s.strokes
+                .iter()
+                .filter_map(|id| self.doc.find_stroke(*id))
+                .any(Stroke::is_corrected)
+        })
+    }
+
+    /// Selection frame around the selected ink as it is now shown.
+    fn refresh_selection_bounds(&mut self) {
+        let Some(selection) = self.lasso.selection.as_ref() else {
+            return;
+        };
+        let bounds = selection
+            .strokes
+            .iter()
+            .filter_map(|id| self.doc.find_stroke(*id))
+            .flat_map(|s| s.display_points().into_owned())
+            .fold(None, |acc, p| Some(union(acc, (p.x, p.y, p.x, p.y))));
+        if let (Some(bounds), Some(selection)) = (bounds, self.lasso.selection.as_mut()) {
+            selection.bounds = bounds;
+        }
+        self.notify();
     }
 
     /// Whether a selection is being dragged.
@@ -421,6 +561,49 @@ mod board_tests {
         assert_eq!(board.doc().stroke_count(), 3);
         board.selection_delete();
         assert_eq!(board.doc().stroke_count(), 2);
+    }
+
+    fn circle(board: &mut Board, (cx, cy): (f32, f32), r: f32) {
+        let at = |i: u8| {
+            let t = std::f32::consts::TAU * f32::from(i) / 60.0;
+            InkPoint::new(r.mul_add(t.cos(), cx), r.mul_add(t.sin(), cy), 128, 0, 0)
+        };
+        board.begin_screen(at(0));
+        for i in 1..=60 {
+            board.extend_screen(at(i));
+        }
+        board.end();
+    }
+
+    #[test]
+    fn beautify_and_original_on_a_selection() {
+        let mut board = Board::default();
+        board.set_beautify_options(crate::canvas::BeautifyOptions {
+            writing: false,
+            ..crate::canvas::BeautifyOptions::default()
+        });
+        circle(&mut board, (300.0, 300.0), 80.0);
+        board.set_input_mode(InputMode::Lasso);
+        lasso(
+            &mut board,
+            &[
+                (150.0, 150.0),
+                (450.0, 150.0),
+                (450.0, 450.0),
+                (150.0, 450.0),
+                (150.0, 150.0),
+            ],
+        );
+        let depth = board.undo_depth();
+        board.selection_beautify();
+        assert_eq!(board.undo_depth(), depth + 1, "one step");
+        assert!(board.doc().strokes().all(|s| s.shape.is_some()));
+        assert!(board.selection_is_corrected());
+        board.selection_beautify();
+        assert_eq!(board.undo_depth(), depth + 1, "nothing left to change");
+        board.selection_original();
+        assert!(board.doc().strokes().all(|s| !s.is_corrected()));
+        assert_eq!(board.undo_depth(), depth + 2);
     }
 
     #[test]

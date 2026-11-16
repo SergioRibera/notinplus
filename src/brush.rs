@@ -605,6 +605,12 @@ impl Stroke {
     /// together, so turning the correction off later lands in place.
     #[must_use]
     pub fn translated(mut self, dx: f32, dy: f32) -> Self {
+        self.translate(dx, dy);
+        self
+    }
+
+    /// Move by `(dx, dy)` in place; see [`Self::translated`].
+    pub fn translate(&mut self, dx: f32, dy: f32) {
         for p in &mut self.points {
             p.x += dx;
             p.y += dy;
@@ -621,7 +627,6 @@ impl Stroke {
                 dy - a.b.mul_add(dx, a.d * dy),
             );
         }
-        self
     }
 }
 

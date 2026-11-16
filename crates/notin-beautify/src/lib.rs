@@ -9,6 +9,7 @@
 //!
 //! No UI, no document model: points in, corrections out.
 
+mod batch;
 mod geom;
 mod layout;
 mod metrics;
@@ -19,6 +20,7 @@ mod style;
 mod testing;
 mod word;
 
+pub use batch::{Context, Outcome, beautify_all};
 pub use geom::{Heads, ShapeGeom, StrokeShape};
 pub use layout::{Row, group_lines, group_words, is_writing, joins_word, same_line};
 pub use metrics::{Bounds, Line, WordMetrics, median};

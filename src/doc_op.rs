@@ -122,4 +122,10 @@ pub enum DocOp {
         id: StrokeId,
         shape: Option<StrokeShape>,
     },
+    /// Move stroke `id` by `(dx, dy)`: its ink and its correction together.
+    MoveStroke {
+        id: StrokeId,
+        dx: f32,
+        dy: f32,
+    },
 }

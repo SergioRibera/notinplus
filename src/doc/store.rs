@@ -461,6 +461,13 @@ impl DocStore {
                     child_list(&layer, LAYER_STROKES)?.set(idx, encode(&next)?)?;
                 }
             }
+            DocOp::MoveStroke { id, dx, dy } => {
+                if let Some((pos, idx, stroke)) = locate_stroke(state, *id) {
+                    let next = stroke.clone().translated(*dx, *dy);
+                    let layer = self.layer_at(pos)?;
+                    child_list(&layer, LAYER_STROKES)?.set(idx, encode(&next)?)?;
+                }
+            }
         }
         Ok(())
     }

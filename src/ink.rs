@@ -941,6 +941,16 @@ impl Component for LassoBar {
                 lucide::copy(),
                 b(Board::selection_duplicate),
             ),
+            BarItem::action(
+                tr!("ink-lasso-beautify"),
+                lucide::wand_sparkles(),
+                b(Board::selection_beautify),
+            ),
+            BarItem::action(
+                tr!("ink-lasso-original"),
+                lucide::undo_dot(),
+                b(Board::selection_original),
+            ),
             BarItem::Divider,
             BarItem::action(
                 tr!("ink-lasso-delete"),
