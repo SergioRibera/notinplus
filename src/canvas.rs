@@ -42,14 +42,12 @@ use crate::brush::{
 use crate::doc::{Doc, DocError};
 use crate::doc_op::DocOp;
 use crate::ids::{BookmarkId, StrokeId};
-use crate::ink_glyph::InkGlyphId;
 use crate::render::{BrushRegistry, HighlighterBrush, HighlighterState, PointerStyle};
 use crate::spatial::SpatialIndex;
 use crate::sync::live::LiveMessage;
 use crate::text_box::TextBoxId;
 use crate::undo::UndoStack;
 
-mod handwriting;
 mod ink_cache;
 mod lasso;
 mod tools;
@@ -59,7 +57,6 @@ pub use lasso::Selection;
 mod image;
 mod text;
 
-pub use handwriting::LETTER_IDLE;
 pub use ink_cache::InkCache;
 
 pub use text::{SceneText, TextLayerView, TextScene};
@@ -181,10 +178,6 @@ pub struct Board {
     /// commit / erase / load — repainting is a `HashMap` lookup plus a
     /// single `draw_path` call.
     cached_paths: HashMap<StrokeId, Path>,
-    /// Filled outline per [`crate::ink_glyph::InkGlyph`], rebuilt on add / load.
-    glyph_paths: HashMap<InkGlyphId, Path>,
-    /// Handwriting smoothing: pending letter, font, idle timer channel.
-    handwriting: handwriting::Handwriting,
     lasso: lasso::LassoState,
     touch: touch::TouchState,
     previous_preset: Option<BrushPreset>,
@@ -447,8 +440,6 @@ impl Default for Board {
             brush_configs: HashMap::new(),
             spatial: SpatialIndex::new(),
             cached_paths: HashMap::new(),
-            glyph_paths: HashMap::new(),
-            handwriting: handwriting::Handwriting::default(),
             lasso: lasso::LassoState::default(),
             touch: touch::TouchState::default(),
             previous_preset: None,
@@ -969,7 +960,6 @@ impl Board {
         self.text_heights.clear();
         self.touch_text_scene();
         self.undo.clear();
-        self.forget_handwriting("document replaced");
         self.rebuild_derived();
     }
 
@@ -988,26 +978,12 @@ impl Board {
         Ok(())
     }
 
-    /// Rebuild the spatial index, cached paths, glyph paths and stroke
+    /// Rebuild the spatial index, cached paths and stroke
     /// positions from the current doc, then ask for a repaint.
     #[sismo::function("canvas::rebuild_derived")]
     fn rebuild_derived(&mut self) {
         self.ink_rev += 1;
         self.spatial.clear();
-        self.glyph_paths.clear();
-        let glyphs: Vec<crate::ink_glyph::InkGlyph> = self
-            .doc
-            .layers
-            .iter()
-            .flat_map(|layer| layer.glyphs.iter().copied())
-            .collect();
-        sismo::counter!("canvas.glyphs", glyphs.len());
-        {
-            sismo::scope!("canvas::rebuild_glyph_paths");
-            for glyph in &glyphs {
-                self.cache_glyph(glyph);
-            }
-        }
         self.cached_paths.clear();
         self.stroke_index.clear();
         // Clone the Arc so the loop body can call renderer methods
@@ -1173,10 +1149,8 @@ impl Board {
         }
         if let Some(active) = self.active.take() {
             self.emit_live_ink_for(&active, true);
-            let (id, kind) = (active.id, self.current_kind());
             self.commit_stroke(active);
             self.two_point_active = false;
-            self.handwriting_after_stroke(id, kind);
             self.notify_commit();
         }
     }
@@ -1230,7 +1204,6 @@ impl Board {
         }
         self.end_text_session();
         self.end_image_session();
-        self.forget_handwriting("undo");
         let Some(entry) = self.undo.pop_undo() else {
             return false;
         };
@@ -1266,7 +1239,6 @@ impl Board {
         }
         self.end_text_session();
         self.end_image_session();
-        self.forget_handwriting("redo");
         let Some(entry) = self.undo.pop_redo() else {
             return false;
         };
@@ -1740,14 +1712,11 @@ impl Board {
                     self.stroke_index.remove(&sid);
                     self.cached_paths.remove(&sid);
                 }
-                self.glyph_paths
-                    .retain(|id, _| self.doc.locate_glyph(*id).is_some());
             }
             DocOp::Clear => {
                 self.doc.emit(DocOp::Clear);
                 self.spatial.clear();
                 self.cached_paths.clear();
-                self.glyph_paths.clear();
                 self.stroke_index.clear();
             }
             DocOp::PushStroke { layer_id, stroke } => {
@@ -1776,14 +1745,6 @@ impl Board {
                         .unwrap_or_else(|| layer.strokes.len().saturating_sub(1));
                     self.stroke_index.insert(id, (layer_id, idx));
                 }
-            }
-            DocOp::AddGlyph { layer_id, glyph } => {
-                self.doc.emit(DocOp::AddGlyph { layer_id, glyph });
-                self.cache_glyph(&glyph);
-            }
-            DocOp::DeleteGlyph { id } => {
-                self.doc.emit(DocOp::DeleteGlyph { id });
-                self.glyph_paths.remove(&id);
             }
             // Layer attr, brush registry and bookmark ops don't touch
             // the stroke-derived indices.
@@ -1909,9 +1870,8 @@ impl Board {
         sismo::counter!("canvas.erase_originals", session.originals.len());
         let mut texts: Vec<TextBoxId> = Vec::new();
         let mut images: Vec<crate::image_box::ImageBoxId> = Vec::new();
-        let mut glyphs: Vec<InkGlyphId> = Vec::new();
         {
-            sismo::scope!("canvas::erase_hit_texts_glyphs");
+            sismo::scope!("canvas::erase_hit_texts");
             for &(cx, cy, r) in &session.circles {
                 for id in self.texts_touching_circle(cx, cy, r) {
                     if !texts.contains(&id) {
@@ -1924,15 +1884,7 @@ impl Board {
                     }
                 }
             }
-            for &(cx, cy, r) in &session.circles {
-                for id in self.glyphs_touching_circle(cx, cy, r) {
-                    if !glyphs.contains(&id) {
-                        glyphs.push(id);
-                    }
-                }
-            }
         }
-        self.erase_glyphs(&glyphs);
         self.erase_texts(&texts);
         self.erase_images(&images);
         if session.originals.is_empty() {
@@ -2074,8 +2026,6 @@ impl Board {
                 self.erase_texts(&[text]);
             } else if let Some(&image) = self.images_touching_circle(x, y, radius).last() {
                 self.erase_images(&[image]);
-            } else if let Some(&glyph) = self.glyphs_touching_circle(x, y, radius).last() {
-                self.erase_glyphs(&[glyph]);
             }
             return;
         };
@@ -2114,8 +2064,7 @@ impl Board {
         }
         let texts = self.texts_in_rect(min_x, min_y, max_x, max_y);
         let images = self.images_in_rect(min_x, min_y, max_x, max_y);
-        let glyphs = self.glyphs_in_rect(min_x, min_y, max_x, max_y);
-        if targets.is_empty() && texts.is_empty() && images.is_empty() && glyphs.is_empty() {
+        if targets.is_empty() && texts.is_empty() && images.is_empty() {
             return;
         }
         self.undo.begin();
@@ -2124,7 +2073,6 @@ impl Board {
         }
         self.erase_texts(&texts);
         self.erase_images(&images);
-        self.erase_glyphs(&glyphs);
         self.undo.commit();
     }
 
@@ -2232,11 +2180,10 @@ impl Board {
     /// Whether the layers at `range` hold anything to paint.
     #[sismo::function("canvas::has_ink")]
     fn has_ink(&self, range: std::ops::Range<usize>) -> bool {
-        self.doc.layers.get(range).is_some_and(|layers| {
-            layers
-                .iter()
-                .any(|l| l.visible && !(l.strokes.is_empty() && l.glyphs.is_empty()))
-        })
+        self.doc
+            .layers
+            .get(range)
+            .is_some_and(|layers| layers.iter().any(|l| l.visible && !l.strokes.is_empty()))
     }
 
     /// Whether any visible ink of the layers at `range` blends with what
@@ -2433,7 +2380,6 @@ impl Board {
                 }
             }
             sismo::counter!("canvas.layer_strokes_drawn", drawn);
-            self.paint_glyphs(canvas, layer, opacity);
             if mask_this {
                 if let Some(circles) = mask_circles {
                     sismo::scope!("canvas::eraser_mask");

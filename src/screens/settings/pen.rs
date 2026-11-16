@@ -1,16 +1,14 @@
-//! Settings › Pen and handwriting.
+//! Settings › Pen.
 
 use freya::prelude::*;
-use freya_engine::prelude::{Color as SkColor, Paint, PaintStyle};
 use notin_ui_kit::theme::palette;
 use notin_ui_kit::{
-    Action, ActionEntry, ActionList, Button, ChoiceCard, Group, Icon, KindBadge, ListRow,
-    ModalController, Section, Segmented, Sheet, Text, TextRole, Trailing, tokens,
+    Action, ActionEntry, ActionList, Button, Group, Icon, KindBadge, ListRow, ModalController,
+    Section, Segmented, Sheet, Text, TextRole, Trailing, tokens,
 };
 
 use notin_i18n::tr;
 
-use crate::ink_glyph::GlyphFont;
 use crate::references::kind_color;
 use crate::settings::{EntryKey, FingerDraw, PenDoubleTap, SettingsStore};
 
@@ -60,72 +58,9 @@ fn slot_title(slot: usize) -> String {
     tr!("settings-pen-shortcut-slot", "slot" => slot + 1)
 }
 
-/// The Pen and handwriting section.
+/// The Pen section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Pen;
-
-/// A sample phrase drawn with a font's own outlines: the fonts are not
-/// installed as text fonts, only baked as ink.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct FontSample {
-    font: GlyphFont,
-    color: [u8; 3],
-}
-
-impl Component for FontSample {
-    #[sismo::function("settings::font_sample")]
-    fn render(&self) -> impl IntoElement {
-        let Self {
-            font,
-            color: [r, g, b],
-        } = *self;
-        let sample = tr!("settings-pen-font-sample");
-        rect()
-            .background(RenderCallback::new(move |ctx| {
-                let RenderTarget::Background { canvas, .. } = &ctx.target else {
-                    return;
-                };
-                // Already clipped to the element and with its origin at 0, 0.
-                let fit = |height| font.sample(&sample, (0.0, 0.0), height);
-                let Some((mut path, width)) = fit(ctx.size.height) else {
-                    return;
-                };
-                if width > ctx.size.width {
-                    // Narrow cards: smaller, never cut.
-                    if let Some((smaller, _)) = fit(ctx.size.height * ctx.size.width / width) {
-                        path = smaller;
-                    }
-                }
-                let mut paint = Paint::default();
-                paint.set_color(SkColor::from_rgb(r, g, b));
-                paint.set_style(PaintStyle::Fill);
-                paint.set_anti_alias(true);
-                canvas.draw_path(&path, &paint);
-            }))
-            .width(Size::fill())
-            .height(Size::px(26.0))
-    }
-}
-
-/// A font for smoothed handwriting, previewed in itself.
-#[sismo::function("settings::pen_font_card")]
-fn font_card(font: GlyphFont, chosen: bool) -> Element {
-    let p = palette();
-    let ink = if chosen { p.accent_text } else { p.t1 };
-    ChoiceCard::new(
-        FontSample {
-            font,
-            color: [ink.r(), ink.g(), ink.b()],
-        },
-        font.name(),
-    )
-    .chosen(chosen)
-    .on_pick(move |()| {
-        font.select();
-        SettingsStore::get().update(|s| s.pen.smooth_font = font);
-    })
-    .into_element()
-}
 
 /// What shortcut bubble `slot` creates.
 #[sismo::function("settings::pen_shortcut_row")]
@@ -224,24 +159,6 @@ impl Component for Pen {
                 tr!("settings-pen-double-tap-hint"),
                 |i| SettingsStore::get().update(|s| s.pen.double_tap = PenDoubleTap::ALL[i]),
             ))
-            .child(
-                Section::new(tr!("settings-pen-smooth"))
-                    .child(Text::new(tr!("settings-pen-smooth-hint")).role(TextRole::Hint))
-                    .child(rect().width(Size::fill()).spacing(10.0).children(
-                        GlyphFont::ALL.chunks(2).map(|pair| {
-                            rect()
-                                .width(Size::fill())
-                                .horizontal()
-                                .content(Content::Flex)
-                                .spacing(10.0)
-                                .children(
-                                    pair.iter()
-                                        .map(|font| font_card(*font, *font == pen.smooth_font)),
-                                )
-                                .into_element()
-                        }),
-                    )),
-            )
             .child(
                 Section::new(tr!("settings-pen-shortcuts"))
                     .child(Text::new(tr!("settings-pen-shortcuts-hint")).role(TextRole::Hint))

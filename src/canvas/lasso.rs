@@ -1,14 +1,11 @@
 //! Lasso: circle ink to select it, then move, recolor, duplicate,
-//! delete it, or turn handwriting into text.
+//! or delete it.
 
 use freya_engine::prelude::{Canvas, Color as SkColor, Paint, PaintStyle, PathBuilder, PathEffect};
-use notin_handwriting::Point;
 
 use super::Board;
 use crate::doc_op::DocOp;
 use crate::ids::StrokeId;
-use crate::ink_glyph::InkGlyphId;
-use crate::text_box::{TextBox, TextBoxId, TextFrame};
 
 /// Share of a stroke's points that must fall inside the loop.
 const INSIDE_SHARE: f32 = 0.6;
@@ -16,14 +13,11 @@ const INSIDE_SHARE: f32 = 0.6;
 const GRAB_SLACK: f32 = 12.0;
 /// World offset of a duplicate.
 const DUPLICATE_OFFSET: f32 = 24.0;
-/// A gap wider than this share of the median letter width splits words.
-const WORD_GAP: f32 = 0.45;
 
 /// What the lasso holds.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Selection {
     pub strokes: Vec<StrokeId>,
-    pub glyphs: Vec<InkGlyphId>,
     /// World bounds `(min_x, min_y, max_x, max_y)`.
     pub bounds: (f32, f32, f32, f32),
     /// World offset of a move in progress.
@@ -34,7 +28,7 @@ pub struct Selection {
 impl Selection {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.strokes.is_empty() && self.glyphs.is_empty()
+        self.strokes.is_empty()
     }
 
     /// Current world offset of selected ink being dragged.
@@ -195,14 +189,6 @@ impl Board {
                     }
                 }
             }
-            for glyph in &layer.glyphs {
-                if let Some(b) = glyph.bounds()
-                    && inside(polygon, (f32::midpoint(b.0, b.2), f32::midpoint(b.1, b.3)))
-                {
-                    selection.glyphs.push(glyph.id);
-                    bounds = Some(union(bounds, b));
-                }
-            }
         }
         selection.bounds = bounds.unwrap_or_default();
         selection
@@ -224,14 +210,6 @@ impl Board {
                 ops.push(DocOp::PushStroke { layer_id, stroke });
             }
         }
-        for id in &selection.glyphs {
-            if let Some((layer_id, mut glyph)) = self.locate_glyph(*id) {
-                glyph.x += dx;
-                glyph.y += dy;
-                ops.push(DocOp::DeleteGlyph { id: *id });
-                ops.push(DocOp::AddGlyph { layer_id, glyph });
-            }
-        }
         self.apply_ops_as_one(ops);
         if let Some(s) = self.lasso.selection.as_mut() {
             s.bounds = (
@@ -241,13 +219,6 @@ impl Board {
                 s.bounds.3 + dy,
             );
         }
-    }
-
-    fn locate_glyph(&self, id: InkGlyphId) -> Option<(u32, crate::ink_glyph::InkGlyph)> {
-        self.doc
-            .layers
-            .iter()
-            .find_map(|l| l.glyphs.iter().find(|g| g.id == id).map(|g| (l.id, *g)))
     }
 
     /// Paint the selected ink in `color`.
@@ -262,13 +233,6 @@ impl Board {
                 stroke.color = color;
                 ops.push(DocOp::RemoveStroke { id: *id });
                 ops.push(DocOp::PushStroke { layer_id, stroke });
-            }
-        }
-        for id in &selection.glyphs {
-            if let Some((layer_id, mut glyph)) = self.locate_glyph(*id) {
-                glyph.color = color;
-                ops.push(DocOp::DeleteGlyph { id: *id });
-                ops.push(DocOp::AddGlyph { layer_id, glyph });
             }
         }
         self.apply_ops_as_one(ops);
@@ -303,15 +267,6 @@ impl Board {
                 ops.push(DocOp::PushStroke { layer_id, stroke });
             }
         }
-        for id in &selection.glyphs {
-            if let Some((layer_id, mut glyph)) = self.locate_glyph(*id) {
-                glyph.id = InkGlyphId::new_v4();
-                glyph.x += d;
-                glyph.y += d;
-                copy.glyphs.push(glyph.id);
-                ops.push(DocOp::AddGlyph { layer_id, glyph });
-            }
-        }
         self.apply_ops_as_one(ops);
         self.lasso.selection = Some(copy);
     }
@@ -326,119 +281,8 @@ impl Board {
             .strokes
             .iter()
             .map(|id| DocOp::RemoveStroke { id: *id })
-            .chain(
-                selection
-                    .glyphs
-                    .iter()
-                    .map(|id| DocOp::DeleteGlyph { id: *id }),
-            )
             .collect();
         self.apply_ops_as_one(ops);
-    }
-
-    /// Read the selected handwriting and replace it with a text box.
-    /// Returns the text, or `None` when nothing could be read.
-    #[sismo::function("lasso::to_text")]
-    pub fn selection_to_text(&mut self) -> Option<String> {
-        let selection = self.lasso.selection.clone()?;
-        let recognizer = super::handwriting::recognizer()?;
-        let mut strokes: Vec<(u32, crate::brush::Stroke)> = selection
-            .strokes
-            .iter()
-            .filter_map(|id| self.doc.locate_stroke(*id))
-            .collect();
-        let extent = |s: &crate::brush::Stroke| {
-            s.points
-                .iter()
-                .fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.x), b.max(p.x)))
-        };
-        strokes.sort_by(|a, b| extent(&a.1).0.total_cmp(&extent(&b.1).0));
-        // Letters: strokes whose horizontal extents overlap.
-        let mut letters: Vec<(Vec<&crate::brush::Stroke>, (f32, f32))> = Vec::new();
-        for (_, stroke) in &strokes {
-            let (lo, hi) = extent(stroke);
-            match letters.last_mut() {
-                Some((group, range)) if lo <= range.1 => {
-                    group.push(stroke);
-                    range.1 = range.1.max(hi);
-                }
-                _ => letters.push((vec![stroke], (lo, hi))),
-            }
-        }
-        let mut widths: Vec<f32> = letters.iter().map(|(_, r)| r.1 - r.0).collect();
-        widths.sort_by(f32::total_cmp);
-        let median = widths
-            .get(widths.len() / 2)
-            .copied()
-            .unwrap_or(1.0)
-            .max(1.0);
-        log::info!(
-            target: super::handwriting::LOG,
-            "lasso to text: {} strokes in {} letters, median width {median:.1}, word gap > {:.1}",
-            strokes.len(),
-            letters.len(),
-            median * WORD_GAP
-        );
-        let mut text = String::new();
-        let mut last_end: Option<f32> = None;
-        for (group, range) in &letters {
-            if let Some(end) = last_end
-                && range.0 - end > median * WORD_GAP
-            {
-                text.push(' ');
-            }
-            let ink: Vec<Vec<Point>> = group
-                .iter()
-                .map(|s| s.points.iter().map(|p| Point::new(p.x, p.y)).collect())
-                .collect();
-            let candidates = recognizer.recognize(&ink, None, 3);
-            log::info!(
-                target: super::handwriting::LOG,
-                "lasso letter {:.1}..{:.1} ({} strokes): {}",
-                range.0,
-                range.1,
-                group.len(),
-                candidates
-                    .iter()
-                    .map(|c| format!("{:?} {:.2}/{:.2}", c.glyph, c.distance, c.score))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-            if let Some(best) = candidates.into_iter().next() {
-                text.push(best.glyph);
-            }
-            last_end = Some(range.1);
-        }
-        let text = text.trim().to_owned();
-        log::info!(target: super::handwriting::LOG, "lasso to text read {text:?}");
-        if text.is_empty() {
-            return None;
-        }
-        let layer_id = strokes.first().map_or(self.doc.active_layer, |(l, _)| *l);
-        let color = strokes
-            .first()
-            .map_or([0x26, 0x25, 0x2A, 0xFF], |(_, s)| s.color);
-        let mut ops: Vec<DocOp> = selection
-            .strokes
-            .iter()
-            .map(|id| DocOp::RemoveStroke { id: *id })
-            .collect();
-        ops.push(DocOp::AddText {
-            layer_id,
-            text: TextBox {
-                id: TextBoxId::new_v4(),
-                frame: TextFrame {
-                    width: (selection.bounds.2 - selection.bounds.0)
-                        .max(crate::text_box::TEXT_MIN_WIDTH),
-                    ..TextFrame::at(selection.bounds.0, selection.bounds.1)
-                },
-                markdown: text.clone(),
-                color,
-            },
-        });
-        self.apply_ops_as_one(ops);
-        self.lasso.selection = None;
-        Some(text)
     }
 
     /// Whether a selection is being dragged.
@@ -455,15 +299,6 @@ impl Board {
             .selection
             .as_ref()
             .filter(|s| s.grab.is_some() && s.strokes.contains(&id))
-            .map(|s| s.offset)
-    }
-
-    /// Whether glyph `id` is being dragged, and by how much.
-    pub(super) fn drag_offset_of_glyph(&self, id: InkGlyphId) -> Option<(f32, f32)> {
-        self.lasso
-            .selection
-            .as_ref()
-            .filter(|s| s.grab.is_some() && s.glyphs.contains(&id))
             .map(|s| s.offset)
     }
 

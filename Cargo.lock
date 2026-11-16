@@ -3408,14 +3408,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glyph-bake"
-version = "0.1.0-alpha.4"
-dependencies = [
- "notin-handwriting",
- "ttf-parser",
-]
-
-[[package]]
 name = "guillotiere"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5490,14 +5482,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "notin-handwriting"
-version = "0.1.0-alpha.4"
-dependencies = [
- "sismo",
- "wincode",
-]
-
-[[package]]
 name = "notin-i18n"
 version = "0.1.0-alpha.4"
 dependencies = [
@@ -5630,7 +5614,6 @@ dependencies = [
  "log",
  "loro",
  "notin-bible",
- "notin-handwriting",
  "notin-i18n",
  "notin-notes",
  "notin-plugin",

@@ -93,16 +93,6 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
-    "glyph-bake" = rec {
-      packageId = "glyph-bake";
-      build = internal.buildRustCrateWithFeatures {
-        packageId = "glyph-bake";
-      };
-
-      # Debug support which might change between releases.
-      # File a bug if you depend on any for non-debug work!
-      debug = internal.debugCrate { inherit packageId; };
-    };
     "istmo-installer" = rec {
       packageId = "istmo-installer";
       build = internal.buildRustCrateWithFeatures {
@@ -127,16 +117,6 @@ rec {
       packageId = "notin-bible";
       build = internal.buildRustCrateWithFeatures {
         packageId = "notin-bible";
-      };
-
-      # Debug support which might change between releases.
-      # File a bug if you depend on any for non-debug work!
-      debug = internal.debugCrate { inherit packageId; };
-    };
-    "notin-handwriting" = rec {
-      packageId = "notin-handwriting";
-      build = internal.buildRustCrateWithFeatures {
-        packageId = "notin-handwriting";
       };
 
       # Debug support which might change between releases.
@@ -10562,33 +10542,6 @@ rec {
         ];
 
       };
-      "glyph-bake" = rec {
-        crateName = "glyph-bake";
-        version = "0.1.0-alpha.4";
-        edition = "2024";
-        crateBin = [
-          {
-            name = "glyph-bake";
-            path = "src/main.rs";
-            requiredFeatures = [ ];
-          }
-        ];
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ../tools/glyph-bake; };
-        authors = [
-          "Sergio Ribera <contact@sergioribera.rs>"
-        ];
-        dependencies = [
-          {
-            name = "notin-handwriting";
-            packageId = "notin-handwriting";
-          }
-          {
-            name = "ttf-parser";
-            packageId = "ttf-parser";
-          }
-        ];
-
-      };
       "guillotiere" = rec {
         crateName = "guillotiere";
         version = "0.7.0";
@@ -17297,34 +17250,6 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "importer" "sismo" "ui" ];
       };
-      "notin-handwriting" = rec {
-        crateName = "notin-handwriting";
-        version = "0.1.0-alpha.4";
-        edition = "2024";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/notin-handwriting; };
-        libName = "notin_handwriting";
-        authors = [
-          "Sergio Ribera <contact@sergioribera.rs>"
-        ];
-        dependencies = [
-          {
-            name = "sismo";
-            packageId = "sismo";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "wincode";
-            packageId = "wincode";
-            usesDefaultFeatures = false;
-            features = [ "derive" "std" ];
-          }
-        ];
-        features = {
-          "sismo" = [ "dep:sismo" ];
-        };
-        resolvedDefaultFeatures = [ "sismo" ];
-      };
       "notin-i18n" = rec {
         crateName = "notin-i18n";
         version = "0.1.0-alpha.4";
@@ -17884,11 +17809,6 @@ rec {
             name = "notin-bible";
             packageId = "notin-bible";
             features = [ "ui" "importer" "sismo" ];
-          }
-          {
-            name = "notin-handwriting";
-            packageId = "notin-handwriting";
-            features = [ "sismo" ];
           }
           {
             name = "notin-i18n";

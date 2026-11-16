@@ -15,7 +15,7 @@ const APP_NAME: &str = "NotIn Plus";
 /// Third-party work the app ships with, and its license. Work and
 /// license names stay as published; only descriptions are translated.
 #[sismo::function("settings::about_third_party")]
-fn third_party() -> [(Cow<'static, str>, Cow<'static, str>); 20] {
+fn third_party() -> [(Cow<'static, str>, Cow<'static, str>); 18] {
     let fixed = |name: &'static str, license: &'static str| (name.into(), license.into());
     [
         fixed("Freya", "MIT"),
@@ -25,7 +25,6 @@ fn third_party() -> [(Cow<'static, str>, Cow<'static, str>); 20] {
         fixed("istmo", "MIT / Apache-2.0"),
         (tr!("settings-about-license-lucide").into(), "ISC".into()),
         fixed("Excalifont", "OFL-1.1"),
-        fixed("Caveat, Gochi Hand, Handlee", "OFL-1.1"),
         (
             "Reina-Valera 1909".into(),
             tr!("settings-about-license-public-domain").into(),
@@ -40,10 +39,6 @@ fn third_party() -> [(Cow<'static, str>, Cow<'static, str>); 20] {
         (tr!("settings-about-license-lora").into(), "OFL-1.1".into()),
         fixed("New Computer Modern Math", "GUST Font License"),
         fixed("Libertinus Serif", "OFL-1.1"),
-        (
-            tr!("settings-about-license-handwriting").into(),
-            "CC BY 4.0".into(),
-        ),
     ]
 }
 
@@ -57,10 +52,6 @@ fn licenses() {
                     .dense(true)
                     .into_element()
             })),
-        )
-        .child(
-            Section::new(tr!("settings-about-handwriting"))
-                .child(Text::new(tr!("settings-about-handwriting-credit")).role(TextRole::Hint)),
         )
         .push();
 }

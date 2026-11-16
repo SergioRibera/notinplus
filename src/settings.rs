@@ -8,7 +8,6 @@ use freya::prelude::*;
 use notin_i18n::{Lang, tr};
 use notin_ui_kit::theme::{Appearance, TextSize, ThemeChoice, ThemeHandle, ThemeKind};
 
-use crate::ink_glyph::GlyphFont;
 use crate::persist::Persisted;
 
 /// Theme the user picked.
@@ -219,8 +218,6 @@ pub struct PenSettings {
     /// Ignore hand contacts while the pen is down.
     pub palm_rejection: bool,
     pub double_tap: PenDoubleTap,
-    /// Font recognised letters are redrawn in by the signature tool.
-    pub smooth_font: GlyphFont,
     /// The two bubbles above the + button.
     pub fab_shortcuts: [Option<EntryKey>; 2],
 }
@@ -231,7 +228,6 @@ impl Default for PenSettings {
             finger_draws: FingerDraw::Automatic,
             palm_rejection: true,
             double_tap: PenDoubleTap::Eraser,
-            smooth_font: GlyphFont::Excalifont,
             fab_shortcuts: [None, None],
         }
     }

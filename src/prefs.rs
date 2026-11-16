@@ -38,7 +38,6 @@ use crate::library::{ItemId, ViewSlot};
 // Bounded, so a forged length in what is read back is an error.
 const PREFS_FILE: &str = "prefs.bin";
 const EDITOR_PREFS_FILE: &str = "editor.bin";
-const HANDWRITING_PREFS_FILE: &str = "handwriting.bin";
 const VIEWS_SUBDIR: &str = "views";
 const VIEW_EXT: &str = "bin";
 /// Global toolbar prefs. `HashMap`-shaped state is serialised as
@@ -78,15 +77,6 @@ impl Prefs {
 pub struct EditorPrefs {
     /// Show the markdown source of formatting around the caret.
     pub show_markdown_syntax: bool,
-}
-
-/// Handwriting smoothing prefs. Own file, like [`EditorPrefs`].
-#[istmo::message]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct HandwritingPrefs {
-    /// Replace written letters with font glyphs.
-    pub enabled: bool,
-    pub font: crate::ink_glyph::GlyphFont,
 }
 
 /// Per-doc view state (pan + zoom). Primitive fields so the encoded shape
@@ -186,27 +176,6 @@ pub fn save_editor_prefs(prefs: EditorPrefs) -> io::Result<()> {
     let bytes =
         notin_plugin::encode(&prefs).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     write_atomic(&bodies::root_dir().join(EDITOR_PREFS_FILE), &bytes)
-}
-
-/// Read [`HandwritingPrefs`]. Missing / corrupt payload → defaults.
-#[must_use]
-#[sismo::function("prefs::load_handwriting_prefs")]
-pub fn load_handwriting_prefs() -> HandwritingPrefs {
-    let Ok(bytes) = fs::read(bodies::root_dir().join(HANDWRITING_PREFS_FILE)) else {
-        return HandwritingPrefs::default();
-    };
-    notin_plugin::decode::<HandwritingPrefs>(&bytes).unwrap_or_default()
-}
-
-/// Atomically overwrite the handwriting prefs file.
-///
-/// # Errors
-/// Encode / fs failures.
-#[sismo::function("prefs::save_handwriting_prefs")]
-pub fn save_handwriting_prefs(prefs: HandwritingPrefs) -> io::Result<()> {
-    let bytes =
-        notin_plugin::encode(&prefs).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    write_atomic(&bodies::root_dir().join(HANDWRITING_PREFS_FILE), &bytes)
 }
 
 /// Read the view sidecar for `key`. `None` when missing / corrupt.

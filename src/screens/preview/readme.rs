@@ -270,35 +270,28 @@ fn write_note(id: ItemId, body: &str) {
     bodies::write_doc(id, &doc).expect("write note");
 }
 
-/// Handwriting from the app's own ink fonts, as recognized writing
-/// redrawn on the canvas.
+/// Handwritten-looking text: a canvas text box (Excalifont) whose top sits
+/// `height` above the baseline at `(x, y)`, sized by heading level.
 fn handwrite(doc: &mut Doc, text: &str, (x, y): (f32, f32), height: f32, color: [u8; 4]) {
-    let font = crate::ink_glyph::GlyphFont::Caveat;
-    let Some(ink) = font.ink() else {
-        return;
+    let level = if height >= 56.0 {
+        "# "
+    } else if height >= 40.0 {
+        "## "
+    } else {
+        ""
     };
-    let scale = height / f32::from(ink.units_per_em);
-    let space = f32::from(ink.units_per_em) / 4.0;
-    let mut pen = x;
-    for glyph in text.chars() {
-        let Some(outline) = ink.glyph(glyph) else {
-            pen = space.mul_add(scale, pen);
-            continue;
-        };
-        doc.emit(crate::doc_op::DocOp::AddGlyph {
-            layer_id: 0,
-            glyph: crate::ink_glyph::InkGlyph {
-                id: crate::ink_glyph::InkGlyphId::new_v4(),
-                glyph,
-                font,
-                x: pen,
-                y,
-                scale,
-                color,
+    doc.emit(crate::doc_op::DocOp::AddText {
+        layer_id: 0,
+        text: crate::text_box::TextBox {
+            id: crate::text_box::TextBoxId::new_v4(),
+            frame: crate::text_box::TextFrame {
+                width: 600.0,
+                ..crate::text_box::TextFrame::at(x, y - height)
             },
-        });
-        pen = f32::from(outline.advance).mul_add(scale, pen);
-    }
+            markdown: format!("{level}{text}"),
+            color,
+        },
+    });
 }
 
 /// A pen line through `points`, with a little pressure swell.

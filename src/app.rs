@@ -639,11 +639,7 @@ pub(crate) fn mount_board(mount: CanvasMount, state: &ChromeState) -> Arc<Mutex<
         }
         g.set_input_mode(saved.input_mode());
         g.set_prefs_sink(prefs_tx);
-        let handwriting = prefs::load_handwriting_prefs();
-        handwriting.font.select();
-        g.set_handwriting(handwriting.enabled);
     }
-    spawn_handwriting_timer(&board);
     // Seed chrome signals from the restored board state. Done after
     // the prefs apply so overlays open on the correct preset / size
     // / mode on first paint.
@@ -671,32 +667,6 @@ pub(crate) fn mount_board(mount: CanvasMount, state: &ChromeState) -> Arc<Mutex<
     active_setter.set(Some(Arc::clone(&board)));
     active_item_setter.set(mount.item());
     board
-}
-
-/// Close a handwritten letter once the pen rests. The board sends the
-/// pending letter's generation after every stroke; a newer one arriving
-/// during the wait restarts it. Exits when the board (and its sender)
-/// drops.
-fn spawn_handwriting_timer(board: &Arc<Mutex<Board>>) {
-    let (tx, rx) = flume::unbounded::<u64>();
-    lock(board).set_handwriting_waker(tx);
-    let board = Arc::downgrade(board);
-    spawn(traced!("task::app::handwriting_timer", async move {
-        while let Ok(mut generation) = rx.recv_async().await {
-            loop {
-                async_io::Timer::after(crate::canvas::LETTER_IDLE).await;
-                match rx.try_recv() {
-                    Ok(newer) => generation = newer,
-                    Err(_) => break,
-                }
-            }
-            let Some(board) = board.upgrade() else {
-                return;
-            };
-            sismo::scope!("app::flush_handwriting");
-            lock(&board).flush_handwriting(generation);
-        }
-    }));
 }
 
 /// Reuse-path helper: seed a fresh `ChromeState`'s signals from an

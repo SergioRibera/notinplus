@@ -57,7 +57,6 @@ pub mod hooks;
 pub mod ids;
 pub mod image_box;
 pub mod ink;
-pub mod ink_glyph;
 pub mod library;
 pub mod notebooks;
 pub mod opened_files;

@@ -167,7 +167,6 @@ pub struct InkState {
     pub can_redo: State<bool>,
     pub zoom: State<f32>,
     pub read_only: State<bool>,
-    pub handwriting: State<bool>,
     /// Lasso selection bounds in surface pixels.
     pub selection: State<Option<(f32, f32, f32, f32)>>,
     /// The canvas is over a PDF: text can be selected.
@@ -191,7 +190,6 @@ impl InkState {
             can_redo: use_state(|| false),
             zoom: use_state(|| 1.0),
             read_only: use_state(|| false),
-            handwriting: use_state(|| false),
             selection: use_state(|| None),
             pdf: use_state(|| false),
         }
@@ -221,9 +219,6 @@ impl InkState {
         }
         if *self.read_only.peek() != board.is_read_only() {
             self.read_only.set(board.is_read_only());
-        }
-        if *self.handwriting.peek() != board.handwriting_enabled() {
-            self.handwriting.set(board.handwriting_enabled());
         }
         let pdf =
             board.background().attribution_mode() == freya_canvas_bg::AttributionMode::PerPage;
@@ -478,21 +473,6 @@ impl Dock {
         }
         items.push(self.tool_button(Tool::Text));
         items.push(self.tool_button(Tool::Image));
-        let board = Arc::clone(&self.board);
-        items.push(
-            dock_button(
-                lucide::signature(),
-                tr!("ink-handwriting"),
-                *self.state.handwriting.read(),
-                None,
-            )
-            .on_tap(move |_| {
-                let mut guard = lock(&board);
-                let next = !guard.handwriting_enabled();
-                guard.set_handwriting(next);
-            })
-            .into_element(),
-        );
         items.push(divider().into_element());
         items.push(self.swatch());
         items.push(divider().into_element());
@@ -587,16 +567,6 @@ fn more_sheet(board: &Arc<Mutex<Board>>, state: &InkState) {
                     .on_press(move |_| {
                         notin_ui_kit::ModalController::get().close();
                         lock(&board).redo();
-                    })
-                    .into_element()
-            },
-            {
-                let board = Arc::clone(board);
-                notin_ui_kit::ListRow::new(tr!("ink-handwriting"))
-                    .icon(lucide::signature())
-                    .trailing(notin_ui_kit::Trailing::Switch {
-                        on: *state.handwriting.peek(),
-                        on_toggle: EventHandler::new(move |on| lock(&board).set_handwriting(on)),
                     })
                     .into_element()
             },
@@ -942,7 +912,6 @@ impl Component for LassoBar {
             move |()| f(&mut lock(&board))
         };
         let color_board = Arc::clone(board);
-        let text_board = Arc::clone(board);
         let items = vec![
             BarItem::action(tr!("ink-lasso-move"), lucide::hand_grab(), |()| {
                 Toasts::get().show(Toast::new(tr!("ink-lasso-move-hint")));
@@ -959,12 +928,6 @@ impl Component for LassoBar {
                 lucide::copy(),
                 b(Board::selection_duplicate),
             ),
-            BarItem::action(tr!("ink-lasso-to-text"), lucide::icon_type(), move |()| {
-                let read = lock(&text_board).selection_to_text();
-                if read.is_none() {
-                    Toasts::get().show(Toast::new(tr!("ink-lasso-unreadable")));
-                }
-            }),
             BarItem::Divider,
             BarItem::action(
                 tr!("ink-lasso-delete"),

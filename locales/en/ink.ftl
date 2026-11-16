@@ -16,7 +16,6 @@ ink-color = Color
 ink-undo = Undo
 ink-redo = Redo
 ink-more-tools = More tools
-ink-handwriting = Smoothed handwriting
 ink-layers = Layers
 ink-tools-title = Tools
 ink-size = Size
@@ -39,8 +38,6 @@ ink-shape-circle = Circle
 ink-lasso-move = Move
 ink-lasso-move-hint = Drag the selection to move it
 ink-lasso-duplicate = Duplicate
-ink-lasso-to-text = To text
-ink-lasso-unreadable = Couldn't read that letter
 ink-lasso-delete = Delete
 ink-zoom-reset = Back to 100%
 # $percent: zoom level as a whole number.

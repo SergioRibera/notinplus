@@ -6,10 +6,6 @@ settings-pen-palm = Ignorar la palma
 settings-pen-palm-hint = Mientras el lápiz toca la pantalla, la mano no dibuja ni mueve.
 settings-pen-double-tap = Doble toque del lápiz
 settings-pen-double-tap-hint = En lápices que lo permiten (Apple Pencil 2, S Pen, lápices con botón).
-settings-pen-smooth = Escritura suavizada
-settings-pen-smooth-hint = La letra con la que la herramienta de firma redibuja lo que escribes.
-# Frase corta dibujada con cada fuente de escritura como vista previa.
-settings-pen-font-sample = Hola Romanos
 settings-pen-shortcuts = Atajos sobre el +
 settings-pen-shortcuts-hint = Dos burbujas encima del botón + para crear algo con un toque.
 # $slot: 1 o 2.

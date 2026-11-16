@@ -23,7 +23,6 @@ use crate::brush::{BrushId, BrushPreset, Stroke};
 use crate::doc_op::DocOp;
 use crate::ids::{BookmarkId, StrokeId};
 use crate::image_box::{ImageBox, ImageBoxId};
-use crate::ink_glyph::{InkGlyph, InkGlyphId};
 use crate::text_box::{TextBox, TextBoxId};
 
 use self::store::DocStore;
@@ -48,8 +47,6 @@ pub struct Layer {
     /// Images painted between this layer's strokes and its text boxes, in
     /// insertion order.
     pub images: Vec<ImageBox>,
-    /// Recognized handwriting redrawn from a font, painted with the strokes.
-    pub glyphs: Vec<InkGlyph>,
 }
 
 impl Layer {
@@ -64,7 +61,6 @@ impl Layer {
             strokes: Vec::new(),
             texts: Vec::new(),
             images: Vec::new(),
-            glyphs: Vec::new(),
         }
     }
 }
@@ -486,21 +482,6 @@ impl Doc {
                     }
                 }
             }
-            DocOp::AddGlyph { layer_id, glyph } => {
-                if self.locate_glyph(glyph.id).is_none()
-                    && let Some(layer) = self.layers.iter_mut().find(|l| l.id == *layer_id)
-                {
-                    layer.glyphs.push(*glyph);
-                }
-            }
-            DocOp::DeleteGlyph { id } => {
-                for layer in &mut self.layers {
-                    if let Some(pos) = layer.glyphs.iter().position(|g| g.id == *id) {
-                        layer.glyphs.remove(pos);
-                        return;
-                    }
-                }
-            }
         }
     }
 
@@ -569,12 +550,6 @@ impl Doc {
                             image: image.clone(),
                         });
                     }
-                    for glyph in &layer.glyphs {
-                        ops.push(DocOp::AddGlyph {
-                            layer_id: layer.id,
-                            glyph: *glyph,
-                        });
-                    }
                 }
                 if !had_zero {
                     // The clear-seeded default layer was not in the
@@ -630,12 +605,6 @@ impl Doc {
                     ops.push(DocOp::AddImage {
                         layer_id: *id,
                         image: image.clone(),
-                    });
-                }
-                for glyph in &layer.glyphs {
-                    ops.push(DocOp::AddGlyph {
-                        layer_id: *id,
-                        glyph: *glyph,
                     });
                 }
                 if self.active_layer == *id {
@@ -757,25 +726,7 @@ impl Doc {
                     }]
                 })
                 .unwrap_or_default(),
-            DocOp::AddGlyph { glyph, .. } => vec![DocOp::DeleteGlyph { id: glyph.id }],
-            DocOp::DeleteGlyph { id } => self
-                .locate_glyph(*id)
-                .map(|(layer_id, glyph)| vec![DocOp::AddGlyph { layer_id, glyph }])
-                .unwrap_or_default(),
         }
-    }
-
-    /// `(layer_id, glyph)` for the ink glyph carrying `id`.
-    #[must_use]
-    #[sismo::function("doc::locate_glyph")]
-    pub fn locate_glyph(&self, id: InkGlyphId) -> Option<(u32, InkGlyph)> {
-        self.layers.iter().find_map(|layer| {
-            layer
-                .glyphs
-                .iter()
-                .find(|g| g.id == id)
-                .map(|glyph| (layer.id, *glyph))
-        })
     }
 
     /// `(layer_id, text)` for the text box carrying `id`.
@@ -1019,17 +970,15 @@ impl Doc {
         self.layers.iter().map(|l| l.strokes.len()).sum()
     }
 
-    /// Nothing written on it: no strokes, text, glyphs or bookmarks.
+    /// Nothing written on it: no strokes, text, images or bookmarks.
     #[must_use]
     #[sismo::function("doc::is_blank")]
     pub fn is_blank(&self) -> bool {
         self.bookmarks.is_empty()
-            && self.layers.iter().all(|l| {
-                l.strokes.is_empty()
-                    && l.texts.is_empty()
-                    && l.images.is_empty()
-                    && l.glyphs.is_empty()
-            })
+            && self
+                .layers
+                .iter()
+                .all(|l| l.strokes.is_empty() && l.texts.is_empty() && l.images.is_empty())
     }
 }
 

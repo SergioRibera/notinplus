@@ -10,7 +10,7 @@ settings-section-about = About
 
 # Comma-separated words that find each section from the search.
 settings-keywords-appearance = theme, night, day, sepia, contrast, oled, color, accent, text, size, motion, dark, light, language
-settings-keywords-pen = finger, palm, double tap, eraser, handwriting, font, shortcuts, pen, stylus
+settings-keywords-pen = finger, palm, double tap, eraser, handwriting, shortcuts, pen, stylus
 settings-keywords-notes = markdown, format, references, beside, marks, quotes
 settings-keywords-library = trash, export, import, space, copy, backup, days, storage
 settings-keywords-devices = link, sync, code, qr, scan, server, name, device, pairing

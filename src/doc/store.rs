@@ -15,7 +15,6 @@
 //!               strokes: MovableList [ Binary(Stroke) … ],
 //!               texts:   MovableList [ Binary(TextBox) … ],
 //!               images:  MovableList [ Binary(ImageBox) … ],
-//!               glyphs:  MovableList [ Binary(InkGlyph) … ],
 //!           } … ]
 //! bookmarks Map  { "<uuid>": Binary(Bookmark) … }
 //! body      Text                                   // markdown of a note, merged per character
@@ -39,7 +38,6 @@ use crate::brush::{BrushPreset, Stroke};
 use crate::doc_op::DocOp;
 use crate::ids::BookmarkId;
 use crate::image_box::ImageBox;
-use crate::ink_glyph::InkGlyph;
 use crate::text_box::TextBox;
 
 // Bounded, so a forged length in what is read back is an error.
@@ -63,7 +61,6 @@ const LAYER_OPACITY: &str = "opacity";
 const LAYER_STROKES: &str = "strokes";
 const LAYER_TEXTS: &str = "texts";
 const LAYER_IMAGES: &str = "images";
-const LAYER_GLYPHS: &str = "glyphs";
 
 /// Plain state read back from the containers.
 pub(super) struct State {
@@ -444,26 +441,6 @@ impl DocStore {
                     child_list(&layer, LAYER_IMAGES)?.delete(idx, 1)?;
                 }
             }
-            DocOp::AddGlyph { layer_id, glyph } => {
-                if state.locate_glyph(glyph.id).is_some() {
-                    return Ok(());
-                }
-                if let Some(layer) = self.layer_by_id(state, *layer_id) {
-                    child_list(&layer, LAYER_GLYPHS)?.push(encode(glyph)?)?;
-                }
-            }
-            DocOp::DeleteGlyph { id } => {
-                let found = state.layers.iter().enumerate().find_map(|(pos, l)| {
-                    l.glyphs
-                        .iter()
-                        .position(|g| g.id == *id)
-                        .map(|idx| (pos, idx))
-                });
-                if let Some((pos, idx)) = found {
-                    let layer = self.layer_at(pos)?;
-                    child_list(&layer, LAYER_GLYPHS)?.delete(idx, 1)?;
-                }
-            }
         }
         Ok(())
     }
@@ -494,7 +471,6 @@ impl DocStore {
             layer.strokes = read_blobs::<Stroke>(&map, LAYER_STROKES)?;
             layer.texts = read_blobs::<TextBox>(&map, LAYER_TEXTS)?;
             layer.images = read_blobs::<ImageBox>(&map, LAYER_IMAGES)?;
-            layer.glyphs = read_blobs::<InkGlyph>(&map, LAYER_GLYPHS)?;
             layers.push(layer);
         }
 
@@ -546,7 +522,6 @@ impl DocStore {
         map.insert_container(LAYER_STROKES, LoroMovableList::new())?;
         map.insert_container(LAYER_TEXTS, LoroMovableList::new())?;
         map.insert_container(LAYER_IMAGES, LoroMovableList::new())?;
-        map.insert_container(LAYER_GLYPHS, LoroMovableList::new())?;
         Ok(())
     }
 
