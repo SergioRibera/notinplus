@@ -408,7 +408,7 @@ fn fetch(source: &Source) -> Result<Vec<u8>, ImageError> {
         Source::Remote(url) => {
             let mut hasher = DefaultHasher::new();
             url.hash(&mut hasher);
-            let cached = istmo::path::cache_dir()
+            let cached = crate::paths::cache_dir()
                 .join("note-images")
                 .join(format!("{:016x}", hasher.finish()));
             if let Ok(bytes) = std::fs::read(&cached) {

@@ -114,7 +114,7 @@ pub fn install() -> Result<Option<DocumentsPublisher>, Box<dyn std::error::Error
 /// of `notinplus`. Logging the effective path avoids the mystery.
 #[sismo::function("desktop::log_storage_paths")]
 fn log_storage_paths() {
-    let data_root = istmo::path::data_dir();
+    let data_root = crate::paths::data_dir();
     let library_root = crate::library::bodies::root_dir();
     let data_store_file = data_root
         .join("data_store")

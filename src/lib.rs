@@ -60,6 +60,7 @@ pub mod ink;
 pub mod library;
 pub mod notebooks;
 pub mod opened_files;
+pub mod paths;
 pub mod pdf_select_overlay;
 pub mod pdf_text;
 pub mod pen_pump;

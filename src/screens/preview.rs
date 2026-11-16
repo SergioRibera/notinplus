@@ -229,23 +229,7 @@ fn shell_with(
 /// Point the app's data folders at a scratch directory, so a preview
 /// that changes a setting never writes into the real data.
 fn sandbox() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        let root = std::env::temp_dir().join(format!("notein-preview-{}", std::process::id()));
-        let dir = |name: &str| root.join(name);
-        istmo::path::install(istmo::path::PlatformPaths {
-            data_dir: dir("data"),
-            data_local_dir: dir("data-local"),
-            config_dir: dir("config"),
-            config_local_dir: dir("config-local"),
-            cache_dir: dir("cache"),
-            state_dir: dir("state"),
-            preference_dir: dir("preferences"),
-            documents_dir: dir("documents"),
-            runtime_dir: dir("runtime"),
-            temp_dir: dir("tmp"),
-        });
-    });
+    crate::paths::sandbox();
 }
 
 fn render(name: &str, size: (f32, f32), body: fn() -> Element) {

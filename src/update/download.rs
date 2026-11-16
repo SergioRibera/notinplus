@@ -42,12 +42,12 @@ impl Progress {
 #[must_use]
 pub fn folder() -> PathBuf {
     if cfg!(target_os = "android") {
-        return istmo::path::cache_dir().join("updates");
+        return crate::paths::cache_dir().join("updates");
     }
     let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
     home.map(|home| PathBuf::from(home).join("Downloads"))
         .filter(|dir| dir.is_dir())
-        .unwrap_or_else(|| istmo::path::cache_dir().join("updates"))
+        .unwrap_or_else(|| crate::paths::cache_dir().join("updates"))
 }
 
 /// Download `asset` into [`folder`], checking its SHA-256. A file

@@ -16,7 +16,7 @@ const MANIFEST: &str = "plugin.ntp.kdl";
 #[must_use]
 pub fn plugins_dir() -> PathBuf {
     std::env::var_os(PLUGIN_DIR_ENV).map_or_else(
-        || istmo::path::data_dir().join("notinplus").join("plugins"),
+        || crate::paths::data_dir().join("notinplus").join("plugins"),
         PathBuf::from,
     )
 }

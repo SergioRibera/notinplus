@@ -84,7 +84,7 @@ fn shared_map(path: &Path) -> SharedMap {
 impl DesktopStore {
     #[sismo::function("data_store::open")]
     fn open(namespace: &str) -> Self {
-        let dir = istmo::path::data_dir().join("data_store");
+        let dir = crate::paths::data_dir().join("data_store");
         let path = dir.join(format!("{namespace}.bin"));
         let map = shared_map(&path);
         Self { path, map }

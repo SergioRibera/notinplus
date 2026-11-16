@@ -417,7 +417,7 @@ pub fn parse_bundle<R: Read>(src: R) -> Result<ParsedBundle> {
     parse_bundle_within(
         src,
         &Caps::DEFAULT,
-        &istmo::path::cache_dir().join(STAGING_DIR),
+        &crate::paths::cache_dir().join(STAGING_DIR),
     )
 }
 

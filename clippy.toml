@@ -1,2 +1,8 @@
 # The product name, not code.
 doc-valid-idents = ["NotIn", ".."]
+
+# Folders come from `crate::paths`, which keeps tests out of the real data.
+disallowed-methods = [
+    { path = "istmo::path::data_dir", reason = "use crate::paths::data_dir" },
+    { path = "istmo::path::cache_dir", reason = "use crate::paths::cache_dir" },
+]

@@ -51,7 +51,7 @@ pub const ASSETS_SUBDIR: &str = "assets";
 /// that go on to write also call [`ensure_dir`].
 #[must_use]
 pub fn root_dir() -> PathBuf {
-    istmo::path::data_dir().join(ROOT_SUBDIR)
+    crate::paths::data_dir().join(ROOT_SUBDIR)
 }
 
 /// Per-item directory holding every blob that belongs to `id`. The
