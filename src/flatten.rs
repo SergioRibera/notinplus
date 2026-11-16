@@ -201,7 +201,8 @@ mod tests {
     #[test]
     fn a_synced_correction_paints_the_same() {
         let (mut doc, id) = line_doc();
-        let mut replica = Doc::from_snapshot(&doc.snapshot_bytes().expect("snapshot")).expect("load");
+        let mut replica =
+            Doc::from_snapshot(&doc.snapshot_bytes().expect("snapshot")).expect("load");
         let since = replica.version();
         doc.emit(DocOp::SetStrokeShape {
             id,
