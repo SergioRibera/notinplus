@@ -26,8 +26,8 @@ mod theme;
 mod toolbar;
 
 pub use controller::{
-    ActiveFormat, AtomSlot, EditorController, ImagePicker, ImageRequest, RemoteCaret, Selection,
-    TextPosition, use_editor_controller, use_editor_controller_with,
+    ActiveFormat, AtomSlot, EditorController, ImagePicker, ImageRequest, OuterHistory, RemoteCaret,
+    Selection, TextPosition, use_editor_controller, use_editor_controller_with,
 };
 pub use decorator::{
     CodeContext, Decorator, Decorators, EmbedContext, ImageContext, MathContext, PrefixTokens,
@@ -57,8 +57,8 @@ pub mod prelude {
         ActiveFormat, AtomSlot, BlockShell, BlockSuggestions, CodeContext, Decorator, Decorators,
         EditorColors, EditorController, EditorTheme, EmbedContext, ImageContext, ImagePicker,
         ImageRequest, InputContext, Label, Labels, MarkdownEditor, MarkdownPicture, MathContext,
-        PopupReporter, PrefixTokens, RemoteCaret, SchemeEmbed, Selection, SpanStyle, Suggestion,
-        SuggestionAction, SuggestionGroup, SuggestionRun, SuggestionSource, TextMatch,
+        OuterHistory, PopupReporter, PrefixTokens, RemoteCaret, SchemeEmbed, Selection, SpanStyle,
+        Suggestion, SuggestionAction, SuggestionGroup, SuggestionRun, SuggestionSource, TextMatch,
         TextPosition, TransclusionContext, use_editor_controller, use_editor_controller_with,
     };
 }

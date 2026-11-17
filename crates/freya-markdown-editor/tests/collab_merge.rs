@@ -127,3 +127,72 @@ fn text_merged_while_composing_shows_and_survives_the_commit() {
     runner.sync_and_update();
     assert_eq!(&*value.peek(), "Ana: hola mundo dí\n");
 }
+
+/// Versions of the text, undone one by one.
+struct Versions(std::cell::RefCell<Vec<String>>);
+
+impl OuterHistory for Versions {
+    fn undo(&self) -> Option<String> {
+        self.0.borrow_mut().pop()
+    }
+
+    fn redo(&self) -> Option<String> {
+        None
+    }
+
+    fn can_undo(&self) -> bool {
+        !self.0.borrow().is_empty()
+    }
+
+    fn can_redo(&self) -> bool {
+        false
+    }
+}
+
+#[test]
+fn undo_through_an_outer_history_shows_where_the_text_changed() {
+    let (mut runner, (value, controller)) = TestingRunner::new(
+        app,
+        (400., 300.).into(),
+        |runner| {
+            let value = runner
+                .provide_root_context(|| State::create("uno\n\ndos tres\n\ncuatro".to_owned()));
+            let controller =
+                runner.provide_root_context(|| EditorController::create(Document::default()));
+            (value, controller)
+        },
+        1.0,
+    );
+    runner.poll_n(Duration::from_millis(1), 3);
+    runner.sync_and_update();
+    let before = runner.run_in(|| {
+        controller
+            .document()
+            .blocks()
+            .iter()
+            .map(|block| block.id)
+            .collect::<Vec<_>>()
+    });
+    runner.run_in(|| {
+        controller.set_outer_history(Some(Rc::new(Versions(std::cell::RefCell::new(vec![
+            // Written without the trailing newline the editor would add.
+            "uno\n\ndos\n\ncuatro".to_owned(),
+        ])))));
+    });
+    assert!(runner.run_in(|| controller.can_undo()));
+    runner.run_in(|| controller.undo());
+    runner.poll_n(Duration::from_millis(1), 3);
+    runner.sync_and_update();
+
+    assert_eq!(
+        &*value.peek(),
+        "uno\n\ndos\n\ncuatro",
+        "written back as it came"
+    );
+    let selection = runner
+        .run_in(|| controller.selection())
+        .expect("caret at the change");
+    assert_eq!(selection.target.block, before[1]);
+    assert_eq!(selection.head, 3);
+    assert!(!runner.run_in(|| controller.can_undo()));
+}

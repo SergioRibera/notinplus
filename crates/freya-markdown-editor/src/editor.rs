@@ -688,7 +688,7 @@ fn use_value_sync(value: Option<Writable<String>>, controller: EditorController,
         sync.revision = revision;
         #[cfg(feature = "sismo")]
         sismo::scope!("markdown::value_sync_outgoing");
-        let markdown = controller.peek(|state| state.markdown(*dialect.peek()));
+        let markdown = controller.peek(|state| state.written(*dialect.peek()));
         if sync.text.as_deref() != Some(markdown.as_str()) {
             sync.text = Some(markdown.clone());
             *value.write() = markdown;

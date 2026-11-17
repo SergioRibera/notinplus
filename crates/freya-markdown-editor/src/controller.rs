@@ -198,6 +198,11 @@ pub(crate) struct EditorState {
     /// How the host lets people choose an image, if it does. Hosts may
     /// hand a fresh one every render, so swapping it never notifies.
     image_picker: Rc<RefCell<Option<ImagePicker>>>,
+    /// Undo and redo held outside, see [`OuterHistory`].
+    outer_history: Option<Rc<dyn OuterHistory>>,
+    /// Markdown the document of revision `.0` was read from, written back
+    /// as is instead of serialized again.
+    source: Option<(u64, Rc<str>)>,
     /// Atom whose menu is open.
     atom_menu: Option<AtomSlot>,
 }
@@ -251,6 +256,8 @@ impl EditorState {
             shown: Rc::default(),
             focused: None,
             image_picker: Rc::default(),
+            outer_history: None,
+            source: None,
             atom_menu: None,
         }
     }
@@ -262,6 +269,15 @@ impl EditorState {
     #[cfg_attr(feature = "sismo", sismo::function("markdown::state_markdown"))]
     pub(crate) fn markdown(&self, dialect: Dialect) -> String {
         self.document.to_markdown(dialect)
+    }
+
+    /// The markdown to hand back for the current document: the text it
+    /// was read from when nothing was edited since, else it serialized.
+    pub(crate) fn written(&self, dialect: Dialect) -> String {
+        match &self.source {
+            Some((revision, text)) if *revision == self.revision => text.to_string(),
+            _ => self.markdown(dialect),
+        }
     }
 
     pub(crate) fn focused_target(&self) -> Option<TextTarget> {
@@ -427,6 +443,21 @@ pub struct TextPosition {
     pub target: usize,
     pub anchor: usize,
     pub head: usize,
+}
+
+/// Undo and redo kept outside the editor, by whoever holds the text.
+///
+/// A document merged with others undoes only what was typed here, which
+/// the editor, holding whole earlier texts, cannot. Set with
+/// [`EditorController::set_outer_history`]; the editor then undoes through it.
+pub trait OuterHistory {
+    /// Take back the last edit; the markdown the text reads now, `None`
+    /// when there was nothing to take back.
+    fn undo(&self) -> Option<String>;
+    /// Make again the last edit taken back; like [`Self::undo`].
+    fn redo(&self) -> Option<String>;
+    fn can_undo(&self) -> bool;
+    fn can_redo(&self) -> bool;
 }
 
 /// Someone else's caret, drawn in their color with their name.
@@ -613,12 +644,28 @@ impl EditorController {
 
     #[must_use]
     pub fn can_undo(&self) -> bool {
-        self.read(|state| !state.history.undo.is_empty())
+        self.read(|state| {
+            state
+                .outer_history
+                .as_ref()
+                .map_or(!state.history.undo.is_empty(), |outer| outer.can_undo())
+        })
     }
 
     #[must_use]
     pub fn can_redo(&self) -> bool {
-        self.read(|state| !state.history.redo.is_empty())
+        self.read(|state| {
+            state
+                .outer_history
+                .as_ref()
+                .map_or(!state.history.redo.is_empty(), |outer| outer.can_redo())
+        })
+    }
+
+    /// Undo and redo through `history` instead of the editor's own;
+    /// `None` goes back to the editor's.
+    pub fn set_outer_history(&self, history: Option<Rc<dyn OuterHistory>>) {
+        self.update(|state| state.outer_history = history);
     }
 
     // Content.
@@ -632,6 +679,29 @@ impl EditorController {
             state.selection = None;
             state.pending.clear();
             state.changed();
+        });
+    }
+
+    /// Show `markdown`, a version of this text its [`OuterHistory`] went
+    /// back or forth to: blocks left as they were keep their identity
+    /// and the caret goes to the end of what changed, so the step shows.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_restore_markdown"))]
+    pub fn restore_markdown(&self, markdown: &str) {
+        self.update(|state| {
+            let mut document = Document::parse_with(markdown, &state.parse);
+            document.keep_identity(&state.document);
+            let caret = changed_caret(&state.document, &document);
+            state.document = Rc::new(document);
+            state.history = History::default();
+            state.pending.clear();
+            state.changed();
+            state.source = Some((state.revision, markdown.into()));
+            match caret.or(state.selection) {
+                Some(caret) if state.document.inline(caret.target).is_some() => {
+                    state.request_caret(clamp(&state.document, caret));
+                }
+                _ => state.selection = None,
+            }
         });
     }
 
@@ -1665,6 +1735,12 @@ impl EditorController {
 
     #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_undo"))]
     pub fn undo(&self) {
+        if let Some(outer) = self.peek(|state| state.outer_history.clone()) {
+            if let Some(markdown) = outer.undo() {
+                self.restore_markdown(&markdown);
+            }
+            return;
+        }
         self.update(|state| {
             let Some(snapshot) = state.history.undo.pop() else {
                 return;
@@ -1685,6 +1761,12 @@ impl EditorController {
 
     #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_redo"))]
     pub fn redo(&self) {
+        if let Some(outer) = self.peek(|state| state.outer_history.clone()) {
+            if let Some(markdown) = outer.redo() {
+                self.restore_markdown(&markdown);
+            }
+            return;
+        }
         self.update(|state| {
             let Some(snapshot) = state.history.redo.pop() else {
                 return;
@@ -2390,6 +2472,45 @@ pub(crate) fn rebase_edit(
         ..selection
     };
     (String::from_utf16_lossy(&units), selection)
+}
+
+/// A caret at the end of the first stretch `new` changed from `old`:
+/// in the first block that is not one of `old`'s, else (only blocks
+/// removed) where the first one went.
+fn changed_caret(old: &Document, new: &Document) -> Option<Selection> {
+    let kept: std::collections::HashSet<*const Block> =
+        old.blocks().iter().map(Rc::as_ptr).collect();
+    let blocks = new.blocks();
+    let block = blocks
+        .iter()
+        .find(|block| !kept.contains(&Rc::as_ptr(block)))
+        .or_else(|| {
+            let at = old
+                .blocks()
+                .iter()
+                .zip(blocks)
+                .position(|(old, new)| old.id != new.id)
+                .unwrap_or(blocks.len());
+            blocks.get(at).or_else(|| blocks.last())
+        })?;
+    let target = new
+        .targets()
+        .into_iter()
+        .find(|target| target.block == block.id)?;
+    let text = new.inline(target)?.text();
+    let offset = old
+        .inline(target)
+        .map_or_else(|| utf16_len(text), |was| changed_end(was.text(), text));
+    Some(Selection::caret(target, offset))
+}
+
+/// Where the stretch `old` turned into `new` ends in `new`, in UTF-16
+/// code units.
+fn changed_end(old: &str, new: &str) -> usize {
+    let (old, new): (Vec<u16>, Vec<u16>) =
+        (old.encode_utf16().collect(), new.encode_utf16().collect());
+    let (_, suffix) = common_ends(&old, &new);
+    new.len() - suffix
 }
 
 #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_clamp"))]
