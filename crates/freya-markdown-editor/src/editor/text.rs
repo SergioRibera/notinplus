@@ -136,9 +136,9 @@ impl Component for TextBlock {
                 a11y_id.request_focus();
             }
         }
-        // While composing the field keeps what it showed before: text
-        // merged in meanwhile is only replayed under it on commit.
-        if is_focused && !editable.editor().peek().has_preedit() {
+        // What the field shows, for typing that reaches the model only
+        // after text merged in from elsewhere (see `commit_rope`).
+        if is_focused {
             let shown = editable.editor().peek().committed_text();
             if revealed.is_none() && shown == self.content.text() {
                 controller.remember_shown(target, Some(shown));
@@ -1216,6 +1216,11 @@ fn sync_rope(
     };
     let previous = reveal.borrow().clone();
     if has_preedit {
+        // Text merged in while composing shows at once, the composition
+        // kept where it was among the text around it.
+        if previous.is_none() && rope_text != content.text() {
+            recompose(editable, content.text());
+        }
         return previous;
     }
     let to_model = |display: usize| previous.as_ref().map_or(display, |r| r.to_model(display));
@@ -1261,6 +1266,20 @@ fn sync_rope(
     }
     reveal.borrow_mut().clone_from(&next);
     next
+}
+
+/// Show `text` in a field with a composition in progress: the composed
+/// text goes back where the text around it moved to.
+#[cfg_attr(feature = "sismo", sismo::function("markdown::recompose"))]
+fn recompose(editable: &mut freya_edit::UseEditable, text: &str) {
+    let mut editor = editable.editor_mut().write();
+    let (before, composing, after) = editor.preedit_text_segments();
+    let at = crate::controller::follow_edit(&format!("{before}{after}"), text, utf16_len(&before));
+    editor.clear_preedit();
+    editor.set(text);
+    editor.editor_history_mut().clear();
+    editor.move_cursor_to(at);
+    editor.set_preedit(&composing);
 }
 
 /// Markdown delimiter typed by a formatting shortcut while syntax is shown.
