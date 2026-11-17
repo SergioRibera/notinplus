@@ -293,6 +293,41 @@ impl Doc {
         }
     }
 
+    /// Keep the body edits made on this device for [`Self::undo_body`].
+    pub fn track_body_undo(&mut self) {
+        self.store.track_body_undo();
+    }
+
+    /// Undo the last body edit made on this device, leaving what other
+    /// devices typed. Returns whether there was one.
+    #[sismo::function("doc::undo_body")]
+    pub fn undo_body(&mut self) -> bool {
+        self.store.undo_body().unwrap_or_else(|err| {
+            log::error!("doc body undo: {err}");
+            false
+        })
+    }
+
+    /// Make again the last body edit undone on this device. Returns
+    /// whether there was one.
+    #[sismo::function("doc::redo_body")]
+    pub fn redo_body(&mut self) -> bool {
+        self.store.redo_body().unwrap_or_else(|err| {
+            log::error!("doc body redo: {err}");
+            false
+        })
+    }
+
+    #[must_use]
+    pub fn can_undo_body(&self) -> bool {
+        self.store.can_undo_body()
+    }
+
+    #[must_use]
+    pub fn can_redo_body(&self) -> bool {
+        self.store.can_redo_body()
+    }
+
     /// Records a plugin keeps here, merged per key with other devices.
     #[must_use]
     #[sismo::function("doc::records")]
@@ -1084,6 +1119,51 @@ mod tests {
     use super::*;
     use crate::bookmark::{SourceRef, StrokeAnchor, WorldPoint};
     use crate::brush::InkPoint;
+
+    /// `to` receives what `from` has that it lacks.
+    fn sync(from: &Doc, to: &mut Doc) {
+        let updates = from.updates_since(&to.version()).expect("updates");
+        to.import_updates(&updates).expect("import");
+    }
+
+    #[test]
+    fn body_undo_takes_back_only_what_was_typed_here() {
+        let mut here = Doc::default();
+        here.track_body_undo();
+        let mut there =
+            Doc::from_snapshot(&here.snapshot_bytes().expect("snapshot")).expect("open");
+        assert!(here.set_body("hola"));
+        sync(&here, &mut there);
+        assert!(there.set_body("hola mundo"));
+        sync(&there, &mut here);
+        assert_eq!(here.body(), "hola mundo");
+
+        assert!(here.undo_body());
+        assert_eq!(here.body(), " mundo");
+        assert!(!here.can_undo_body());
+        assert!(here.redo_body());
+        assert_eq!(here.body(), "hola mundo");
+    }
+
+    #[test]
+    fn body_undo_leaves_records_alone() {
+        let mut doc = Doc::default();
+        doc.track_body_undo();
+        doc.set_body("texto");
+        doc.set_record("key", &[1]);
+        assert!(doc.undo_body());
+        assert_eq!(doc.body(), "");
+        assert_eq!(doc.records(), vec![("key".to_owned(), vec![1])]);
+    }
+
+    #[test]
+    fn nothing_to_undo_without_tracking() {
+        let mut doc = Doc::default();
+        doc.set_body("texto");
+        assert!(!doc.can_undo_body());
+        assert!(!doc.undo_body());
+        assert_eq!(doc.body(), "texto");
+    }
 
     fn point(x: f32, y: f32) -> InkPoint {
         InkPoint::new(x, y, 0, 0, 0)

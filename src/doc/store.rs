@@ -29,7 +29,7 @@ use std::fmt;
 
 use loro::{
     Container, ExportMode, Frontiers, LoroDoc, LoroEncodeError, LoroError, LoroMap,
-    LoroMovableList, LoroValue, UpdateOptions, ValueOrContainer, VersionVector,
+    LoroMovableList, LoroValue, UndoManager, UpdateOptions, ValueOrContainer, VersionVector,
 };
 
 use super::{BodyView, Doc, DocError, Layer};
@@ -49,6 +49,13 @@ const BOOKMARKS: &str = "bookmarks";
 const BODY: &str = "body";
 /// Records a plugin keeps in the document, merged per key.
 const RECORDS: &str = "records";
+/// Origin of commits that are no edit of the body, which body undo leaves
+/// out: records and drawing ops.
+const NOT_BODY: &str = "not-body";
+/// Body edits this close together (ms) undo as one step, like typing
+/// grouped in the editor.
+const UNDO_MERGE_MS: i64 = 900;
+const UNDO_STEPS: usize = 256;
 
 const ACTIVE_LAYER: &str = "active_layer";
 const NEXT_LAYER_ID: &str = "next_layer_id";
@@ -74,12 +81,16 @@ pub(super) struct State {
 /// Loro document behind a [`Doc`].
 pub(super) struct DocStore {
     doc: LoroDoc,
+    /// Undo of the body edits made on this device, once a reader asked
+    /// for it ([`Self::track_body_undo`]).
+    undo: Option<UndoManager>,
 }
 
 impl fmt::Debug for DocStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DocStore")
             .field("peer", &self.doc.peer_id())
+            .field("tracks_undo", &self.undo.is_some())
             .finish()
     }
 }
@@ -102,6 +113,7 @@ impl DocStore {
     pub(super) fn seeded() -> Result<Self, DocError> {
         let store = Self {
             doc: LoroDoc::new(),
+            undo: None,
         };
         store.reset_layers()?;
         store.doc.commit();
@@ -113,6 +125,7 @@ impl DocStore {
     pub(super) fn unseeded() -> Self {
         Self {
             doc: LoroDoc::new(),
+            undo: None,
         }
     }
 
@@ -121,7 +134,7 @@ impl DocStore {
     pub(super) fn from_snapshot(bytes: &[u8]) -> Result<Self, DocError> {
         let doc = LoroDoc::new();
         doc.import(bytes)?;
-        Ok(Self { doc })
+        Ok(Self { doc, undo: None })
     }
 
     /// Independent copy with the same history.
@@ -129,6 +142,7 @@ impl DocStore {
     pub(super) fn fork(&self) -> Self {
         Self {
             doc: self.doc.fork(),
+            undo: None,
         }
     }
 
@@ -158,6 +172,54 @@ impl DocStore {
     pub(super) fn import(&self, bytes: &[u8]) -> Result<(), DocError> {
         self.doc.import(bytes)?;
         Ok(())
+    }
+
+    /// Commit what is not an edit of the body, so body undo skips it.
+    fn commit_not_body(&self) {
+        self.doc.set_next_commit_origin(NOT_BODY);
+        self.doc.commit();
+    }
+
+    /// Keep the body edits made on this device from now on, for
+    /// [`Self::undo_body`]. Text that arrives from other devices is
+    /// never undone; the steps made here move around it.
+    #[sismo::function("doc_store::track_body_undo")]
+    pub(super) fn track_body_undo(&mut self) {
+        if self.undo.is_some() {
+            return;
+        }
+        let mut undo = UndoManager::new(&self.doc);
+        undo.set_merge_interval(UNDO_MERGE_MS);
+        undo.set_max_undo_steps(UNDO_STEPS);
+        undo.add_exclude_origin_prefix(NOT_BODY);
+        self.undo = Some(undo);
+    }
+
+    /// Undo the last body edit made here. Returns whether there was one.
+    #[sismo::function("doc_store::undo_body")]
+    pub(super) fn undo_body(&mut self) -> Result<bool, DocError> {
+        match &mut self.undo {
+            Some(undo) => Ok(undo.undo()?),
+            None => Ok(false),
+        }
+    }
+
+    /// Make again the last body edit undone here. Returns whether there
+    /// was one.
+    #[sismo::function("doc_store::redo_body")]
+    pub(super) fn redo_body(&mut self) -> Result<bool, DocError> {
+        match &mut self.undo {
+            Some(undo) => Ok(undo.redo()?),
+            None => Ok(false),
+        }
+    }
+
+    pub(super) fn can_undo_body(&self) -> bool {
+        self.undo.as_ref().is_some_and(UndoManager::can_undo)
+    }
+
+    pub(super) fn can_redo_body(&self) -> bool {
+        self.undo.as_ref().is_some_and(UndoManager::can_redo)
     }
 
     /// The text body, for documents that are text (notes).
@@ -253,7 +315,7 @@ impl DocStore {
             return Ok(false);
         }
         map.insert(key, bytes.to_vec())?;
-        self.doc.commit();
+        self.commit_not_body();
         Ok(true)
     }
 
@@ -265,7 +327,7 @@ impl DocStore {
             return Ok(false);
         }
         map.delete(key)?;
-        self.doc.commit();
+        self.commit_not_body();
         Ok(true)
     }
 
@@ -275,7 +337,7 @@ impl DocStore {
     #[sismo::function("doc_store::apply")]
     pub(super) fn apply(&self, op: &DocOp, state: &Doc) -> Result<(), DocError> {
         self.apply_inner(op, state)?;
-        self.doc.commit();
+        self.commit_not_body();
         Ok(())
     }
 
