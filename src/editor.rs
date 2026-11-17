@@ -58,6 +58,8 @@ pub fn theme(p: &Palette) -> EditorTheme {
     colors.highlight = p.highlighters[0].with_a(180);
     colors.popup_background = p.s2;
     colors.popup_selected = p.s4;
+    colors.popup_text = p.t1;
+    colors.popup_muted = p.t2;
     theme
 }
 

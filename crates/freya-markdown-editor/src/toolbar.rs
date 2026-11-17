@@ -618,7 +618,7 @@ pub fn color_palette(
     current: Option<Rgba>,
     pick: impl Fn(Option<Rgba>) + Clone + 'static,
 ) -> Element {
-    let colors = &theme.colors;
+    let colors = &theme.colors.on_popup();
     let reset = pick.clone();
     let swatches = theme.palette.iter().map(|color| {
         let color = *color;
@@ -673,7 +673,7 @@ fn link_popup(
     draft: State<String>,
     current: Option<String>,
 ) -> Element {
-    let colors = &theme.colors;
+    let colors = &theme.colors.on_popup();
     let close = move || {
         let mut menu = menu;
         menu.set(None);

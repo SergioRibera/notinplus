@@ -124,7 +124,7 @@ impl ImageAtom {
     #[cfg_attr(feature = "sismo", sismo::function("markdown::image_menu"))]
     fn actions(&self, mut describing: State<bool>) -> Element {
         let theme = &self.shared.theme;
-        let colors = &theme.colors;
+        let colors = &theme.colors.on_popup();
         let controller = self.shared.controller;
         let slot = self.slot;
         let close = EventHandler::new(move |()| controller.open_atom_menu(None));
@@ -188,7 +188,7 @@ impl Component for DescribeField {
         let initial = self.alt.clone();
         let draft = use_state(move || initial);
         let theme = &self.shared.theme;
-        let colors = &theme.colors;
+        let colors = &theme.colors.on_popup();
         let controller = self.shared.controller;
         let slot = self.slot;
         let on_done = self.on_done.clone();

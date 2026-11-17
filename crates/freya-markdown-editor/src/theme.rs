@@ -23,6 +23,12 @@ pub struct EditorColors {
     pub spoiler: Color,
     pub popup_background: Color,
     pub popup_selected: Color,
+    /// Text over [`Self::popup_background`]. Menus keep it while the page
+    /// text changes colour ([`EditorTheme::tinted`]), since their
+    /// background does not.
+    pub popup_text: Color,
+    /// Secondary text over [`Self::popup_background`].
+    pub popup_muted: Color,
     pub note: Color,
     pub tip: Color,
     pub important: Color,
@@ -49,6 +55,8 @@ impl EditorColors {
             spoiler: Color::from_rgb(70, 74, 86),
             popup_background: Color::from_rgb(38, 41, 49),
             popup_selected: Color::from_rgb(56, 62, 78),
+            popup_text: Color::from_rgb(228, 230, 235),
+            popup_muted: Color::from_rgb(150, 156, 168),
             note: Color::from_rgb(88, 166, 255),
             tip: Color::from_rgb(63, 185, 80),
             important: Color::from_rgb(171, 125, 248),
@@ -75,11 +83,26 @@ impl EditorColors {
             spoiler: Color::from_rgb(200, 205, 212),
             popup_background: Color::from_rgb(255, 255, 255),
             popup_selected: Color::from_rgb(234, 238, 242),
+            popup_text: Color::from_rgb(31, 35, 40),
+            popup_muted: Color::from_rgb(101, 109, 118),
             note: Color::from_rgb(9, 105, 218),
             tip: Color::from_rgb(26, 127, 55),
             important: Color::from_rgb(130, 80, 223),
             warning: Color::from_rgb(154, 103, 0),
             caution: Color::from_rgb(207, 34, 46),
+        }
+    }
+
+    /// The palette for what a popup shows: text in [`Self::popup_text`]
+    /// and [`Self::popup_muted`], whatever colour the page text has.
+    #[must_use]
+    pub fn on_popup(&self) -> Self {
+        Self {
+            text: self.popup_text,
+            caret: self.popup_text,
+            muted: self.popup_muted,
+            placeholder: self.popup_muted,
+            ..self.clone()
         }
     }
 
@@ -225,5 +248,21 @@ impl From<Rgba> for Color {
 impl From<Color> for Rgba {
     fn from(color: Color) -> Self {
         Self::new(color.r(), color.g(), color.b(), color.a())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tinted_page_keeps_the_popup_text() {
+        let plain = EditorTheme::dark();
+        let tinted = plain.clone().tinted(Color::from_rgb(20, 20, 20));
+        assert_eq!(tinted.colors.text, Color::from_rgb(20, 20, 20));
+        let popup = tinted.colors.on_popup();
+        assert_eq!(popup.text, plain.colors.popup_text);
+        assert_eq!(popup.muted, plain.colors.popup_muted);
+        assert_eq!(popup.placeholder, plain.colors.popup_muted);
     }
 }

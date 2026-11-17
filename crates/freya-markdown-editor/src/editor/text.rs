@@ -1810,7 +1810,7 @@ fn abbreviation_bubble(
     x: f32,
     y: f32,
 ) -> Element {
-    let colors = &theme.colors;
+    let colors = &theme.colors.on_popup();
     rect()
         .layer(Layer::Overlay)
         .position(

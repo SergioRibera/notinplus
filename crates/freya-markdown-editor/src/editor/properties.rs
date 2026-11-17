@@ -185,7 +185,7 @@ impl PropertyRow {
     #[cfg_attr(feature = "sismo", sismo::function("markdown::property_form"))]
     fn form(&self, open: State<bool>, name: State<String>, value: State<String>) -> Element {
         let theme = &self.theme;
-        let colors = &theme.colors;
+        let colors = &theme.colors.on_popup();
         let (controller, block) = (self.controller, self.block);
         let adding = self.name.is_none();
         let save = {

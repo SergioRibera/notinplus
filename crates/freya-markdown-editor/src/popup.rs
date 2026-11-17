@@ -352,7 +352,7 @@ impl MenuItem {
             .child(
                 label()
                     .font_size(13.5)
-                    .color(colors.text)
+                    .color(colors.popup_text)
                     .max_lines(1)
                     .text_overflow(TextOverflow::Ellipsis)
                     .width(if self.detail.is_some() {
@@ -367,7 +367,7 @@ impl MenuItem {
                     .width(Size::flex(1.))
                     .font_size(12.)
                     .font_family("monospace")
-                    .color(colors.muted)
+                    .color(colors.popup_muted)
                     .max_lines(1)
                     .text_overflow(TextOverflow::Ellipsis)
                     .text_align(TextAlign::End)
@@ -377,13 +377,13 @@ impl MenuItem {
     }
 }
 
-/// Colors of a text field inside a popup, following the editor theme.
+/// Colors of a text field inside a popup.
 pub(crate) fn input_colors(colors: &EditorColors) -> InputColorsThemePartial {
     InputColorsThemePartial {
         background: Some(colors.code_background.into()),
         focus_background: Some(colors.code_background.into()),
-        color: Some(colors.text.into()),
-        placeholder_color: Some(colors.placeholder.into()),
+        color: Some(colors.popup_text.into()),
+        placeholder_color: Some(colors.popup_muted.into()),
         border_fill: Some(colors.border.into()),
         focus_border_fill: Some(colors.accent.into()),
     }

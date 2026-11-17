@@ -535,7 +535,7 @@ impl Component for SuggestionMenu {
         let mut scroll = use_scroll_controller(ScrollConfig::default);
         let pressed_at = use_hook(|| Rc::new(Cell::new(i32::MIN)));
         let shown_selected = use_hook(|| Rc::new(Cell::new(usize::MAX)));
-        let colors = self.theme.colors.clone();
+        let colors = self.theme.colors.on_popup();
         let rows = self.rows.clone();
 
         #[allow(

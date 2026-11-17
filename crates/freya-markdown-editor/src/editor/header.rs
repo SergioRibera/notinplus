@@ -258,7 +258,7 @@ impl Component for LanguagePicker {
     #[cfg_attr(feature = "sismo", sismo::function("markdown::language_picker"))]
     fn render(&self) -> impl IntoElement {
         let draft = use_state(String::new);
-        let colors = &self.theme.colors;
+        let colors = &self.theme.colors.on_popup();
         let labels = &self.theme.labels;
         let (controller, block) = (self.controller, self.block);
         let pick = {
@@ -406,7 +406,7 @@ impl Component for RenameButton {
                 .maybe_child(
                     self.hint
                         .clone()
-                        .map(|hint| label().font_size(11.5).color(colors.muted).text(hint)),
+                        .map(|hint| label().font_size(11.5).color(colors.popup_muted).text(hint)),
                 )
                 .into_element()
         });

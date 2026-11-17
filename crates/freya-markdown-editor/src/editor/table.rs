@@ -254,7 +254,7 @@ struct FormulaEditor {
 impl Component for FormulaEditor {
     fn render(&self) -> impl IntoElement {
         let theme = &self.theme;
-        let colors = &theme.colors;
+        let colors = &theme.colors.on_popup();
         let header = self.header.clone();
         let formula = self.formula.clone();
         let name = use_state(move || header);

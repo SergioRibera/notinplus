@@ -1405,13 +1405,17 @@ impl Component for BlockView {
                             .alignment(BorderAlignment::Inner)
                             .fill(colors.border),
                     )
-                    .child(label().color(colors.text).font_size(12.).max_lines(1).text(
-                        if preview.is_empty() {
-                            theme.labels.get(Label::Block).to_owned()
-                        } else {
-                            preview
-                        },
-                    )),
+                    .child(
+                        label()
+                            .color(colors.popup_text)
+                            .font_size(12.)
+                            .max_lines(1)
+                            .text(if preview.is_empty() {
+                                theme.labels.get(Label::Block).to_owned()
+                            } else {
+                                preview
+                            }),
+                    ),
             )
             .child(
                 rect()
