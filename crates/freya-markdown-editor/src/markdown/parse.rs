@@ -5,7 +5,7 @@ use super::html::Tag;
 use super::{Extensions, ParseOptions};
 use crate::document::{
     Abbreviation, Align, Atom, Block, BlockKind, CalloutKind, ColumnAlign, Document, HeadingLevel,
-    Inline, Link, ListKind, MarkKind, Table, Transclusion,
+    Inline, Link, ListKind, MarkKind, Rgba, Table, Transclusion,
 };
 
 #[cfg_attr(feature = "sismo", sismo::function("markdown::parse_document"))]
@@ -152,12 +152,21 @@ impl Lowering<'_> {
             return None;
         };
         let open = first.text().strip_prefix("[!")?;
-        let kind = &open[..open.find(']')?];
+        let inside = &open[..open.find(']')?];
+        let mut words = inside.split(' ');
+        let kind = words.next()?;
         if !kind.contains(':') || kind.contains(char::is_whitespace) {
             return None;
         }
+        let mut color = None;
+        for word in words {
+            match word.split_once('=') {
+                Some(("color", value)) => color = Some(value.parse::<Rgba>().ok()?),
+                _ => return None,
+            }
+        }
         let (url, label) = source_link(last)?;
-        let marker = "[!]".encode_utf16().count() + kind.encode_utf16().count();
+        let marker = "[!]".encode_utf16().count() + inside.encode_utf16().count();
         let lead = first.slice(marker..first.len());
         let fallback = std::iter::once(&lead)
             .chain(middle)
@@ -170,6 +179,7 @@ impl Lowering<'_> {
             url,
             label,
             fallback,
+            color,
         })
     }
 

@@ -17,6 +17,8 @@ use std::rc::Rc;
 
 use freya::prelude::*;
 
+use crate::controller::EditorController;
+use crate::document::{BlockId, Rgba};
 use crate::markdown::EmbedFilter;
 use crate::theme::EditorTheme;
 
@@ -127,8 +129,13 @@ pub struct TransclusionContext<'a> {
     pub label: &'a str,
     /// Markdown of the content as last seen.
     pub fallback: &'a str,
+    /// Colour chosen for its text; `None` follows `theme.colors.text`.
+    pub color: Option<Rgba>,
     pub read_only: bool,
     pub theme: &'a EditorTheme,
+    /// The block, for [`EditorController::set_transclusion_color`].
+    pub block: BlockId,
+    pub controller: EditorController,
 }
 
 /// Data available when drawing a formula.

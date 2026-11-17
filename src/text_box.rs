@@ -115,6 +115,10 @@ impl TextFrame {
     }
 }
 
+/// [`TextBox::color`] that follows the theme instead of naming a colour.
+/// Fully transparent text would never be readable, so the value is free.
+pub const AUTO_TEXT_COLOR: [u8; 4] = [0; 4];
+
 /// Markdown text laid out on the canvas.
 #[istmo::message]
 #[derive(Clone, PartialEq, Debug)]
@@ -122,11 +126,18 @@ pub struct TextBox {
     pub id: TextBoxId,
     pub frame: TextFrame,
     pub markdown: String,
-    /// Body text colour as RGBA. Inline colour marks in `markdown` win.
+    /// Body text colour as RGBA, or [`AUTO_TEXT_COLOR`] for the theme's text
+    /// colour (light or dark). Inline colour marks in `markdown` win.
     pub color: [u8; 4],
 }
 
 impl TextBox {
+    /// Its colour, `None` while it follows the theme.
+    #[must_use]
+    pub fn custom_color(&self) -> Option<[u8; 4]> {
+        (self.color != AUTO_TEXT_COLOR).then_some(self.color)
+    }
+
     /// Whether the body holds nothing worth keeping.
     #[must_use]
     pub fn is_blank(&self) -> bool {

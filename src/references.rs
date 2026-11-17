@@ -261,62 +261,33 @@ pub fn quote(target: &SourceRef, data: Option<&LibraryData>) -> Option<Quote> {
     kind.quote(meta, anchor)
 }
 
-/// Markdown of `quote` as a block quote of plain lines (lists become
-/// bullets, headings bold) closed by a chip to `target`.
+/// Markdown of `quote` as text of its own, to edit freely: the source's
+/// markdown as it is (headings, lists, formulas…) closed by a chip to
+/// `target`.
 #[must_use]
 #[sismo::function("references::quote_markdown")]
 pub fn quote_markdown(quote: &Quote, target: &SourceRef) -> String {
-    let mut lines = quote_lines(&quote.body);
-    lines.push(format!("— {}", chip_markdown(&quote.source, target)));
-    lines
-        .iter()
-        .map(|line| format!("> {line}"))
-        .collect::<Vec<_>>()
-        .join("\n>\n")
-}
-
-/// Markdown of `quote` as a quote that keeps showing what `target` holds
-/// now; the lines written are what it held when inserted.
-#[must_use]
-#[sismo::function("references::live_quote_markdown")]
-pub fn live_quote_markdown(quote: &Quote, target: &SourceRef) -> String {
     format!(
-        "> [!{}]\n>\n{}",
-        crate::editor::LIVE_QUOTE,
-        quote_markdown(quote, target)
+        "{}\n\n— {}",
+        quote.body.trim(),
+        chip_markdown(&quote.source, target)
     )
 }
 
-/// A line of quoted content as it reads, without markdown.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct QuoteLine {
-    pub text: String,
-    pub heading: bool,
-    /// List nesting; `None` outside a list.
-    pub bullet: Option<u8>,
-}
-
-/// The blocks of `markdown` as plain lines.
+/// Markdown of `quote` as a quote that keeps showing what `target` holds
+/// now. What it held when inserted is written as plain quoted lines (lists
+/// become bullets, headings bold): a quote holds paragraphs only.
 #[must_use]
-#[sismo::function("references::quote_text")]
-pub fn quote_text(markdown: &str) -> Vec<QuoteLine> {
-    Document::parse(markdown)
-        .blocks()
+#[sismo::function("references::live_quote_markdown")]
+pub fn live_quote_markdown(quote: &Quote, target: &SourceRef) -> String {
+    let mut lines = quote_lines(&quote.body);
+    lines.push(format!("— {}", chip_markdown(&quote.source, target)));
+    let quoted = lines
         .iter()
-        .filter_map(|block| {
-            let line = |content: &Inline, heading, bullet| QuoteLine {
-                text: content.plain_text().trim().to_owned(),
-                heading,
-                bullet,
-            };
-            let line = match &block.kind {
-                BlockKind::Heading { content, .. } => line(content, true, None),
-                BlockKind::ListItem { depth, content, .. } => line(content, false, Some(*depth)),
-                kind => line(kind.content()?, false, None),
-            };
-            (!line.text.is_empty()).then_some(line)
-        })
-        .collect()
+        .map(|line| format!("> {line}"))
+        .collect::<Vec<_>>()
+        .join("\n>\n");
+    format!("> [!{}]\n>\n{quoted}", crate::editor::LIVE_QUOTE)
 }
 
 /// One line per block of `markdown`, in the shape a quote keeps.
@@ -391,7 +362,7 @@ pub fn insert_in_notebook(from: ItemId, target: SourceRef) {
             let mut lib = handle.lock().await;
             let saved = match lib.load_doc(notebook).await {
                 Ok(mut doc) => {
-                    doc.append_text(&markdown, [38, 37, 42, 255]);
+                    doc.append_text(&markdown, crate::text_box::AUTO_TEXT_COLOR);
                     lib.save_doc(notebook, &doc).await
                 }
                 Err(err) => Err(err),
@@ -429,25 +400,7 @@ mod quote_tests {
     }
 
     #[test]
-    fn quoted_text_drops_markdown_but_keeps_the_shape() {
-        let lines = quote_text("## Tema\n\nUna *idea*.\n\n- uno\n  - dos");
-        let shape: Vec<_> = lines
-            .iter()
-            .map(|l| (l.text.as_str(), l.heading, l.bullet))
-            .collect();
-        assert_eq!(
-            shape,
-            [
-                ("Tema", true, None),
-                ("Una idea.", false, None),
-                ("uno", false, Some(0)),
-                ("dos", false, Some(1)),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_quote_becomes_plain_quoted_lines_closed_by_its_source() {
+    fn a_copy_keeps_the_markdown_of_its_source() {
         let quote = Quote {
             body: "Una *idea*.\n\n### Detalle\n\n- uno\n  - dos".to_owned(),
             source: "Nota › Ideas".to_owned(),
@@ -458,19 +411,32 @@ mod quote_tests {
         let markdown = quote_markdown(&quote, &target);
         assert_eq!(
             markdown,
-            "> Una *idea*.\n>\n> **Detalle**\n>\n> • uno\n>\n> \u{a0}\u{a0}• dos\n>\n> — [Nota › Ideas](https://example.com)"
+            "Una *idea*.\n\n### Detalle\n\n- uno\n  - dos\n\n— [Nota › Ideas](https://example.com)"
         );
         let document = Document::parse(&markdown);
-        let quoted = document.blocks().iter().filter(
-            |block| !matches!(&block.kind, BlockKind::Paragraph(content) if content.is_empty()),
-        );
         assert!(
-            quoted
-                .clone()
-                .all(|block| matches!(block.kind, BlockKind::Quote(_)))
-                && quoted.count() == 5,
+            document
+                .blocks()
+                .iter()
+                .any(|block| matches!(block.kind, BlockKind::Heading { .. })),
             "{:?}",
             document.blocks()
         );
+    }
+
+    #[test]
+    fn a_live_quote_writes_what_it_held_as_plain_lines() {
+        let quote = Quote {
+            body: "## Tema\n\n- uno".to_owned(),
+            source: "Nota".to_owned(),
+        };
+        let target = SourceRef::External {
+            url: "https://example.com".to_owned(),
+        };
+        let document = Document::parse(&live_quote_markdown(&quote, &target));
+        let BlockKind::Transclusion(live) = &document.blocks()[0].kind else {
+            panic!("{:?}", document.blocks());
+        };
+        assert_eq!(live.fallback, "**Tema**\n\n• uno");
     }
 }

@@ -100,15 +100,17 @@ impl TextEditorSlot {
     }
 }
 
-/// Theme for a box whose body colour is `color` (RGBA) at viewport `scale`.
+/// Theme for a box whose body colour is `color` (RGBA, `None` for the
+/// theme's own) at viewport `scale`.
 #[sismo::function("canvas_text::theme")]
-fn canvas_theme(color: [u8; 4], scale: f32) -> EditorTheme {
+fn canvas_theme(color: Option<[u8; 4]>, scale: f32) -> EditorTheme {
     let base = crate::editor::theme(&notin_ui_kit::palette());
     let mut theme = base.clone().zoomed(TEXT_BASE_SIZE / base.body_size * scale);
-    let [r, g, b, a] = color;
-    let text = Color::from_argb(a, r, g, b);
-    theme.colors.text = text;
-    theme.colors.caret = text;
+    if let Some([r, g, b, a]) = color {
+        let text = Color::from_argb(a, r, g, b);
+        theme.colors.text = text;
+        theme.colors.caret = text;
+    }
     theme.colors.surface = Color::TRANSPARENT;
     theme.fonts.insert(0, FONT_FAMILY.into());
     theme
@@ -481,7 +483,7 @@ impl Component for CanvasTextBox {
         let view = self.view;
         let frame = text.frame;
         let (left, top) = view.to_screen(frame.x, frame.y);
-        let theme = canvas_theme(text.color, view.scale);
+        let theme = canvas_theme(text.custom_color(), view.scale);
         let id = text.id;
         let board = Arc::clone(&self.board);
         let body = if self.editing {
@@ -1021,6 +1023,7 @@ pub fn text_toolbar(
         .child(toolbar_action(trash_2(), move || {
             lock(&delete_board).delete_session_text();
         }))
+        .child(box_color(board, &theme))
         .child(
             rect()
                 .width(Size::px(1.))
@@ -1292,6 +1295,49 @@ impl Component for SideScroll {
                     .maybe_child(thumb),
             )
     }
+}
+
+/// Swatch of the edited box's text colour; opens the palette, whose
+/// "default" entry makes the box follow the theme again.
+fn box_color(board: &Arc<Mutex<Board>>, theme: &EditorTheme) -> Element {
+    let current = lock(board).session_text_color();
+    let shown = current.map_or(theme.colors.text, |[r, g, b, a]| {
+        Color::from_argb(a, r, g, b)
+    });
+    let board = Arc::clone(board);
+    let theme = theme.clone();
+    rect()
+        .width(Size::px(32.))
+        .height(Size::px(32.))
+        .center()
+        .corner_radius(8.)
+        .cursor(CursorIcon::Pointer)
+        .a11y_alt(tr!("canvas-text-color"))
+        .on_press(move |event: Event<PressEventData>| {
+            let board = Arc::clone(&board);
+            let picked = current.map(|[r, g, b, a]| Rgba::new(r, g, b, a));
+            let body = color_palette(&theme, picked, move |color: Option<Rgba>| {
+                lock(&board).set_session_text_color(color.map(|c| [c.r, c.g, c.b, c.a]));
+                notin_ui_kit::ModalController::get().close();
+            });
+            notin_ui_kit::Popover::new(notin_ui_kit::press_anchor(&event), body)
+                .width(170.0)
+                .open();
+        })
+        .child(
+            rect()
+                .width(Size::px(18.))
+                .height(Size::px(18.))
+                .corner_radius(9.)
+                .background(shown)
+                .border(
+                    Border::new()
+                        .width(1.)
+                        .alignment(BorderAlignment::Outer)
+                        .fill(notin_ui_kit::palette().line),
+                ),
+        )
+        .into_element()
 }
 
 fn toolbar_action(icon: Bytes, on_press: impl Fn() + 'static) -> Element {

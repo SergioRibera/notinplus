@@ -383,7 +383,14 @@ fn fenced(language: &str, code: &str) -> String {
 fn transclusion_source(transclusion: &Transclusion, rich: bool) -> String {
     let mut parts = Vec::new();
     if rich {
-        parts.push(format!("> [!{}]", transclusion.kind));
+        match transclusion.color {
+            Some(color) => parts.push(format!(
+                "> [!{} color={}]",
+                transclusion.kind,
+                color.to_hex()
+            )),
+            None => parts.push(format!("> [!{}]", transclusion.kind)),
+        }
     }
     parts.extend(
         transclusion

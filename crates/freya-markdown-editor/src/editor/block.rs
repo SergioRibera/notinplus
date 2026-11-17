@@ -1201,8 +1201,11 @@ impl BlockView {
                 url: &transclusion.url,
                 label: &transclusion.label,
                 fallback: &transclusion.fallback,
+                color: transclusion.color,
                 read_only: self.shared.read_only,
                 theme,
+                block: self.block.id,
+                controller: self.shared.controller,
             });
         if let Some(shown) = shown {
             return shown;
@@ -1210,6 +1213,7 @@ impl BlockView {
         let colors = &theme.colors;
         let on_link = self.shared.on_link.clone();
         let url = transclusion.url.clone();
+        let text = transclusion.color.map_or(colors.muted, Color::from);
         let lines = transclusion
             .fallback
             .split("\n\n")
@@ -1217,7 +1221,7 @@ impl BlockView {
             .map(|paragraph| {
                 label()
                     .width(Size::fill())
-                    .color(colors.muted)
+                    .color(text)
                     .font_size(theme.body_size)
                     .font_slant(FontSlant::Italic)
                     .text(paragraph.to_owned())

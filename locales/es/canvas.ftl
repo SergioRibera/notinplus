@@ -2,6 +2,7 @@
 
 canvas-layer-name = Capa { $number }
 canvas-text-placeholder = Escribe… (/ para insertar)
+canvas-text-color = Color del texto
 canvas-image-add = Añadir imagen
 canvas-image-pick-title = Elige una imagen
 canvas-image-source = Ir al origen

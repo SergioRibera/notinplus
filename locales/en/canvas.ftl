@@ -3,6 +3,7 @@
 # $number: position of the new layer, starting at 1.
 canvas-layer-name = Layer { $number }
 canvas-text-placeholder = Write… (/ to insert)
+canvas-text-color = Text color
 canvas-image-add = Add image
 canvas-image-pick-title = Choose an image
 canvas-image-source = Go to source

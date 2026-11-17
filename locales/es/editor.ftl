@@ -4,6 +4,7 @@ editor-suggest-references = Referencias
 editor-quote-live = { $source } · bloque vivo
 editor-quote-copy = { $source } · copia fija
 editor-quote-gone = { $source } · ya no existe
+editor-quote-color = Color del texto
 editor-snapshot-copy = { $source } · imágenes, copia fija
 editor-snapshot-gone = Ese documento ya no existe
 editor-snapshot-empty = Todavía no hay nada que mostrar ahí

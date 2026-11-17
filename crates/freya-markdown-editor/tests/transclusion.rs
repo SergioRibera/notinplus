@@ -61,3 +61,30 @@ fn alerts_and_quotes_without_a_source_stay_what_they_were() {
             .all(|block| !matches!(block.kind, BlockKind::Transclusion(_)))
     );
 }
+
+#[test]
+fn a_chosen_colour_travels_on_the_marker() {
+    let colored = LIVE.replacen("[!app:live]", "[!app:live color=#3b82f6]", 1);
+    let document = Document::parse(&colored);
+    let BlockKind::Transclusion(transclusion) = only(&document) else {
+        panic!("{:?}", document.blocks());
+    };
+    assert_eq!(transclusion.kind, "app:live");
+    assert_eq!(transclusion.color, Some(Rgba::rgb(0x3b, 0x82, 0xf6)));
+    assert_eq!(
+        transclusion.fallback,
+        "³ Y dijo Dios: Sea la luz.\n\notra línea"
+    );
+    assert_eq!(document.to_markdown(Dialect::Rich).trim(), colored);
+}
+
+#[test]
+fn an_unknown_marker_word_is_no_transclusion() {
+    let odd = LIVE.replacen("[!app:live]", "[!app:live size=3]", 1);
+    assert!(
+        Document::parse(&odd)
+            .blocks()
+            .iter()
+            .all(|block| !matches!(block.kind, BlockKind::Transclusion(_)))
+    );
+}

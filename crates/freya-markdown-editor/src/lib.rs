@@ -40,17 +40,17 @@ pub use labels::{Label, Labels};
 pub use popup::PopupReporter;
 pub use theme::{EditorColors, EditorTheme};
 #[cfg(feature = "toolbar")]
-pub use toolbar::MarkdownToolbar;
+pub use toolbar::{MarkdownToolbar, color_palette};
 
 /// Everything needed to embed an editor.
 pub mod prelude {
     pub use crate::document::{
-        Align, Atom, BlockKind, BlockType, CalloutKind, Document, HeadingLevel, Inline, Link,
-        ListKind, MarkFamily, MarkKind, Rgba, Transclusion,
+        Align, Atom, BlockId, BlockKind, BlockType, CalloutKind, Document, HeadingLevel, Inline,
+        Link, ListKind, MarkFamily, MarkKind, Rgba, Transclusion,
     };
     pub use crate::markdown::{Dialect, Extensions, ParseOptions};
     #[cfg(feature = "toolbar")]
-    pub use crate::toolbar::MarkdownToolbar;
+    pub use crate::toolbar::{MarkdownToolbar, color_palette};
     pub use crate::{
         ActiveFormat, AtomSlot, BlockShell, BlockSuggestions, CodeContext, Decorator, Decorators,
         EditorColors, EditorController, EditorTheme, EmbedContext, ImageContext, ImagePicker,

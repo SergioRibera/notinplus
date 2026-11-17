@@ -1280,6 +1280,39 @@ impl EditorController {
         });
     }
 
+    /// Draw the text of a transclusion in `color`, or in the colour of the
+    /// text around it with `None`.
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("markdown::ctl_set_transclusion_color")
+    )]
+    pub fn set_transclusion_color(&self, block: BlockId, color: Option<Rgba>) {
+        self.update(|state| {
+            if state.read_only {
+                return;
+            }
+            let Some(Block {
+                kind: BlockKind::Transclusion(current),
+                ..
+            }) = state.document.block(block)
+            else {
+                return;
+            };
+            if current.color == color {
+                return;
+            }
+            state.record(None);
+            if let Some(BlockKind::Transclusion(current)) = state
+                .document_mut()
+                .block_mut(block)
+                .map(|block| &mut block.kind)
+            {
+                current.color = color;
+            }
+            state.changed();
+        });
+    }
+
     #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_set_align"))]
     pub fn set_align(&self, align: Align) {
         self.update(|state| {

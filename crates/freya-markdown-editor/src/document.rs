@@ -201,6 +201,7 @@ pub enum BlockKind {
 /// In markdown it is a block quote opened by `[!<kind>]` (a kind with a
 /// colon, so it never reads as an alert), followed by the content as it
 /// was last seen and closed by a `— [label](url)` line naming the source.
+/// The marker may carry a text colour: `[!<kind> color=#rrggbb]`.
 /// Portable markdown keeps the plain quote and drops the opening line.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Transclusion {
@@ -211,6 +212,8 @@ pub struct Transclusion {
     /// Markdown of the content as last seen, paragraphs split by a blank
     /// line.
     pub fallback: String,
+    /// Colour its text is drawn in; `None` follows the text around it.
+    pub color: Option<Rgba>,
 }
 
 /// How the text of a block may be edited.

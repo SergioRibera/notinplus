@@ -292,14 +292,14 @@ impl Component for MarkdownToolbar {
         ];
 
         let color_menu = (*menu.read() == Some(Menu::Color)).then(|| {
-            palette_popup(&theme, format.color(), move |color| {
+            color_palette(&theme, format.color(), move |color| {
                 controller.set_color(color);
                 let mut menu = menu;
                 menu.set(None);
             })
         });
         let background_menu = (*menu.read() == Some(Menu::Background)).then(|| {
-            palette_popup(&theme, format.background(), move |color| {
+            color_palette(&theme, format.background(), move |color| {
                 controller.set_background(color);
                 let mut menu = menu;
                 menu.set(None);
@@ -610,8 +610,10 @@ fn separator(colors: &crate::EditorColors) -> Element {
         .into_element()
 }
 
+/// The theme palette as a popup of swatches plus a "default colour" entry;
+/// `pick` gets the swatch, or `None` for the default.
 #[cfg_attr(feature = "sismo", sismo::function("markdown::toolbar_palette"))]
-fn palette_popup(
+pub fn color_palette(
     theme: &EditorTheme,
     current: Option<Rgba>,
     pick: impl Fn(Option<Rgba>) + Clone + 'static,
