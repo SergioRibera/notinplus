@@ -201,8 +201,11 @@ pub enum BlockKind {
 /// In markdown it is a block quote opened by `[!<kind>]` (a kind with a
 /// colon, so it never reads as an alert), followed by the content as it
 /// was last seen and closed by a `— [label](url)` line naming the source.
-/// The marker may carry a text colour: `[!<kind> color=#rrggbb]`.
-/// Portable markdown keeps the plain quote and drops the opening line.
+/// The marker may carry settings of the quote as `key=value` words after
+/// the kind: `[!<kind> color=#rrggbb hide=a,b]`. The editor keeps every
+/// one of them, known or not, and whoever draws the quote reads the ones
+/// it understands. Portable markdown keeps the plain quote and drops the
+/// opening line.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Transclusion {
     /// What the opening marker names, such as `app:live`.
@@ -212,8 +215,78 @@ pub struct Transclusion {
     /// Markdown of the content as last seen, paragraphs split by a blank
     /// line.
     pub fallback: String,
-    /// Colour its text is drawn in; `None` follows the text around it.
-    pub color: Option<Rgba>,
+    /// Settings written on the marker, in the order they were written.
+    pub attrs: Vec<(String, String)>,
+}
+
+/// Setting key that holds the text colour of a quote (`#rrggbb`).
+pub const TRANSCLUSION_COLOR: &str = "color";
+
+impl Transclusion {
+    /// Value of setting `key`, if the marker has it.
+    #[must_use]
+    pub fn attr(&self, key: &str) -> Option<&str> {
+        transclusion_attr(&self.attrs, key)
+    }
+
+    /// Set `key` to `value`, or drop it with `None`. Returns `false`, and
+    /// changes nothing, when the pair cannot be written on a marker (see
+    /// [`valid_transclusion_attr`]).
+    pub fn set_attr(&mut self, key: &str, value: Option<&str>) -> bool {
+        match value {
+            Some(value) => {
+                if !valid_transclusion_attr(key, value) {
+                    log::warn!("transclusion: cannot write setting {key:?}={value:?}");
+                    return false;
+                }
+                match self.attrs.iter_mut().find(|(k, _)| k == key) {
+                    Some((_, current)) => value.clone_into(current),
+                    None => self.attrs.push((key.to_owned(), value.to_owned())),
+                }
+            }
+            None => self.attrs.retain(|(k, _)| k != key),
+        }
+        true
+    }
+
+    /// Text colour chosen for the quote; `None` follows the text around it.
+    #[must_use]
+    pub fn color(&self) -> Option<Rgba> {
+        transclusion_color(&self.attrs)
+    }
+}
+
+/// Value of `key` among marker settings.
+#[must_use]
+pub fn transclusion_attr<'a>(attrs: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    attrs
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, value)| value.as_str())
+}
+
+/// The [`TRANSCLUSION_COLOR`] setting among `attrs`; a value that is not a
+/// colour is logged and ignored.
+#[must_use]
+pub fn transclusion_color(attrs: &[(String, String)]) -> Option<Rgba> {
+    let value = transclusion_attr(attrs, TRANSCLUSION_COLOR)?;
+    value
+        .parse::<Rgba>()
+        .inspect_err(|_| log::warn!("transclusion: {value:?} is not a colour, ignored"))
+        .ok()
+}
+
+/// Whether `key=value` can be written on a marker and read back as is: a
+/// key of lowercase letters, digits, `-` or `_`, and a value without
+/// spaces or brackets.
+#[must_use]
+pub fn valid_transclusion_attr(key: &str, value: &str) -> bool {
+    !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        && !value.is_empty()
+        && !value.contains(|c: char| c.is_whitespace() || c == '[' || c == ']')
 }
 
 /// How the text of a block may be edited.

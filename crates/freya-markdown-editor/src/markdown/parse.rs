@@ -5,7 +5,7 @@ use super::html::Tag;
 use super::{Extensions, ParseOptions};
 use crate::document::{
     Abbreviation, Align, Atom, Block, BlockKind, CalloutKind, ColumnAlign, Document, HeadingLevel,
-    Inline, Link, ListKind, MarkKind, Rgba, Table, Transclusion,
+    Inline, Link, ListKind, MarkKind, Table, Transclusion, valid_transclusion_attr,
 };
 
 #[cfg_attr(feature = "sismo", sismo::function("markdown::parse_document"))]
@@ -158,11 +158,15 @@ impl Lowering<'_> {
         if !kind.contains(':') || kind.contains(char::is_whitespace) {
             return None;
         }
-        let mut color = None;
-        for word in words {
+        let mut attrs: Vec<(String, String)> = Vec::new();
+        for word in words.filter(|word| !word.is_empty()) {
             match word.split_once('=') {
-                Some(("color", value)) => color = Some(value.parse::<Rgba>().ok()?),
-                _ => return None,
+                Some((key, value)) if valid_transclusion_attr(key, value) => {
+                    // A key written twice keeps its last value.
+                    attrs.retain(|(k, _)| k != key);
+                    attrs.push((key.to_owned(), value.to_owned()));
+                }
+                _ => log::warn!("transclusion [!{kind}]: ignoring marker word {word:?}"),
             }
         }
         let (url, label) = source_link(last)?;
@@ -179,7 +183,7 @@ impl Lowering<'_> {
             url,
             label,
             fallback,
-            color,
+            attrs,
         })
     }
 

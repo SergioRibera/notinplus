@@ -274,13 +274,13 @@ impl Layout<'_> {
                     self.text(content, &self.body(), indent, "");
                 }
                 BlockKind::Transclusion(transclusion) => {
-                    let color = transclusion
-                        .color
-                        .map_or(self.theme.colors.text, Color::from);
+                    let color = transclusion.color().map(Color::from);
                     let quoted = Document::parse(&transclusion.fallback);
                     self.barred(self.theme.colors.quote_bar, indent, |layout, inner| {
-                        let mut theme = layout.theme.clone();
-                        theme.colors.text = color;
+                        let theme = match color {
+                            Some(color) => layout.theme.clone().tinted(color),
+                            None => layout.theme.clone(),
+                        };
                         let mut nested = Layout {
                             theme: &theme,
                             fonts: layout.fonts,

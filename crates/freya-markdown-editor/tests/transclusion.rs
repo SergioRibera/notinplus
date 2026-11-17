@@ -70,7 +70,7 @@ fn a_chosen_colour_travels_on_the_marker() {
         panic!("{:?}", document.blocks());
     };
     assert_eq!(transclusion.kind, "app:live");
-    assert_eq!(transclusion.color, Some(Rgba::rgb(0x3b, 0x82, 0xf6)));
+    assert_eq!(transclusion.color(), Some(Rgba::rgb(0x3b, 0x82, 0xf6)));
     assert_eq!(
         transclusion.fallback,
         "³ Y dijo Dios: Sea la luz.\n\notra línea"
@@ -79,12 +79,55 @@ fn a_chosen_colour_travels_on_the_marker() {
 }
 
 #[test]
-fn an_unknown_marker_word_is_no_transclusion() {
-    let odd = LIVE.replacen("[!app:live]", "[!app:live size=3]", 1);
-    assert!(
-        Document::parse(&odd)
-            .blocks()
-            .iter()
-            .all(|block| !matches!(block.kind, BlockKind::Transclusion(_)))
+fn settings_nobody_knows_are_kept_as_written() {
+    let marked = LIVE.replacen(
+        "[!app:live]",
+        "[!app:live hide=pronunciation,grammar x-plugin=7]",
+        1,
     );
+    let document = Document::parse(&marked);
+    let BlockKind::Transclusion(transclusion) = only(&document) else {
+        panic!("{:?}", document.blocks());
+    };
+    assert_eq!(transclusion.attr("hide"), Some("pronunciation,grammar"));
+    assert_eq!(transclusion.attr("x-plugin"), Some("7"));
+    assert_eq!(transclusion.color(), None);
+    assert_eq!(document.to_markdown(Dialect::Rich).trim(), marked);
+}
+
+#[test]
+fn stray_marker_words_and_bad_colours_are_ignored() {
+    let odd = LIVE.replacen("[!app:live]", "[!app:live loose color=nope]", 1);
+    let document = Document::parse(&odd);
+    let BlockKind::Transclusion(transclusion) = only(&document) else {
+        panic!("{:?}", document.blocks());
+    };
+    assert_eq!(transclusion.attr("loose"), None);
+    assert_eq!(transclusion.attr("color"), Some("nope"));
+    assert_eq!(transclusion.color(), None);
+    assert_eq!(
+        transclusion.fallback,
+        "³ Y dijo Dios: Sea la luz.\n\notra línea"
+    );
+}
+
+#[test]
+fn settings_are_set_and_dropped_in_place() {
+    let BlockKind::Transclusion(mut transclusion) = only(&Document::parse(LIVE)).clone() else {
+        panic!("not a transclusion");
+    };
+    assert!(transclusion.set_attr("color", Some("#c80000")));
+    assert!(transclusion.set_attr("hide", Some("a,b")));
+    assert!(transclusion.set_attr("color", Some("#00c800")));
+    assert_eq!(
+        transclusion.attrs,
+        [
+            ("color".to_owned(), "#00c800".to_owned()),
+            ("hide".to_owned(), "a,b".to_owned())
+        ]
+    );
+    assert!(!transclusion.set_attr("bad key", Some("x")));
+    assert!(!transclusion.set_attr("hide", Some("a b")));
+    assert!(transclusion.set_attr("color", None));
+    assert_eq!(transclusion.attr("color"), None);
 }

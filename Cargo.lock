@@ -2852,6 +2852,7 @@ dependencies = [
  "freya-edit",
  "freya-engine",
  "freya-testing",
+ "log",
  "notin-i18n",
  "sismo",
 ]

@@ -161,6 +161,10 @@ impl From<EditorColors> for EditorTheme {
     }
 }
 
+/// Opacity of secondary text in a [`EditorTheme::tinted`] theme, relative
+/// to the chosen colour.
+pub const TINT_SECONDARY_ALPHA: f32 = 0.62;
+
 impl EditorTheme {
     #[must_use]
     pub fn dark() -> Self {
@@ -175,6 +179,20 @@ impl EditorTheme {
     #[must_use]
     pub const fn heading_size(&self, level: HeadingLevel) -> f32 {
         self.heading_sizes[level.get() as usize - 1]
+    }
+
+    /// Copy of the theme whose text is drawn in `color`: body text, caret
+    /// and the secondary text (muted, placeholder) in the same colour, at
+    /// [`TINT_SECONDARY_ALPHA`] of its opacity, so a coloured block keeps
+    /// two levels of emphasis.
+    #[must_use]
+    pub fn tinted(mut self, color: Color) -> Self {
+        let secondary = color.with_af32(TINT_SECONDARY_ALPHA);
+        self.colors.text = color;
+        self.colors.caret = color;
+        self.colors.muted = secondary;
+        self.colors.placeholder = color.with_af32(TINT_SECONDARY_ALPHA * 0.75);
+        self
     }
 
     /// Copy of the theme with every length multiplied by `zoom`.

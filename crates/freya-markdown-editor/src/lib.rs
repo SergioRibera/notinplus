@@ -40,7 +40,7 @@ pub use editor::{
 pub use labels::{Label, Labels};
 pub use picture::MarkdownPicture;
 pub use popup::PopupReporter;
-pub use theme::{EditorColors, EditorTheme};
+pub use theme::{EditorColors, EditorTheme, TINT_SECONDARY_ALPHA};
 #[cfg(feature = "toolbar")]
 pub use toolbar::{MarkdownToolbar, color_palette};
 

@@ -107,9 +107,7 @@ fn canvas_theme(color: Option<[u8; 4]>, scale: f32) -> EditorTheme {
     let base = crate::editor::theme(&notin_ui_kit::palette());
     let mut theme = base.clone().zoomed(TEXT_BASE_SIZE / base.body_size * scale);
     if let Some([r, g, b, a]) = color {
-        let text = Color::from_argb(a, r, g, b);
-        theme.colors.text = text;
-        theme.colors.caret = text;
+        theme = theme.tinted(Color::from_argb(a, r, g, b));
     }
     theme.colors.surface = Color::TRANSPARENT;
     theme.fonts.insert(0, FONT_FAMILY.into());

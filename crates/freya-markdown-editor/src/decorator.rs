@@ -129,13 +129,30 @@ pub struct TransclusionContext<'a> {
     pub label: &'a str,
     /// Markdown of the content as last seen.
     pub fallback: &'a str,
-    /// Colour chosen for its text; `None` follows `theme.colors.text`.
-    pub color: Option<Rgba>,
+    /// Settings written on its marker, known or not (see
+    /// [`Transclusion::attrs`]).
+    ///
+    /// [`Transclusion::attrs`]: crate::document::Transclusion::attrs
+    pub attrs: &'a [(String, String)],
     pub read_only: bool,
     pub theme: &'a EditorTheme,
-    /// The block, for [`EditorController::set_transclusion_color`].
+    /// The block, for [`EditorController::set_transclusion_attr`].
     pub block: BlockId,
     pub controller: EditorController,
+}
+
+impl TransclusionContext<'_> {
+    /// Value of marker setting `key`.
+    #[must_use]
+    pub fn attr(&self, key: &str) -> Option<&str> {
+        crate::document::transclusion_attr(self.attrs, key)
+    }
+
+    /// Text colour chosen for the quote; `None` follows the text around it.
+    #[must_use]
+    pub fn color(&self) -> Option<Rgba> {
+        crate::document::transclusion_color(self.attrs)
+    }
 }
 
 /// Data available when drawing a formula.

@@ -1280,13 +1280,15 @@ impl EditorController {
         });
     }
 
-    /// Draw the text of a transclusion in `color`, or in the colour of the
-    /// text around it with `None`.
+    /// Set setting `key` of a transclusion to `value`, or drop it with
+    /// `None` (see [`Transclusion::set_attr`]). One undo step.
+    ///
+    /// [`Transclusion::set_attr`]: crate::document::Transclusion::set_attr
     #[cfg_attr(
         feature = "sismo",
-        sismo::function("markdown::ctl_set_transclusion_color")
+        sismo::function("markdown::ctl_set_transclusion_attr")
     )]
-    pub fn set_transclusion_color(&self, block: BlockId, color: Option<Rgba>) {
+    pub fn set_transclusion_attr(&self, block: BlockId, key: &str, value: Option<&str>) {
         self.update(|state| {
             if state.read_only {
                 return;
@@ -1298,16 +1300,16 @@ impl EditorController {
             else {
                 return;
             };
-            if current.color == color {
+            if current.attr(key) == value {
+                return;
+            }
+            let mut next = current.clone();
+            if !next.set_attr(key, value) {
                 return;
             }
             state.record(None);
-            if let Some(BlockKind::Transclusion(current)) = state
-                .document_mut()
-                .block_mut(block)
-                .map(|block| &mut block.kind)
-            {
-                current.color = color;
+            if let Some(slot) = state.document_mut().block_mut(block) {
+                slot.kind = BlockKind::Transclusion(next);
             }
             state.changed();
         });

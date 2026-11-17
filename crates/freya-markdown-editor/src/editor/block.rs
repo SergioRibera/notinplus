@@ -1201,7 +1201,7 @@ impl BlockView {
                 url: &transclusion.url,
                 label: &transclusion.label,
                 fallback: &transclusion.fallback,
-                color: transclusion.color,
+                attrs: &transclusion.attrs,
                 read_only: self.shared.read_only,
                 theme,
                 block: self.block.id,
@@ -1213,7 +1213,7 @@ impl BlockView {
         let colors = &theme.colors;
         let on_link = self.shared.on_link.clone();
         let url = transclusion.url.clone();
-        let text = transclusion.color.map_or(colors.muted, Color::from);
+        let text = transclusion.color().map_or(colors.muted, Color::from);
         let lines = transclusion
             .fallback
             .split("\n\n")

@@ -1,6 +1,7 @@
 //! Quotes that keep showing what their source holds.
 
 use freya::prelude::*;
+use freya_markdown_editor::document::TRANSCLUSION_COLOR;
 use freya_markdown_editor::prelude::*;
 use notin_i18n::tr;
 use notin_plugin::bookmark::SourceRef;
@@ -30,8 +31,8 @@ impl Decorator for LiveQuotes {
             return None;
         }
         let mut theme = transclusion.theme.clone();
-        if let Some(color) = transclusion.color {
-            theme.colors.text = color.into();
+        if let Some(color) = transclusion.color() {
+            theme = theme.tinted(color.into());
         }
         Some(
             LiveQuote {
@@ -39,7 +40,7 @@ impl Decorator for LiveQuotes {
                 label: transclusion.label.to_owned(),
                 fallback: transclusion.fallback.to_owned(),
                 theme,
-                color: transclusion.color,
+                color: transclusion.color(),
                 recolor: (!transclusion.read_only)
                     .then_some((transclusion.controller, transclusion.block)),
             }
@@ -192,7 +193,8 @@ impl Component for QuoteBody {
 fn open_colors(anchor: Area, controller: EditorController, block: BlockId, current: Option<Rgba>) {
     let theme = super::theme(&palette());
     let body = color_palette(&theme, current, move |color| {
-        controller.set_transclusion_color(block, color);
+        let hex = color.map(Rgba::to_hex);
+        controller.set_transclusion_attr(block, TRANSCLUSION_COLOR, hex.as_deref());
         notin_ui_kit::ModalController::get().close();
     });
     Popover::new(anchor, body).width(170.0).open();
