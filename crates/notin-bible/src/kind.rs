@@ -211,13 +211,15 @@ impl BibleKind {
             })
             .collect::<Vec<_>>()
             .join(" ");
-        (!body.is_empty()).then(|| Quote {
-            body,
-            source: format!(
-                "{} ({})",
-                self.label_of_passages(anchors),
-                self.translation(&first.bible_id)
-            ),
+        (!body.is_empty()).then(|| {
+            Quote::new(
+                body,
+                format!(
+                    "{} ({})",
+                    self.label_of_passages(anchors),
+                    self.translation(&first.bible_id)
+                ),
+            )
         })
     }
 

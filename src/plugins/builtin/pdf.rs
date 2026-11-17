@@ -776,13 +776,10 @@ impl DocumentKind for PdfKind {
             .map(str::trim)
             .filter(|t| !t.is_empty())
         {
-            return Some(Quote {
-                body: text.to_owned(),
-                source,
-            });
+            return Some(Quote::new(text, source));
         }
         let index = self.index.read().unwrap_or_else(PoisonError::into_inner);
-        Self::pages_text(&index, doc.id, anchor).map(|body| Quote { body, source })
+        Self::pages_text(&index, doc.id, anchor).map(|body| Quote::new(body, source))
     }
 
     fn snapshots(&self) -> bool {

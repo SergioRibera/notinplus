@@ -2,7 +2,9 @@
 
 use std::rc::Rc;
 
+use freya::prelude::Area;
 use freya_markdown_editor::prelude::{EditorTheme, MarkdownEditor};
+use notin_plugin::bookmark::SourceRef;
 use notin_plugin::doc::DocId;
 use notin_plugin::ui::{HostUi, SelectionMenu, Ui};
 
@@ -31,6 +33,10 @@ impl HostUi for ShellUi {
 
     fn close_selection(&self) {
         crate::selection::close_sticky();
+    }
+
+    fn cite(&self, target: SourceRef, (x, y, width, height): (f32, f32, f32, f32)) {
+        crate::cite::open(target, Area::new((x, y).into(), (width, height).into()));
     }
 }
 

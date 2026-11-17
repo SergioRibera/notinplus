@@ -105,6 +105,10 @@ pub struct SearchQuery {
     pub text: String,
     /// Most hits the shell will show for this kind.
     pub limit: usize,
+    /// Places the user is working near (what the document being written
+    /// already cites, what is open beside it), closest first. A kind may
+    /// rank hits at or around them first; ignoring it is fine.
+    pub near: Vec<SourceRef>,
 }
 
 impl SearchQuery {
@@ -113,7 +117,15 @@ impl SearchQuery {
         Self {
             text: text.into().trim().to_owned(),
             limit,
+            near: Vec::new(),
         }
+    }
+
+    /// The query with the places of [`Self::near`].
+    #[must_use]
+    pub fn near(mut self, near: Vec<SourceRef>) -> Self {
+        self.near = near;
+        self
     }
 
     /// Text without case or accents, for [`crate::Folded`] matching.
@@ -228,12 +240,156 @@ impl ChipView {
 }
 
 /// Content a place inside a document offers to be quoted elsewhere.
+///
+/// Built with [`Quote::new`]; more fields may come, so it cannot be
+/// written as a struct literal outside this crate.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Quote {
-    /// Markdown of what the place holds.
+    /// Markdown of what the place holds. With [`Self::interlinear`], what
+    /// goes under the words (a translation of them), possibly empty.
     pub body: String,
     /// Where it comes from, as a reader would cite it.
     pub source: String,
+    /// The place as text read word by word, each word over how it reads
+    /// and what it means (an interlinear Bible). The host lays it out;
+    /// where it cannot (an old reader, a plain text export) it shows
+    /// [`Interlinear::to_markdown`] followed by [`Self::body`].
+    pub interlinear: Option<Interlinear>,
+}
+
+impl Quote {
+    #[must_use]
+    pub fn new(body: impl Into<String>, source: impl Into<String>) -> Self {
+        Self {
+            body: body.into(),
+            source: source.into(),
+            interlinear: None,
+        }
+    }
+
+    /// Show the place as `interlinear`, with [`Self::body`] under it.
+    #[must_use]
+    pub fn with_interlinear(mut self, interlinear: Interlinear) -> Self {
+        self.interlinear = Some(interlinear);
+        self
+    }
+
+    /// The whole quote as markdown: the interlinear words as a line of
+    /// text, then the body.
+    #[must_use]
+    pub fn to_markdown(&self) -> String {
+        match &self.interlinear {
+            Some(interlinear) if self.body.trim().is_empty() => interlinear.to_markdown(),
+            Some(interlinear) => format!("{}\n\n{}", interlinear.to_markdown(), self.body.trim()),
+            None => self.body.clone(),
+        }
+    }
+}
+
+/// Text laid out word by word (see [`Quote::interlinear`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Interlinear {
+    /// In reading order.
+    pub words: Vec<GlossedWord>,
+    /// Read from right to left (Hebrew, Arabic): the first word sits on
+    /// the right and lines fill leftwards.
+    pub right_to_left: bool,
+    /// Font family the words are written in, one the plugin registered
+    /// (see [`crate::Plugin::fonts`]); `None` uses the text around it.
+    pub font_family: Option<String>,
+}
+
+impl Interlinear {
+    #[must_use]
+    pub const fn new(words: Vec<GlossedWord>) -> Self {
+        Self {
+            words,
+            right_to_left: false,
+            font_family: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn right_to_left(mut self, right_to_left: bool) -> Self {
+        self.right_to_left = right_to_left;
+        self
+    }
+
+    #[must_use]
+    pub fn font_family(mut self, family: impl Into<String>) -> Self {
+        self.font_family = Some(family.into());
+        self
+    }
+
+    /// One line of markdown: each word with how it reads in parentheses
+    /// and what it means after it, `*word* (reading) meaning`.
+    #[must_use]
+    pub fn to_markdown(&self) -> String {
+        self.words
+            .iter()
+            .map(GlossedWord::to_markdown)
+            .collect::<Vec<_>>()
+            .join("  ")
+    }
+}
+
+/// One word of an [`Interlinear`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GlossedWord {
+    /// As written in the text.
+    pub text: String,
+    /// How it reads, in the reader's letters.
+    pub reading: Option<String>,
+    /// What it means here.
+    pub gloss: Option<String>,
+    /// Link a tap on the word follows (a `notein://` deep link to the word,
+    /// for instance).
+    pub link: Option<String>,
+}
+
+impl GlossedWord {
+    #[must_use]
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn reading(mut self, reading: impl Into<String>) -> Self {
+        self.reading = Some(reading.into());
+        self
+    }
+
+    #[must_use]
+    pub fn gloss(mut self, gloss: impl Into<String>) -> Self {
+        self.gloss = Some(gloss.into());
+        self
+    }
+
+    #[must_use]
+    pub fn link(mut self, link: impl Into<String>) -> Self {
+        self.link = Some(link.into());
+        self
+    }
+
+    fn to_markdown(&self) -> String {
+        let mut out = format!("*{}*", self.text.replace('*', ""));
+        if let Some(reading) = &self.reading {
+            out.push_str(" (");
+            out.push_str(reading);
+            out.push(')');
+        }
+        if let Some(gloss) = &self.gloss {
+            out.push(' ');
+            out.push_str(gloss);
+        }
+        out
+    }
 }
 
 /// A part of this kind's quotes the reader may show or hide (a
@@ -816,10 +972,10 @@ pub trait DocumentKind: Send + Sync + 'static {
         None
     }
 
-    /// Parts of this kind's quotes the reader may show or hide; empty
-    /// (the default) when its quotes have none. The host shows them in
-    /// each live quote's menu, next to its text colour.
-    fn quote_options(&self) -> Vec<QuoteOption> {
+    /// Parts of a quote of `anchor` the reader may show or hide; empty (the
+    /// default) when it has none. The host shows them in each live
+    /// quote's menu, next to its text colour.
+    fn quote_options(&self, _anchor: &Self::Anchor) -> Vec<QuoteOption> {
         Vec::new()
     }
 

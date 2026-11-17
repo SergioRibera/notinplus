@@ -37,6 +37,7 @@ pub mod builtin;
 pub mod bundle;
 pub mod canvas;
 pub mod canvas_text;
+pub mod cite;
 pub mod components;
 pub mod creation;
 pub mod deep_link;

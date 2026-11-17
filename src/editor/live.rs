@@ -110,9 +110,9 @@ impl Component for LiveQuote {
         let data = LibraryView::get().data();
         let chip = references::display(&self.target, data.as_deref());
         let found = references::quote_with(&self.target, data.as_deref(), &self.settings.parts);
-        let (body, source, gone) = match found {
-            Some(quote) => (quote.body, quote.source, false),
-            None => (self.fallback.clone(), self.label.clone(), true),
+        let (body, interlinear, source, gone) = match found {
+            Some(quote) => (quote.body, quote.interlinear, quote.source, false),
+            None => (self.fallback.clone(), None, self.label.clone(), true),
         };
         let zoom = self.theme.zoom;
         let px = |length: f32| length * zoom;
@@ -181,10 +181,20 @@ impl Component for LiveQuote {
                 event.stop_propagation();
                 open();
             })
-            .child(QuoteBody {
-                markdown: body,
-                theme,
-            })
+            .maybe_child(interlinear.map(|interlinear| {
+                super::interlinear::InterlinearView {
+                    interlinear,
+                    theme: theme.clone(),
+                }
+                .into_element()
+            }))
+            .maybe_child((!body.trim().is_empty()).then(|| {
+                QuoteBody {
+                    markdown: body,
+                    theme,
+                }
+                .into_element()
+            }))
             .child(
                 rect()
                     .width(Size::fill())

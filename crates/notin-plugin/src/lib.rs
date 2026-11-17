@@ -93,9 +93,10 @@ pub use failure::{NetFailure, UserMessage};
 pub use ids::{ActorId, BookmarkId, DeviceId, OpId, StrokeId, UserId};
 pub use info::PluginInfo;
 pub use kind::{
-    ActionEffect, Attachment, ChipView, DocumentKind, ExportError, ExportFile, ExportValues, Hit,
-    IndexReport, KindAction, KindChoice, KindColor, KindInfo, Mark, OutlineIcon, OutlineNode,
-    Quote, QuoteOption, QuoteParts, SearchQuery, SelectionSupport, Snapshot,
+    ActionEffect, Attachment, ChipView, DocumentKind, ExportError, ExportFile, ExportValues,
+    GlossedWord, Hit, IndexReport, Interlinear, KindAction, KindChoice, KindColor, KindInfo, Mark,
+    OutlineIcon, OutlineNode, Quote, QuoteOption, QuoteParts, SearchQuery, SelectionSupport,
+    Snapshot,
 };
 pub use loader::{LoaderError, SDK_ABI_VERSION};
 pub use manifest::{ManifestError, ManifestLibrary, ManifestRequirement, PluginManifest};

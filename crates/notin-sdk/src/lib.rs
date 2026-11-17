@@ -55,9 +55,9 @@ pub mod prelude {
     pub use notin_plugin::{
         ChipView, ConfigSchema, ConfigValue, CoverRequest, Created, CreationEntry, CreationError,
         CreationRequest, DocId, DocMeta, DocumentKind, ExportFile, Face, FaceContext, Folded, Font,
-        Hit, HostServices, HostUi, ImportPreview, ImportedFile, IndexReport, KindChoice, KindColor,
-        KindInfo, Mark, NetFailure, OutlineIcon, OutlineNode, Payload, PayloadError, Plugin,
-        PluginInfo, Quote, QuoteOption, QuoteParts, Registrar, SearchQuery, SelectionMenu, Share,
-        SourceRef, TextBody, Ui, UserMessage, tr,
+        GlossedWord, Hit, HostServices, HostUi, ImportPreview, ImportedFile, IndexReport,
+        Interlinear, KindChoice, KindColor, KindInfo, Mark, NetFailure, OutlineIcon, OutlineNode,
+        Payload, PayloadError, Plugin, PluginInfo, Quote, QuoteOption, QuoteParts, Registrar,
+        SearchQuery, SelectionMenu, Share, SourceRef, TextBody, Ui, UserMessage, tr,
     };
 }

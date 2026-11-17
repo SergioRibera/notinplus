@@ -330,7 +330,7 @@ impl DocumentKind for NotesKind {
             .filter(|text| !text.is_empty());
         let markdown = live.or_else(|| self.index.body(doc.id.0))?;
         let body = crate::section(&markdown, anchor.heading.as_deref())?;
-        Some(Quote { body, source })
+        Some(Quote::new(body, source))
     }
 
     fn actions(&self) -> Vec<KindAction> {

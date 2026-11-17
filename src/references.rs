@@ -243,12 +243,15 @@ pub fn quote(target: &SourceRef, data: Option<&LibraryData>) -> Option<Quote> {
 /// none or cannot quote.
 #[must_use]
 pub fn quote_options(target: &SourceRef) -> Vec<QuoteOption> {
-    let SourceRef::Plugin { plugin_id, .. } = target else {
+    let SourceRef::Plugin {
+        plugin_id, anchor, ..
+    } = target
+    else {
         return Vec::new();
     };
     crate::plugins::kind(plugin_id)
         .filter(|kind| kind.quotes())
-        .map(|kind| kind.quote_options())
+        .map(|kind| kind.quote_options(anchor))
         .unwrap_or_default()
 }
 
@@ -292,8 +295,8 @@ pub fn quote_with(
 #[sismo::function("references::quote_markdown")]
 pub fn quote_markdown(quote: &Quote, target: &SourceRef) -> String {
     format!(
-        "{}\n\n— {}",
-        quote.body.trim(),
+        "{}\n\n{}",
+        quote.to_markdown().trim(),
         chip_markdown(&quote.source, target)
     )
 }
@@ -304,7 +307,7 @@ pub fn quote_markdown(quote: &Quote, target: &SourceRef) -> String {
 #[must_use]
 #[sismo::function("references::live_quote_markdown")]
 pub fn live_quote_markdown(quote: &Quote, target: &SourceRef) -> String {
-    let mut lines = quote_lines(&quote.body);
+    let mut lines = quote_lines(&quote.to_markdown());
     lines.push(format!("— {}", chip_markdown(&quote.source, target)));
     let quoted = lines
         .iter()
@@ -406,10 +409,7 @@ mod quote_tests {
 
     #[test]
     fn a_live_quote_reads_back_as_one_transclusion_of_its_source() {
-        let quote = Quote {
-            body: "Sea la luz.".to_owned(),
-            source: "Génesis 1:3 (RVR1960)".to_owned(),
-        };
+        let quote = Quote::new("Sea la luz.", "Génesis 1:3 (RVR1960)");
         let target = SourceRef::External {
             url: "https://example.com".to_owned(),
         };
@@ -425,17 +425,17 @@ mod quote_tests {
 
     #[test]
     fn a_copy_keeps_the_markdown_of_its_source() {
-        let quote = Quote {
-            body: "Una *idea*.\n\n### Detalle\n\n- uno\n  - dos".to_owned(),
-            source: "Nota › Ideas".to_owned(),
-        };
+        let quote = Quote::new(
+            "Una *idea*.\n\n### Detalle\n\n- uno\n  - dos",
+            "Nota › Ideas",
+        );
         let target = SourceRef::External {
             url: "https://example.com".to_owned(),
         };
         let markdown = quote_markdown(&quote, &target);
         assert_eq!(
             markdown,
-            "Una *idea*.\n\n### Detalle\n\n- uno\n  - dos\n\n— [Nota › Ideas](https://example.com)"
+            "Una *idea*.\n\n### Detalle\n\n- uno\n  - dos\n\n[Nota › Ideas](https://example.com)"
         );
         let document = Document::parse(&markdown);
         assert!(
@@ -450,10 +450,7 @@ mod quote_tests {
 
     #[test]
     fn a_live_quote_writes_what_it_held_as_plain_lines() {
-        let quote = Quote {
-            body: "## Tema\n\n- uno".to_owned(),
-            source: "Nota".to_owned(),
-        };
+        let quote = Quote::new("## Tema\n\n- uno", "Nota");
         let target = SourceRef::External {
             url: "https://example.com".to_owned(),
         };

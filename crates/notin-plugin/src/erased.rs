@@ -93,7 +93,7 @@ pub trait ErasedKind: Send + Sync {
     fn cited(&self, doc: DocId, anchor: &[u8]);
     fn quotes(&self) -> bool;
     fn quote(&self, doc: DocMeta<'_>, anchor: &[u8]) -> Option<Quote>;
-    fn quote_options(&self) -> Vec<QuoteOption>;
+    fn quote_options(&self, anchor: &[u8]) -> Vec<QuoteOption>;
     fn quote_with(&self, doc: DocMeta<'_>, anchor: &[u8], parts: &QuoteParts) -> Option<Quote>;
     fn quotes_live(&self) -> bool;
     fn snapshots(&self) -> bool;
@@ -343,8 +343,10 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
         self.0.quote(doc, &anchor)
     }
 
-    fn quote_options(&self) -> Vec<QuoteOption> {
-        self.0.quote_options()
+    fn quote_options(&self, anchor: &[u8]) -> Vec<QuoteOption> {
+        K::Anchor::from_bytes(anchor)
+            .map(|anchor| self.0.quote_options(&anchor))
+            .unwrap_or_default()
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_quote_with"))]

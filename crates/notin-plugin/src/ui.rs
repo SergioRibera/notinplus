@@ -83,4 +83,10 @@ pub trait HostUi {
 
     /// Take a sticky selection bar away, as when its selection emptied.
     fn close_selection(&self) {}
+
+    /// Offer to cite `target` elsewhere, from a button at `at` (window
+    /// coordinates `(x, y, width, height)`): the host's menu picks how (a live quote when the kind
+    /// quotes, a reference chip, a fixed copy) and copies it for pasting
+    /// into any note or canvas box.
+    fn cite(&self, _target: SourceRef, _at: (f32, f32, f32, f32)) {}
 }

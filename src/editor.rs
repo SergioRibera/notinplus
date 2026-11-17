@@ -7,6 +7,7 @@
 //! markdown-marks setting.
 
 pub(crate) mod images;
+mod interlinear;
 mod live;
 mod snapshot;
 
