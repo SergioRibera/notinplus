@@ -136,6 +136,16 @@ impl Component for TextBlock {
                 a11y_id.request_focus();
             }
         }
+        // While composing the field keeps what it showed before: text
+        // merged in meanwhile is only replayed under it on commit.
+        if is_focused && !editable.editor().peek().has_preedit() {
+            let shown = editable.editor().peek().committed_text();
+            if revealed.is_none() && shown == self.content.text() {
+                controller.remember_shown(target, Some(shown));
+            } else if revealed.is_some() {
+                controller.remember_shown(target, None);
+            }
+        }
 
         let content = self.content.clone();
         let shown = revealed.as_ref().map_or_else(
@@ -1369,7 +1379,23 @@ fn commit_rope(
     let active = reveal.borrow().clone();
     let Some(active) = active else {
         let selection = rope_selection(editable, target, None);
-        controller.edit_text(target, &text, hint, selection);
+        let base = controller.shown_text(target);
+        let current = controller.peek_inline(target);
+        match (base, current) {
+            // Text arrived from elsewhere while the field still showed
+            // `base`: make only what was typed here on top of it, instead
+            // of writing back the field's older text over it.
+            (Some(base), Some(current)) if base != current.text() => {
+                let (merged, selection) =
+                    crate::controller::rebase_edit(&base, &text, current.text(), selection);
+                controller.edit_text(target, &merged, selection.head, selection);
+                controller.request_selection(selection);
+            }
+            _ => {
+                controller.edit_text(target, &text, hint, selection);
+            }
+        }
+        controller.remember_shown(target, Some(text));
         return;
     };
     let Some(content) = controller.peek_inline(target) else {
