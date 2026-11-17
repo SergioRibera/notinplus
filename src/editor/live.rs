@@ -114,6 +114,12 @@ impl Component for LiveQuote {
             Some(quote) => (quote.body, quote.interlinear, quote.source, false),
             None => (self.fallback.clone(), None, self.label.clone(), true),
         };
+        // Still there, only out of reach here (data not downloaded): say so
+        // and offer the fix instead of calling it gone.
+        let unavailable = gone
+            .then(|| references::quote_unavailable(&self.target))
+            .flatten();
+        let out_of_reach = unavailable.is_some();
         let zoom = self.theme.zoom;
         let px = |length: f32| length * zoom;
         let tint = chip.color.resolve(&p);
@@ -195,6 +201,14 @@ impl Component for LiveQuote {
                 }
                 .into_element()
             }))
+            .maybe_child(unavailable.map(|unavailable| {
+                Unavailable {
+                    target: self.target.clone(),
+                    why: unavailable,
+                    zoom,
+                }
+                .into_element()
+            }))
             .child(
                 rect()
                     .width(Size::fill())
@@ -224,7 +238,7 @@ impl Component for LiveQuote {
                                     .font_size(px(13.))
                                     .max_lines(1)
                                     .text_overflow(TextOverflow::Ellipsis)
-                                    .text(if gone {
+                                    .text(if gone && !out_of_reach {
                                         tr!("editor-quote-gone", "source" => source)
                                     } else {
                                         source
@@ -333,5 +347,51 @@ impl Component for QuoteMenu {
                     .text(tr!("editor-quote-color")),
             )
             .child(colors)
+    }
+}
+
+/// Why the quote cannot show its source here, and the button that fixes
+/// it (see [`notin_plugin::DocumentKind::quote_unavailable`]).
+#[derive(Clone, PartialEq)]
+struct Unavailable {
+    target: SourceRef,
+    why: notin_plugin::QuoteUnavailable,
+    zoom: f32,
+}
+
+impl Component for Unavailable {
+    #[sismo::function("editor::quote_unavailable")]
+    fn render(&self) -> impl IntoElement {
+        let p = palette();
+        let px = |length: f32| length * self.zoom;
+        let action = self.why.action.clone().map(|action| {
+            let target = self.target.clone();
+            let id = action.id.to_string();
+            notin_ui_kit::Button::new(action.label.clone())
+                .small()
+                .tonal()
+                .icon(action.icon)
+                .on_press(move |event: Event<PressEventData>| {
+                    event.stop_propagation();
+                    references::run_quote_action(&target, &id);
+                })
+        });
+        rect()
+            .width(Size::fill())
+            .padding((px(8.), px(10.)))
+            .corner_radius(px(6.))
+            .background(p.s2)
+            .horizontal()
+            .content(Content::flex())
+            .cross_align(Alignment::Center)
+            .spacing(px(8.))
+            .child(
+                label()
+                    .width(Size::flex(1.))
+                    .color(p.t2)
+                    .font_size(px(13.))
+                    .text(self.why.reason.to_string()),
+            )
+            .maybe_child(action)
     }
 }

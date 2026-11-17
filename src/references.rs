@@ -261,6 +261,30 @@ pub fn quote_options(target: &SourceRef) -> Vec<QuoteOption> {
         .unwrap_or_default()
 }
 
+/// Why `target` cannot be quoted now although it exists (see
+/// [`notin_plugin::DocumentKind::quote_unavailable`]).
+#[must_use]
+pub fn quote_unavailable(target: &SourceRef) -> Option<notin_plugin::QuoteUnavailable> {
+    let SourceRef::Plugin {
+        plugin_id, anchor, ..
+    } = target
+    else {
+        return None;
+    };
+    crate::plugins::kind(plugin_id)?.quote_unavailable(anchor)
+}
+
+/// Run the action [`quote_unavailable`] offered for `target`.
+pub fn run_quote_action(target: &SourceRef, id: &str) {
+    if let SourceRef::Plugin {
+        plugin_id, anchor, ..
+    } = target
+        && let Some(kind) = crate::plugins::kind(plugin_id)
+    {
+        kind.run_quote_action(id, anchor);
+    }
+}
+
 /// [`quote`] showing only `parts`.
 #[must_use]
 #[sismo::function("references::quote")]

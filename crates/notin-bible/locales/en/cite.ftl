@@ -32,3 +32,4 @@ cite-term-hit-snippet = Dictionary: { $gloss }. { $count ->
    *[other] { $count } times
 }
 cite-interlinear-snippet = Word by word: original, pronunciation and meaning
+cite-needs-originals = The original languages are not on this device.

@@ -301,6 +301,18 @@ impl Quote {
     }
 }
 
+/// Why a place cannot be quoted right now although it is still there (data
+/// not on this device yet, a service not reachable), and what fixes it.
+/// Live quotes show it instead of saying the place is gone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuoteUnavailable {
+    /// What the reader is told, in their language.
+    pub reason: Cow<'static, str>,
+    /// What a button next to it does; run through
+    /// [`DocumentKind::run_quote_action`].
+    pub action: Option<KindAction>,
+}
+
 /// Text laid out word by word (see [`Quote::interlinear`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1004,6 +1016,15 @@ pub trait DocumentKind: Send + Sync + 'static {
     ) -> Option<Quote> {
         self.quote(doc, anchor)
     }
+
+    /// Why `anchor` cannot be quoted now although it exists; `None` (the
+    /// default) when the place is gone or quotes fine.
+    fn quote_unavailable(&self, _anchor: &Self::Anchor) -> Option<QuoteUnavailable> {
+        None
+    }
+
+    /// Run the action [`Self::quote_unavailable`] offered for `anchor`.
+    fn run_quote_action(&self, _id: &str, _anchor: &Self::Anchor) {}
 
     /// Whether a quote of this kind may keep following its source. Kinds
     /// whose content never changes once written (a PDF file) answer

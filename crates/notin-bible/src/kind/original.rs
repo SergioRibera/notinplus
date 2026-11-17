@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use notin_i18n::{Lang, tr};
+use notin_sdk::kind::KindAction;
 use notin_sdk::prelude::*;
 use notin_sdk::{GlossedWord, Interlinear};
 
@@ -27,6 +28,9 @@ const FAMILY: &str = "family";
 const READING: &str = "reading";
 const GLOSS: &str = "gloss";
 const TRANSLATION: &str = "translation";
+
+/// Action of an unavailable quote: download the original-language packs.
+const DOWNLOAD_ORIGINALS: &str = "download-originals";
 
 /// Places listed under «where it appears» in a term's quote.
 const LISTED_OCCURRENCES: usize = 6;
@@ -119,6 +123,32 @@ impl BibleKind {
             ],
         };
         options.into_iter().flatten().collect()
+    }
+
+    /// A quote of the original text needs the packs: without them, say so
+    /// and offer to download them.
+    pub(super) fn original_unavailable(&self, anchor: &BibleRef) -> Option<QuoteUnavailable> {
+        anchor.original?;
+        if self.originals().store().is_some() {
+            return None;
+        }
+        Some(QuoteUnavailable {
+            reason: tr!("cite-needs-originals").into(),
+            action: cfg!(feature = "importer").then(|| KindAction {
+                id: DOWNLOAD_ORIGINALS.into(),
+                label: tr!("originals-card-download").into(),
+                icon: freya::icons::lucide::download(),
+            }),
+        })
+    }
+
+    /// Run what [`Self::original_unavailable`] offered.
+    pub(super) fn run_original_action(&self, id: &str, anchor: &BibleRef) {
+        if id != DOWNLOAD_ORIGINALS || anchor.original.is_none() {
+            return;
+        }
+        #[cfg(feature = "importer")]
+        self.originals().spawn_download();
     }
 
     /// The chip label of a place in the original text.

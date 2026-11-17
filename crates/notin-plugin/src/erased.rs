@@ -15,7 +15,7 @@ use crate::doc::{DocId, DocMeta};
 use crate::kind::{
     ActionEffect, ChipView, DocumentKind, ExportError, ExportFile, ExportValues, Hit, IndexReport,
     KindAction, KindChoice, KindInfo, Mark, OutlineNode, Quote, QuoteOption, QuoteParts,
-    SearchQuery, SelectionSupport, Snapshot,
+    QuoteUnavailable, SearchQuery, SelectionSupport, Snapshot,
 };
 use crate::payload::Payload;
 
@@ -94,6 +94,8 @@ pub trait ErasedKind: Send + Sync {
     fn quotes(&self) -> bool;
     fn quote(&self, doc: DocMeta<'_>, anchor: &[u8]) -> Option<Quote>;
     fn quote_options(&self, anchor: &[u8]) -> Vec<QuoteOption>;
+    fn quote_unavailable(&self, anchor: &[u8]) -> Option<QuoteUnavailable>;
+    fn run_quote_action(&self, id: &str, anchor: &[u8]);
     fn quote_with(&self, doc: DocMeta<'_>, anchor: &[u8], parts: &QuoteParts) -> Option<Quote>;
     fn quotes_live(&self) -> bool;
     fn snapshots(&self) -> bool;
@@ -347,6 +349,17 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
         K::Anchor::from_bytes(anchor)
             .map(|anchor| self.0.quote_options(&anchor))
             .unwrap_or_default()
+    }
+
+    fn quote_unavailable(&self, anchor: &[u8]) -> Option<QuoteUnavailable> {
+        let anchor = K::Anchor::from_bytes(anchor).ok()?;
+        self.0.quote_unavailable(&anchor)
+    }
+
+    fn run_quote_action(&self, id: &str, anchor: &[u8]) {
+        if let Ok(anchor) = K::Anchor::from_bytes(anchor) {
+            self.0.run_quote_action(id, &anchor);
+        }
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_quote_with"))]

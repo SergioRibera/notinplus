@@ -11,7 +11,8 @@ use notin_sdk::create::{
 use notin_sdk::doc::DocMeta;
 use notin_sdk::kind::{
     ActionEffect, ChipView, DocumentKind, Hit, KindAction, KindChoice, KindColor, KindInfo, Mark,
-    OutlineIcon, OutlineNode, Quote, QuoteOption, QuoteParts, SearchQuery, SelectionSupport,
+    OutlineIcon, OutlineNode, Quote, QuoteOption, QuoteParts, QuoteUnavailable, SearchQuery,
+    SelectionSupport,
 };
 
 use crate::anchor::{BibleAnchor, BibleRef};
@@ -486,6 +487,14 @@ impl DocumentKind for BibleKind {
 
     fn quote_options(&self, anchor: &BibleRef) -> Vec<QuoteOption> {
         Self::original_options(anchor)
+    }
+
+    fn quote_unavailable(&self, anchor: &BibleRef) -> Option<QuoteUnavailable> {
+        self.original_unavailable(anchor)
+    }
+
+    fn run_quote_action(&self, id: &str, anchor: &BibleRef) {
+        self.run_original_action(id, anchor);
     }
 
     fn quote_with(&self, doc: DocMeta<'_>, anchor: &BibleRef, parts: &QuoteParts) -> Option<Quote> {
