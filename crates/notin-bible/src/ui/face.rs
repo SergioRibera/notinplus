@@ -13,7 +13,6 @@ mod search;
 mod shared;
 mod translation;
 
-use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,7 +32,7 @@ use super::reader::{
     self, CrossRefView, FootnoteView, ScrollTarget, VerseScrollCtx, VerseTops, cross_refs_by_verse,
     footnotes_by_verse,
 };
-use crate::BibleAnchor;
+use crate::anchor::{BibleAnchor, BibleRef};
 use crate::db::{ChapterRow, Db};
 use crate::kind::{BibleContent, BibleKind, KIND};
 use crate::plugin_config;
@@ -138,6 +137,9 @@ pub(super) struct Reader {
     sheet_title: State<String>,
     /// The lemma whose occurrences replace the panel's content.
     occurrences: State<Option<crate::originals::LemmaRef>>,
+    /// Word of the original text to open when the «Original» tab shows,
+    /// by position (a cited word was followed).
+    open_word: State<Option<u16>>,
     /// Whether the reader is wide enough for the panel beside the text
     /// (else the verse opens in a sheet).
     wide: State<bool>,
@@ -320,14 +322,16 @@ fn settle_place(db: &Db, state: &mut BibleViewerState, fallback_bible: &str) {
 }
 
 /// The reader state at mount: the saved place, overridden by a jump
-/// queued while the document was closed. Returns the verse to wash.
+/// queued while the document was closed. Returns that jump, to show once
+/// the reader is up.
 #[cfg_attr(feature = "sismo", sismo::function("bible::initial_state"))]
-fn initial_state(ctx: &FaceContext<BibleKind>, db: &Db) -> (BibleViewerState, Option<u16>) {
+fn initial_state(ctx: &FaceContext<BibleKind>, db: &Db) -> (BibleViewerState, Option<BibleRef>) {
     let saved: BibleContent = ctx.store.load();
-    let jump = ctx
+    let target = ctx
         .host
         .take_jump(KIND, ctx.doc)
-        .and_then(|bytes| BibleAnchor::decode(&bytes));
+        .and_then(|bytes| notin_sdk::Payload::from_bytes(&bytes).ok());
+    let jump: Option<&BibleAnchor> = target.as_ref().map(|t: &BibleRef| &t.passage);
     let first_bible = db
         .list_bibles()
         .ok()
@@ -336,7 +340,7 @@ fn initial_state(ctx: &FaceContext<BibleKind>, db: &Db) -> (BibleViewerState, Op
         .unwrap_or_default();
     let mut state = BibleViewerState::new(first_bible.as_str(), "GEN", 1);
     saved.apply_to(&mut state);
-    if let Some(jump) = &jump {
+    if let Some(jump) = jump {
         state.bible_id.clone_from(&jump.bible_id);
         state.current_book = canonical_book_id(db, &jump.bible_id, &jump.book_id);
         state.current_chapter = jump.start_chapter;
@@ -347,20 +351,20 @@ fn initial_state(ctx: &FaceContext<BibleKind>, db: &Db) -> (BibleViewerState, Op
     {
         state.push_chapter(chapter);
     }
-    (state, jump.map(|j| j.start_verse))
+    (state, target)
 }
 
 /// The reader's state and the hooks that keep it: jumps sent while it is
 /// open, saving, and the lazy footnote fetch.
 #[cfg_attr(feature = "sismo", sismo::function("bible::use_reader"))]
 fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
-    // The verse a queued jump asked for, read once the state exists.
-    let start = use_hook(|| Rc::new(Cell::new(None::<u16>)));
+    // The place a queued jump asked for, read once the state exists.
+    let start = use_hook(|| Rc::new(std::cell::RefCell::new(None::<BibleRef>)));
     let state = use_state({
         let (ctx, db, start) = (ctx.clone(), db.clone(), Rc::clone(&start));
         move || {
-            let (state, verse) = initial_state(&ctx, &db);
-            start.set(verse);
+            let (state, target) = initial_state(&ctx, &db);
+            start.replace(target);
             state
         }
     });
@@ -384,6 +388,7 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
         panel_tab: use_state(originals::PanelTab::default),
         sheet_title: use_state(String::new),
         occurrences: use_state(|| None),
+        open_word: use_state(|| None),
         wide: use_state(|| false),
         annotations: use_hook(Rc::default),
         footnotes_landed: use_state(|| 0),
@@ -391,14 +396,22 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
     use_hook({
         let reader = reader.clone();
         move || {
-            if let Some(verse) = start.get() {
-                reader.show(verse);
+            if let Some(target) = start.take() {
+                reader.show(target.passage.start_verse);
+                if let Some(original) = target.original {
+                    originals::follow(&reader, &target.passage, original);
+                }
             }
         }
     });
     ctx.use_jumps({
         let reader = reader.clone();
-        move |anchor: BibleAnchor| reader.follow(&anchor)
+        move |anchor: BibleRef| {
+            reader.follow(&anchor.passage);
+            if let Some(original) = anchor.original {
+                originals::follow(&reader, &anchor.passage, original);
+            }
+        }
     });
     use_side_effect({
         let store: ContentStore<BibleContent> = ctx.store.clone();

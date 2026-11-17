@@ -11,15 +11,17 @@ use std::sync::Arc;
 use freya::icons::lucide;
 use freya::prelude::*;
 use notin_i18n::{Lang, tr};
+use notin_sdk::bookmark::SourceRef;
 use notin_sdk::services::{HostToast, ToastTone};
 use notin_sdk::ui::SelectionExtra;
 use notin_ui_kit::theme::palette;
 use notin_ui_kit::{
-    Button, ModalController, Notice, NoticeTone, ProgressBar, Sheet, TapExt, Text, TextRole,
-    is_mouse, tokens,
+    Button, IconButton, ModalController, Notice, NoticeTone, ProgressBar, Sheet, TapExt, Text,
+    TextRole, is_mouse, tokens,
 };
 
 use super::Reader;
+use crate::anchor::{BibleAnchor, BibleRef, OriginalRef};
 use crate::db::LinkRow;
 use crate::originals::describe::{self, Also, Meaning};
 use crate::originals::{self, LemmaRef, Progress, Store, WordView, morph};
@@ -76,6 +78,46 @@ pub(super) fn open(reader: &Reader, verse: u16, wide: bool) {
     super::refs::open_sheet(reader, refs, PanelTab::Original);
 }
 
+/// Show what a cited place of the original text points at: its verse in
+/// the «Original» tab with the word open, or the occurrences of a term.
+pub(super) fn follow(reader: &Reader, passage: &crate::anchor::BibleAnchor, original: OriginalRef) {
+    let verse = passage.start_verse;
+    let wide = *reader.wide.peek();
+    match original {
+        OriginalRef::Word { position } => {
+            let mut open_word = reader.open_word;
+            open_word.set(Some(position));
+            open(reader, verse, wide);
+        }
+        OriginalRef::Term { position } => {
+            open(reader, verse, wide);
+            let lemma = originals::service()
+                .and_then(|service| service.store())
+                .and_then(|store| {
+                    store
+                        .words(
+                            &passage.book_id,
+                            passage.start_chapter,
+                            verse,
+                            Lang::current().tag(),
+                        )?
+                        .into_iter()
+                        .find(|w| w.position == position)
+                        .map(|w| w.lemma)
+                });
+            if let Some(lemma) = lemma {
+                if wide {
+                    let mut occurrences = reader.occurrences;
+                    occurrences.set(Some(lemma));
+                } else {
+                    open_occurrences_sheet(reader, lemma);
+                }
+            }
+        }
+        OriginalRef::Interlinear => open(reader, verse, wide),
+    }
+}
+
 /// The selection bar's «Original» button, for a selection of one run of
 /// verses on a chapter the packs cover; `None` otherwise.
 pub(super) fn selection_extra(
@@ -105,6 +147,8 @@ struct Row {
 /// The words of a verse, loaded once per verse.
 #[derive(Clone, Debug, PartialEq)]
 struct VerseWords {
+    /// The verse, in the open translation.
+    place: BibleAnchor,
     bible_id: String,
     bible_name: String,
     rows: Vec<Row>,
@@ -146,6 +190,7 @@ impl VerseWords {
             })
             .collect();
         Some(Self {
+            place: BibleAnchor::single_verse(&bible_id, book, chapter, verse),
             bible_id,
             bible_name,
             rows,
@@ -230,7 +275,18 @@ impl PartialEq for Words {
 impl Component for Words {
     #[cfg_attr(feature = "sismo", sismo::function("bible::originals_words"))]
     fn render(&self) -> impl IntoElement {
-        let open: State<Option<u16>> = use_state(|| None);
+        let mut open: State<Option<u16>> = use_state(|| None);
+        // A cited word that was followed opens itself.
+        use_side_effect({
+            let mut wanted = self.reader.open_word;
+            move || {
+                let position = *wanted.read();
+                if let Some(position) = position {
+                    open.set(Some(position));
+                    wanted.set(None);
+                }
+            }
+        });
         let p = palette();
         let aligning = match &self.progress {
             Progress::Aligning { bible_id } if *bible_id == self.verse.bible_id => {
@@ -242,9 +298,28 @@ impl Component for Words {
             originals::Testament::Old => tr!("originals-source-ot"),
             originals::Testament::New => tr!("originals-source-nt"),
         };
+        let cite_verse = {
+            let ui = Rc::clone(&self.reader.ui);
+            let target = cite_target(&self.reader, &self.verse.place, OriginalRef::Interlinear);
+            rect()
+                .width(Size::fill())
+                .padding((0.0, 12.0, 6.0, 12.0))
+                .horizontal()
+                .main_align(Alignment::End)
+                .child(
+                    Button::new(tr!("originals-cite-verse"))
+                        .small()
+                        .tonal()
+                        .icon(lucide::quote())
+                        .on_press(move |event: Event<PressEventData>| {
+                            ui.cite(target.clone(), area_of(&event));
+                        }),
+                )
+        };
         rect()
             .width(Size::fill())
             .spacing(2.0)
+            .child(cite_verse)
             .maybe_child(aligning.map(|text| {
                 rect()
                     .width(Size::fill())
@@ -337,7 +412,8 @@ impl Component for WordRow {
                             .font_size(tokens::text::META)
                             .font_slant(FontSlant::Italic)
                             .color(p.t3),
-                    ),
+                    )
+                    .maybe_child(self.open.then(|| self.copy_reference())),
             )
             .child(
                 label()
@@ -398,14 +474,6 @@ impl WordRow {
         };
         let pronounced = (!respelling.is_empty())
             .then(|| tr!("originals-pronounced", "respelling" => respelling.clone()));
-        let copy_text = format!(
-            "{base} ({}) — {here}",
-            if respelling.is_empty() {
-                word.translit.replace('.', "")
-            } else {
-                respelling
-            }
-        );
 
         rect()
             .width(Size::fill())
@@ -451,16 +519,58 @@ impl WordRow {
                     .font_size(tokens::text::META)
                     .color(p.t3)
             }))
-            .child(self.actions(count, testament, copy_text))
+            .child(self.actions(count, testament))
             .into_element()
     }
 
-    /// The occurrence count with «see all» and «copy».
-    fn actions(&self, count: usize, testament: String, copy_text: String) -> impl IntoElement {
+    /// This word as a place to cite.
+    fn target(&self) -> SourceRef {
+        let original = OriginalRef::Word {
+            position: self.row.word.position,
+        };
+        cite_target(&self.reader, &self.words.place, original)
+    }
+
+    /// The icon at the end of the word's line that copies a reference to
+    /// it, as a chip to paste.
+    fn copy_reference(&self) -> Element {
+        let target = self.target();
+        let label = self.reader.kind.original_label(
+            &self.words.place,
+            OriginalRef::Word {
+                position: self.row.word.position,
+            },
+        );
+        let host = Arc::clone(&self.reader.host);
+        rect()
+            .width(Size::flex(1.0))
+            .horizontal()
+            .main_align(Alignment::End)
+            .child(
+                IconButton::new(lucide::copy(), tr!("originals-copy-reference"))
+                    .size(tokens::size::BUTTON_SM)
+                    .on_press(move |event: Event<PressEventData>| {
+                        event.stop_propagation();
+                        let markdown =
+                            format!("[{}]({})", label.replace(['[', ']'], ""), target.to_url());
+                        if freya::clipboard::Clipboard::set(markdown).is_ok() {
+                            host.toast(HostToast::new(
+                                tr!("originals-reference-copied"),
+                                ToastTone::Info,
+                            ));
+                        }
+                    }),
+            )
+            .into_element()
+    }
+
+    /// The occurrence count with «see all» and «cite».
+    fn actions(&self, count: usize, testament: String) -> impl IntoElement {
         let p = palette();
         let lemma_ref = self.row.word.lemma;
         let (reader, in_sheet) = (self.reader.clone(), self.in_sheet);
-        let host = Arc::clone(&self.reader.host);
+        let ui = Rc::clone(&self.reader.ui);
+        let target = self.target();
         rect()
             .width(Size::fill())
             .horizontal()
@@ -491,16 +601,32 @@ impl WordRow {
                     })
             }))
             .child(
-                Button::new(tr!("originals-copy"))
+                Button::new(tr!("originals-cite"))
                     .small()
-                    .ghost()
-                    .on_press(move |_| {
-                        if freya::clipboard::Clipboard::set(copy_text.clone()).is_ok() {
-                            host.toast(HostToast::new(tr!("originals-copied"), ToastTone::Info));
-                        }
+                    .primary()
+                    .icon(lucide::quote())
+                    .on_press(move |event: Event<PressEventData>| {
+                        ui.cite(target.clone(), area_of(&event));
                     }),
             )
     }
+}
+
+/// `original` inside `place`, as a place of this reader's document to
+/// cite.
+fn cite_target(reader: &Reader, place: &BibleAnchor, original: OriginalRef) -> SourceRef {
+    SourceRef::Plugin {
+        plugin_id: crate::kind::KIND.to_owned(),
+        item: reader.doc.0,
+        anchor: notin_sdk::Payload::to_bytes(&BibleRef::original(place.clone(), original)),
+        selection: None,
+    }
+}
+
+/// Where a press landed, as the host takes it (`x, y, width, height`).
+fn area_of(event: &Event<PressEventData>) -> (f32, f32, f32, f32) {
+    let area = notin_ui_kit::press_anchor(event);
+    (area.min_x(), area.min_y(), area.width(), area.height())
 }
 
 /// The block under «Aquí»; `None` when there is nothing to say.

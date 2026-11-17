@@ -11,15 +11,17 @@ use notin_sdk::create::{
 use notin_sdk::doc::DocMeta;
 use notin_sdk::kind::{
     ActionEffect, ChipView, DocumentKind, Hit, KindAction, KindChoice, KindColor, KindInfo, Mark,
-    OutlineIcon, OutlineNode, Quote, SearchQuery, SelectionSupport,
+    OutlineIcon, OutlineNode, Quote, QuoteOption, QuoteParts, SearchQuery, SelectionSupport,
 };
 
-use crate::anchor::BibleAnchor;
+use crate::anchor::{BibleAnchor, BibleRef};
 use crate::db::{BibleRow, BookRow, Db};
 use crate::plugin_config::{self, SharedConfig};
 use crate::state::{BibleSnapshot, u32_to_rgba};
 
 /// Kind id stored with the Bible document.
+mod original;
+
 pub const KIND: &str = "io.notein.bible";
 /// Create entry that opens (or creates) the Bible.
 pub const ENTRY_BIBLE: &str = "bible";
@@ -71,6 +73,19 @@ impl BibleKind {
             config,
             books: RwLock::new(HashMap::new()),
             originals,
+            #[cfg(feature = "importer")]
+            installer: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// A kind reading its original-language packs from `dir`.
+    #[cfg(test)]
+    pub(crate) fn with_originals_at(db: Db, dir: std::path::PathBuf) -> Self {
+        Self {
+            originals: std::sync::Arc::new(crate::originals::Originals::at(db.clone(), dir)),
+            db,
+            config: SharedConfig::default(),
+            books: RwLock::new(HashMap::new()),
             #[cfg(feature = "importer")]
             installer: std::sync::OnceLock::new(),
         }
@@ -321,9 +336,9 @@ impl BibleKind {
 }
 
 impl DocumentKind for BibleKind {
-    type Anchor = BibleAnchor;
+    type Anchor = BibleRef;
     type Content = BibleContent;
-    type Hits<'a> = std::vec::IntoIter<Hit<BibleAnchor>>;
+    type Hits<'a> = std::vec::IntoIter<Hit<BibleRef>>;
 
     fn info(&self) -> KindInfo {
         KindInfo {
@@ -368,16 +383,19 @@ impl DocumentKind for BibleKind {
                     score: -(hit.score as f32),
                 }
             });
+        let originals = self.original_hits(query);
         passage
             .into_iter()
-            .chain(found)
+            .map(|hit| hit.map_anchor(BibleRef::from))
+            .chain(originals)
+            .chain(found.map(|hit| hit.map_anchor(BibleRef::from)))
             .take(query.limit)
             .collect::<Vec<_>>()
             .into_iter()
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("bible::kind_outline"))]
-    fn outline(&self, content: &BibleContent) -> Vec<OutlineNode<BibleAnchor>> {
+    fn outline(&self, content: &BibleContent) -> Vec<OutlineNode<BibleRef>> {
         let bible = &content.bible_id;
         if bible.is_empty() {
             return Vec::new();
@@ -390,7 +408,9 @@ impl DocumentKind for BibleKind {
                     .map(|chapter| {
                         OutlineNode::new(
                             format!("{} {chapter}", book.name),
-                            Some(BibleAnchor::single_verse(bible, &book.book_id, chapter, 0)),
+                            Some(
+                                BibleAnchor::single_verse(bible, &book.book_id, chapter, 0).into(),
+                            ),
                         )
                         .icon(OutlineIcon::Page)
                     })
@@ -403,7 +423,7 @@ impl DocumentKind for BibleKind {
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("bible::kind_marks"))]
-    fn marks(&self, content: &BibleContent) -> Vec<Mark<BibleAnchor>> {
+    fn marks(&self, content: &BibleContent) -> Vec<Mark<BibleRef>> {
         content
             .highlights
             .iter()
@@ -423,7 +443,7 @@ impl DocumentKind for BibleKind {
                         [r, g, b]
                     }),
                     updated_at: 0,
-                    anchor,
+                    anchor: anchor.into(),
                 }
             })
             .collect()
@@ -448,8 +468,11 @@ impl DocumentKind for BibleKind {
         })
     }
 
-    fn chip(&self, _doc: DocMeta<'_>, anchor: &BibleAnchor) -> ChipView {
-        ChipView::new(self.label(anchor))
+    fn chip(&self, _doc: DocMeta<'_>, anchor: &BibleRef) -> ChipView {
+        ChipView::new(anchor.original.map_or_else(
+            || self.label(&anchor.passage),
+            |original| self.original_label(&anchor.passage, original),
+        ))
     }
 
     fn quotes(&self) -> bool {
@@ -457,8 +480,19 @@ impl DocumentKind for BibleKind {
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("bible::kind_quote"))]
-    fn quote(&self, _doc: DocMeta<'_>, anchor: &BibleAnchor) -> Option<Quote> {
-        self.passage_quote(std::slice::from_ref(anchor))
+    fn quote(&self, doc: DocMeta<'_>, anchor: &BibleRef) -> Option<Quote> {
+        self.quote_with(doc, anchor, &QuoteParts::default())
+    }
+
+    fn quote_options(&self, anchor: &BibleRef) -> Vec<QuoteOption> {
+        Self::original_options(anchor)
+    }
+
+    fn quote_with(&self, doc: DocMeta<'_>, anchor: &BibleRef, parts: &QuoteParts) -> Option<Quote> {
+        anchor.original.map_or_else(
+            || self.passage_quote(std::slice::from_ref(&anchor.passage)),
+            |original| self.original_quote(doc, &anchor.passage, original, parts),
+        )
     }
 
     fn selection(&self) -> SelectionSupport {
@@ -676,7 +710,7 @@ mod tests {
     fn one_verse_is_quoted_without_a_number() {
         let kind = genesis();
         let anchor = BibleAnchor::single_verse("spa_rv1960", "GEN", 1, 1);
-        let quote = kind.quote(meta(), &anchor).unwrap();
+        let quote = kind.quote(meta(), &anchor.into()).unwrap();
         assert_eq!(
             quote.body,
             "En el principio creó Dios los cielos y la tierra."
@@ -708,7 +742,7 @@ mod tests {
             .unwrap();
         let anchor = BibleAnchor::single_verse("spa_rv1960", "GEN", 1, 1);
         assert_eq!(
-            kind.quote(meta(), &anchor).unwrap().source,
+            kind.quote(meta(), &anchor.into()).unwrap().source,
             "Génesis 1:1 (Reina Valera 1960)"
         );
         let content = BibleContent {
@@ -722,6 +756,6 @@ mod tests {
     fn a_missing_passage_quotes_nothing() {
         let kind = genesis();
         let anchor = BibleAnchor::single_verse("spa_rv1960", "GEN", 9, 9);
-        assert!(kind.quote(meta(), &anchor).is_none());
+        assert!(kind.quote(meta(), &anchor.into()).is_none());
     }
 }

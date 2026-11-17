@@ -182,6 +182,52 @@ impl Store {
         .map(PackCell::borrow_dependent)
     }
 
+    /// Dictionary forms whose word or transliteration matches `query`
+    /// (see [`super::fold`]), best first: whole word, then start, then
+    /// anywhere; the more frequent first within each. At most `limit`.
+    #[must_use]
+    pub fn find_lemmas(&self, query: &str, limit: usize) -> Vec<LemmaRef> {
+        let needle = super::fold::fold(query);
+        if needle.chars().count() < 2 {
+            return Vec::new();
+        }
+        let mut found: Vec<(u8, usize, LemmaRef)> = Vec::new();
+        for testament in [Testament::Old, Testament::New] {
+            let Some(pack) = self.pack(testament) else {
+                continue;
+            };
+            for index in 0..pack.lemma_count() {
+                let Ok(index) = u32::try_from(index) else {
+                    break;
+                };
+                let Some(lemma) = pack.lemma(index) else {
+                    continue;
+                };
+                let best = [lemma.lemma(), lemma.translit()]
+                    .into_iter()
+                    .map(super::fold::fold)
+                    .filter_map(|form| {
+                        if form == needle {
+                            Some(0)
+                        } else if form.starts_with(&needle) {
+                            Some(1)
+                        } else if form.contains(&needle) {
+                            Some(2)
+                        } else {
+                            None
+                        }
+                    })
+                    .min();
+                if let Some(rank) = best {
+                    let at = LemmaRef { testament, index };
+                    found.push((rank, lemma.occurrences().len(), at));
+                }
+            }
+        }
+        found.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+        found.into_iter().take(limit).map(|(_, _, at)| at).collect()
+    }
+
     /// Whether this testament's pack is on hand.
     #[must_use]
     pub fn has(&self, testament: Testament) -> bool {

@@ -151,3 +151,8 @@ morph-exhortation = exhortación
 morph-suffix-directional = sufijo direccional
 morph-suffix-paragogic = sufijo paragógico
 morph-suffix-pronominal = sufijo pronominal
+
+originals-cite = Citar
+originals-cite-verse = Citar en original
+originals-copy-reference = Copiar referencia
+originals-reference-copied = Referencia copiada. Pégala en cualquier nota.

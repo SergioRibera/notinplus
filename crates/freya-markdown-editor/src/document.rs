@@ -576,6 +576,33 @@ fn take(block: Rc<Block>) -> Block {
 }
 
 impl Document {
+    /// Every link the document holds, in order: inline links, embeds
+    /// (chips) and the sources of transclusions. Repeats are kept.
+    #[must_use]
+    pub fn link_urls(&self) -> Vec<&str> {
+        let mut urls = Vec::new();
+        for block in self.blocks() {
+            if let BlockKind::Transclusion(transclusion) = &block.kind {
+                urls.push(transclusion.url.as_str());
+                continue;
+            }
+            let Some(content) = block.kind.content() else {
+                continue;
+            };
+            for mark in content.marks() {
+                if let MarkKind::Link(link) = &mark.kind {
+                    urls.push(link.url.as_str());
+                }
+            }
+            for atom in content.atoms() {
+                if let Atom::Embed { url, .. } = atom {
+                    urls.push(url.as_str());
+                }
+            }
+        }
+        urls
+    }
+
     #[must_use]
     pub fn blocks(&self) -> &[Rc<Block>] {
         &self.blocks

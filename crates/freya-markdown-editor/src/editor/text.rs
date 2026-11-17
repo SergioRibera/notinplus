@@ -191,11 +191,14 @@ impl Component for TextBlock {
                     _ => {
                         #[cfg(feature = "sismo")]
                         sismo::scope!("markdown::slash_rows");
-                        let rows = Rc::new(shared.slash.rows(
-                            &query,
-                            &shared.theme.labels,
-                            controller.can_pick_image(),
-                        ));
+                        let rows = Rc::new(controller.with_document(|document| {
+                            shared.slash.rows(
+                                &query,
+                                &shared.theme.labels,
+                                controller.can_pick_image(),
+                                document,
+                            )
+                        }));
                         *cache = Some((query, rows.clone()));
                         rows
                     }

@@ -152,11 +152,16 @@ pub struct Suggestion {
 }
 
 /// What `/ref query` offers: documents by name, then places inside them
-/// from every kind's search. The first places of a kind that can quote
+/// from every kind's search, ranked by each kind around `near` (what the
+/// document being written already cites). The first places of a kind that can quote
 /// them come with a second entry that inserts their content.
 #[must_use]
 #[sismo::function("references::suggestions")]
-pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
+pub fn suggestions(
+    query: &str,
+    data: Option<&LibraryData>,
+    near: Vec<SourceRef>,
+) -> Vec<Suggestion> {
     let needle = notin_plugin::fold(query.trim());
     let mut out: Vec<Suggestion> = data
         .map(|data| {
@@ -181,7 +186,8 @@ pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
     if needle.is_empty() {
         return out;
     }
-    let results = crate::plugins::catalog().search(&SearchQuery::new(query, SUGGESTIONS_PER_KIND));
+    let results =
+        crate::plugins::catalog().search(&SearchQuery::new(query, SUGGESTIONS_PER_KIND).near(near));
     for found in results {
         let label = crate::plugins::kind_info(&found.kind)
             .map_or_else(String::new, |k| k.label.into_owned());

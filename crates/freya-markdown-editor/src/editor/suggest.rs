@@ -17,7 +17,7 @@ use freya::prelude::*;
 
 use crate::EditorController;
 use crate::controller::ImageRequest;
-use crate::document::{BlockKind, BlockType, CalloutKind, HeadingLevel, Inline, Table};
+use crate::document::{BlockKind, BlockType, CalloutKind, Document, HeadingLevel, Inline, Table};
 use crate::labels::{Label, Labels};
 use crate::theme::EditorTheme;
 
@@ -123,6 +123,13 @@ pub trait SuggestionSource {
 
     /// Entries for the text typed after `/` (lowercased, keyword removed).
     fn suggestions(&self, query: &str) -> Vec<Suggestion>;
+
+    /// [`Self::suggestions`] for a menu opened in `document`, for sources
+    /// that rank by what the document already holds. The default ignores
+    /// the document.
+    fn suggestions_in(&self, query: &str, _document: &Document) -> Vec<Suggestion> {
+        self.suggestions(query)
+    }
 }
 
 /// Built in block conversions and inserts, captioned with `labels`.
@@ -168,7 +175,15 @@ impl SuggestionSource for BlockSuggestions {
     }
 }
 
-type Provider = Rc<dyn Fn(&str) -> Vec<Suggestion>>;
+/// What a [`SuggestionGroup`] asks for its entries.
+#[derive(Clone)]
+enum Provider {
+    Query(Rc<QueryProvider>),
+    InDocument(Rc<DocumentProvider>),
+}
+
+type QueryProvider = dyn Fn(&str) -> Vec<Suggestion>;
+type DocumentProvider = dyn Fn(&str, &Document) -> Vec<Suggestion>;
 
 /// A [`SuggestionSource`] built from a closure.
 ///
@@ -200,7 +215,21 @@ impl SuggestionGroup {
         Self {
             title: title.into(),
             keyword: None,
-            provider: Rc::new(provider),
+            provider: Provider::Query(Rc::new(provider)),
+        }
+    }
+
+    /// A group whose entries also read the document the menu is open in
+    /// (to rank what it already cites first, for instance).
+    #[must_use]
+    pub fn with_document(
+        title: impl Into<Cow<'static, str>>,
+        provider: impl Fn(&str, &Document) -> Vec<Suggestion> + 'static,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            keyword: None,
+            provider: Provider::InDocument(Rc::new(provider)),
         }
     }
 
@@ -221,7 +250,14 @@ impl SuggestionSource for SuggestionGroup {
     }
 
     fn suggestions(&self, query: &str) -> Vec<Suggestion> {
-        (self.provider)(query)
+        self.suggestions_in(query, &Document::default())
+    }
+
+    fn suggestions_in(&self, query: &str, document: &Document) -> Vec<Suggestion> {
+        match &self.provider {
+            Provider::Query(provider) => provider(query),
+            Provider::InDocument(provider) => provider(query, document),
+        }
     }
 }
 
@@ -383,7 +419,13 @@ impl SlashMenu {
 
     /// Rows for `query` (the text typed after `/`).
     #[cfg_attr(feature = "sismo", sismo::function("markdown::suggestion_rows"))]
-    pub(crate) fn rows(&self, query: &str, labels: &Labels, images: bool) -> Vec<MenuRow> {
+    pub(crate) fn rows(
+        &self,
+        query: &str,
+        labels: &Labels,
+        images: bool,
+        document: &Document,
+    ) -> Vec<MenuRow> {
         let query = query.trim_start().to_lowercase();
         let blocks = BlockSuggestions::from(labels.clone()).with_images(images);
         let sources: Vec<&dyn SuggestionSource> = self
@@ -400,10 +442,10 @@ impl SlashMenu {
             (rest.is_empty() || rest.starts_with(' ')).then(|| (source, rest.trim().to_owned()))
         });
         let sections: Vec<(&str, Vec<Suggestion>)> = match scoped {
-            Some((source, rest)) => vec![(source.title(), source.suggestions(&rest))],
+            Some((source, rest)) => vec![(source.title(), source.suggestions_in(&rest, document))],
             None => sources
                 .iter()
-                .map(|source| (source.title(), source.suggestions(&query)))
+                .map(|source| (source.title(), source.suggestions_in(&query, document)))
                 .collect(),
         };
         let non_empty: Vec<_> = sections
@@ -699,21 +741,21 @@ mod tests {
 
     #[test]
     fn sections_get_headers_when_several_match() {
-        let rows = menu().rows("a", &Labels::default(), false);
+        let rows = menu().rows("a", &Labels::default(), false, &Document::default());
         assert!(rows.contains(&MenuRow::Header("People".into())));
         assert!(rows.contains(&MenuRow::Header("Blocks".into())));
     }
 
     #[test]
     fn single_section_has_no_header() {
-        let rows = menu().rows("heading 2", &Labels::default(), false);
+        let rows = menu().rows("heading 2", &Labels::default(), false, &Document::default());
         assert_eq!(item_count(&rows), 1);
         assert!(!rows.iter().any(|row| matches!(row, MenuRow::Header(_))));
     }
 
     #[test]
     fn keyword_scopes_to_one_source() {
-        let rows = menu().rows("at al", &Labels::default(), false);
+        let rows = menu().rows("at al", &Labels::default(), false, &Document::default());
         assert_eq!(item_count(&rows), 1);
         assert_eq!(item(&rows, 0).map(|item| item.label.as_str()), Some("Alan"));
     }

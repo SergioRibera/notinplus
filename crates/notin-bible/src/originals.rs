@@ -14,9 +14,13 @@ pub mod align;
 pub mod describe;
 #[cfg(feature = "importer")]
 pub mod download;
+pub mod fold;
 pub mod morph;
 pub mod respell;
 mod store;
+
+#[cfg(test)]
+pub(crate) use store::tests::write_sample;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

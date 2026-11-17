@@ -153,15 +153,26 @@ pub fn configure_with(editor: MarkdownEditor, sink: SnapshotSink) -> MarkdownEdi
         .on_input_context(crate::soft_keyboard::input_context)
         .on_request_keyboard(crate::soft_keyboard::show_soon)
         .suggestions(
-            SuggestionGroup::new(tr!("editor-suggest-references"), move |query| {
-                sismo::scope!("editor::reference_suggestions");
-                let data = LibraryView::get().data();
-                references::suggestions(query, data.as_deref())
-                    .into_iter()
-                    .filter(|found| found.insert != Insert::Image || sink.takes_pictures())
-                    .map(|found| suggestion(found, &sink))
-                    .collect()
-            })
+            SuggestionGroup::with_document(
+                tr!("editor-suggest-references"),
+                move |query, document| {
+                    sismo::scope!("editor::reference_suggestions");
+                    let data = LibraryView::get().data();
+                    // What the note already cites ranks first among places inside
+                    // documents (see `SearchQuery::near`).
+                    let near = document
+                        .link_urls()
+                        .into_iter()
+                        .filter(|url| url.starts_with(deep_link::SCHEME))
+                        .map(SourceRef::from_link)
+                        .collect();
+                    references::suggestions(query, data.as_deref(), near)
+                        .into_iter()
+                        .filter(|found| found.insert != Insert::Image || sink.takes_pictures())
+                        .map(|found| suggestion(found, &sink))
+                        .collect()
+                },
+            )
             .keyword("ref"),
         )
         .slash_menu();

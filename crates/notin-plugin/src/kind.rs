@@ -98,6 +98,20 @@ pub struct Hit<A> {
     pub score: f32,
 }
 
+impl<A> Hit<A> {
+    /// The same hit with its anchor turned into another type.
+    #[must_use]
+    pub fn map_anchor<B>(self, to: impl FnOnce(A) -> B) -> Hit<B> {
+        Hit {
+            doc: self.doc,
+            anchor: to(self.anchor),
+            title: self.title,
+            snippet: self.snippet,
+            score: self.score,
+        }
+    }
+}
+
 /// A query for [`DocumentKind::search`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchQuery {
