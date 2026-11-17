@@ -173,6 +173,8 @@ pub(crate) struct EditorState {
     /// holds the previous one.
     document: Rc<Document>,
     revision: u64,
+    /// How many of the revisions came from [`EditorController::merge_markdown`].
+    merged: u64,
     selection: Option<Selection>,
     caret: Option<CaretRequest>,
     caret_seq: u64,
@@ -186,6 +188,11 @@ pub(crate) struct EditorState {
     /// Where blocks were last laid out. Written from layout callbacks, so
     /// it never notifies.
     layout: Rc<RefCell<BlockLayout>>,
+    /// Text the focused field shows and the model had when it last
+    /// matched, so typing into a field that missed text merged in
+    /// meanwhile (an input method composing) is replayed over it. Written
+    /// while rendering, so it never notifies.
+    shown: Rc<RefCell<Option<(TextTarget, String)>>>,
     /// Text field holding the keyboard focus.
     focused: Option<TextTarget>,
     /// How the host lets people choose an image, if it does. Hosts may
@@ -231,6 +238,7 @@ impl EditorState {
         Self {
             document: Rc::new(document),
             revision: 0,
+            merged: 0,
             selection: None,
             caret: None,
             caret_seq: 0,
@@ -240,6 +248,7 @@ impl EditorState {
             parse: ParseOptions::default(),
             clipboard: None,
             layout: Rc::default(),
+            shown: Rc::default(),
             focused: None,
             image_picker: Rc::default(),
             atom_menu: None,
@@ -559,6 +568,14 @@ impl EditorController {
         self.read(|state| state.revision)
     }
 
+    /// Like [`Self::revision`], counting only the changes made in this
+    /// editor: text merged in from elsewhere ([`Self::merge_markdown`])
+    /// leaves it as it is.
+    #[must_use]
+    pub fn local_revision(&self) -> u64 {
+        self.read(|state| state.revision - state.merged)
+    }
+
     #[must_use]
     pub fn selection(&self) -> Option<Selection> {
         self.read(|state| state.selection)
@@ -619,14 +636,19 @@ impl EditorController {
     }
 
     /// Replace the document with parsed markdown that arrived from
-    /// elsewhere while this editor may be in use: history goes, the
-    /// selection stays on the same text (found by content, so blocks
-    /// added or removed around it do not move it), clamped to what is
-    /// there now. Marks waiting for the next typed text survive, since
-    /// the caret they belong to does.
+    /// elsewhere while this editor may be in use: history goes, blocks
+    /// left as they were keep their identity (see
+    /// [`Document::keep_identity`]) and the selection stays on the same
+    /// text. In a field that is still there it moves with the text typed
+    /// before it; otherwise it goes to the field with the same text
+    /// nearest to where it was, clamped to what is there now. Marks
+    /// waiting for the next typed text survive, since the caret they
+    /// belong to does.
     #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_merge_markdown"))]
     pub fn merge_markdown(&self, markdown: &str) {
         self.update(|state| {
+            let mut document = Document::parse_with(markdown, &state.parse);
+            document.keep_identity(&state.document);
             let kept = state.selection.and_then(|selection| {
                 let index = state
                     .document
@@ -639,14 +661,34 @@ impl EditorController {
                     .map(|inline| inline.text().to_owned())?;
                 Some((index, text, selection))
             });
-            state.document = Rc::new(Document::parse_with(markdown, &state.parse));
+            state.document = Rc::new(document);
             state.history = History::default();
-            state.selection = None;
+            state.merged += 1;
             let Some((index, text, selection)) = kept else {
+                state.selection = None;
                 state.pending.clear();
                 state.changed();
                 return;
             };
+            if let Some(now) = state.document.inline(selection.target) {
+                let now = now.text();
+                let moved = clamp(
+                    &state.document,
+                    Selection {
+                        anchor: follow_edit(&text, now, selection.anchor),
+                        head: follow_edit(&text, now, selection.head),
+                        ..selection
+                    },
+                );
+                // An unmoved caret is left alone: asking for it again
+                // would reset the field under the person typing there.
+                if moved != selection {
+                    state.request_caret(moved);
+                }
+                state.changed();
+                return;
+            }
+            state.selection = None;
             let targets = state.document.targets();
             let same_text = targets
                 .iter()
@@ -1827,6 +1869,35 @@ impl EditorController {
         });
     }
 
+    /// `target` shows `text`, as the model has it now; `None` forgets it.
+    pub(crate) fn remember_shown(&self, target: TextTarget, text: Option<String>) {
+        self.peek(|state| {
+            let mut shown = state.shown.borrow_mut();
+            match text {
+                Some(text) => *shown = Some((target, text)),
+                None if shown.as_ref().is_some_and(|(at, _)| *at == target) => *shown = None,
+                None => {}
+            }
+        });
+    }
+
+    /// What `target` showed when it last matched the model, see
+    /// [`Self::remember_shown`].
+    pub(crate) fn shown_text(&self, target: TextTarget) -> Option<String> {
+        self.peek(|state| {
+            let shown = state.shown.borrow();
+            shown
+                .as_ref()
+                .filter(|(at, _)| *at == target)
+                .map(|(_, text)| text.clone())
+        })
+    }
+
+    /// Show `selection` in its field, setting the field from the model again.
+    pub(crate) fn request_selection(&self, selection: Selection) {
+        self.update(|state| state.request_caret(selection));
+    }
+
     /// Apply the new rope text of `target`. Returns whether the model text
     /// now differs from what the caller typed (autoformat or shortcuts), so
     /// the caller must resync from the model.
@@ -2234,6 +2305,93 @@ fn first_target_from(document: &Document, id: BlockId) -> Option<TextTarget> {
         })
 }
 
+/// Length of what `old` and `new` share at their start and at their end,
+/// in UTF-16 code units, never splitting a surrogate pair. What lies
+/// between is the stretch one turned into the other.
+fn common_ends(old: &[u16], new: &[u16]) -> (usize, usize) {
+    let mut prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    if prefix > 0 && is_high_surrogate(old[prefix - 1]) {
+        prefix -= 1;
+    }
+    let mut suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(old.len().min(new.len()) - prefix)
+        .take_while(|(a, b)| a == b)
+        .count();
+    if suffix > 0 && is_low_surrogate(old[old.len() - suffix]) {
+        suffix -= 1;
+    }
+    (prefix, suffix)
+}
+
+const fn is_high_surrogate(unit: u16) -> bool {
+    matches!(unit, 0xD800..=0xDBFF)
+}
+
+const fn is_low_surrogate(unit: u16) -> bool {
+    matches!(unit, 0xDC00..=0xDFFF)
+}
+
+/// Where `offset` in `old` lands once it reads `new`: before the changed
+/// stretch it stays, after it it moves by what the stretch grew or
+/// shrank, and inside it it goes to the end of what replaced it. Offsets
+/// in UTF-16 code units.
+pub(crate) fn follow_edit(old: &str, new: &str, offset: usize) -> usize {
+    let (old, new): (Vec<u16>, Vec<u16>) =
+        (old.encode_utf16().collect(), new.encode_utf16().collect());
+    let (prefix, suffix) = common_ends(&old, &new);
+    if offset <= prefix {
+        offset
+    } else if offset >= old.len() - suffix {
+        (offset + new.len()).saturating_sub(old.len())
+    } else {
+        new.len() - suffix
+    }
+}
+
+/// What turned `base` into `typed`, made again on `current`: the text a
+/// field that still showed `base` meant once `current` came from
+/// elsewhere. Returns that text and `selection` (in `typed`) moved onto it.
+pub(crate) fn rebase_edit(
+    base: &str,
+    typed: &str,
+    current: &str,
+    selection: Selection,
+) -> (String, Selection) {
+    let (base_units, typed_units): (Vec<u16>, Vec<u16>) = (
+        base.encode_utf16().collect(),
+        typed.encode_utf16().collect(),
+    );
+    let (prefix, suffix) = common_ends(&base_units, &typed_units);
+    let inserted = &typed_units[prefix..typed_units.len() - suffix];
+    let start = follow_edit(base, current, prefix);
+    let end = follow_edit(base, current, base_units.len() - suffix).max(start);
+    let current_units: Vec<u16> = current.encode_utf16().collect();
+    let mut units = current_units[..start].to_vec();
+    units.extend_from_slice(inserted);
+    units.extend_from_slice(&current_units[end..]);
+    // Into `typed` coordinates: before the edit as in `base`, inside it
+    // after where it starts now, after it past what it became.
+    let place = |offset: usize| {
+        if offset <= prefix {
+            follow_edit(base, current, offset)
+        } else if offset <= prefix + inserted.len() {
+            start + offset - prefix
+        } else {
+            let in_base = offset + base_units.len() - typed_units.len();
+            follow_edit(base, current, in_base) + start + inserted.len() - end
+        }
+    };
+    let selection = Selection {
+        anchor: place(selection.anchor),
+        head: place(selection.head),
+        ..selection
+    };
+    (String::from_utf16_lossy(&units), selection)
+}
+
 #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_clamp"))]
 fn clamp(document: &Document, selection: Selection) -> Selection {
     let len = document.inline(selection.target).map_or(0, Inline::len);
@@ -2266,4 +2424,49 @@ fn deleted_up_to_mark_end(current: &Inline, text: &str, hint: usize) -> Vec<Mark
         .map(|mark| mark.kind.family())
         .filter(|family| current.mark_at(at, *family).is_none())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn caret(offset: usize) -> Selection {
+        Selection::caret(TextTarget::from(BlockId::fresh()), offset)
+    }
+
+    #[test]
+    fn a_caret_moves_with_text_typed_before_it() {
+        assert_eq!(follow_edit("hola mundo", "hola, mundo", 7), 8);
+        assert_eq!(follow_edit("hola mundo", "hola mundo!", 4), 4);
+        assert_eq!(follow_edit("hola mundo", "mundo", 7), 2);
+    }
+
+    #[test]
+    fn a_caret_inside_replaced_text_goes_to_its_end() {
+        assert_eq!(follow_edit("abcdef", "abXYef", 3), 4);
+    }
+
+    #[test]
+    fn surrogate_pairs_are_never_split() {
+        // Two emoji sharing their high surrogate.
+        assert_eq!(follow_edit("a\u{1F600}", "a\u{1F601}", 3), 3);
+        let (text, _) = rebase_edit("a\u{1F600}", "a\u{1F601}", "a\u{1F600}", caret(3));
+        assert_eq!(text, "a\u{1F601}");
+    }
+
+    #[test]
+    fn typing_is_replayed_over_text_merged_meanwhile() {
+        // The field showed "hola", the person typed " mundo" at the end
+        // while someone else put "Ana: " at the start.
+        let (text, selection) = rebase_edit("hola", "hola mundo", "Ana: hola", caret(10));
+        assert_eq!(text, "Ana: hola mundo");
+        assert_eq!(selection.head, 15);
+    }
+
+    #[test]
+    fn a_deletion_here_keeps_what_others_added_after_it() {
+        let (text, selection) = rebase_edit("uno dos", "uno", "uno dos tres", caret(3));
+        assert_eq!(text, "uno tres");
+        assert_eq!(selection.head, 3);
+    }
 }

@@ -543,12 +543,9 @@ impl Component for MarkdownEditor {
                 .caret
                 .filter(|request| request.selection.target.block == id);
             let focused = focused.filter(|target| target.block == id);
-            let pinned = caret.is_some()
-                || focused.is_some()
-                || shared
-                    .remote_carets
-                    .iter()
-                    .any(|(target, _)| target.block == id);
+            // Not for a remote caret: mounting a block off screen to show it
+            // lets its height change out of sight and shift what is in view.
+            let pinned = caret.is_some() || focused.is_some();
             let height_hint = hint::height_hint(block, &theme, measured_width, toc_len);
             let content = BlockView {
                 block: Rc::clone(block),

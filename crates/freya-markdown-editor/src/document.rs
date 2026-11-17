@@ -608,6 +608,44 @@ impl Document {
         &self.blocks
     }
 
+    /// Give the blocks `previous` already had the identity they had
+    /// there, for a document parsed again from a text that changed
+    /// elsewhere. Blocks left as they were, before and after the changed
+    /// stretch, become the very blocks of `previous`, so their views do
+    /// not render again; blocks of the changed stretch keep the id of the
+    /// block of the same type at the same place, so an edited paragraph
+    /// keeps its view, its caret and its measured size.
+    #[cfg_attr(feature = "sismo", sismo::function("markdown::doc_keep_identity"))]
+    pub fn keep_identity(&mut self, previous: &Self) {
+        let same =
+            |old: &Rc<Block>, new: &Rc<Block>| old.kind == new.kind && old.align == new.align;
+        let (old, new) = (previous.blocks(), &mut self.blocks);
+        let prefix = old
+            .iter()
+            .zip(new.iter())
+            .take_while(|(old, new)| same(old, new))
+            .count();
+        let suffix = old
+            .iter()
+            .rev()
+            .zip(new.iter().rev())
+            .take(old.len().min(new.len()) - prefix)
+            .take_while(|(old, new)| same(old, new))
+            .count();
+        let (old_end, new_end) = (old.len() - suffix, new.len() - suffix);
+        for (old, new) in old[..prefix].iter().zip(&mut new[..prefix]) {
+            *new = Rc::clone(old);
+        }
+        for (old, new) in old[old_end..].iter().zip(&mut new[new_end..]) {
+            *new = Rc::clone(old);
+        }
+        for (old, new) in old[prefix..old_end].iter().zip(&mut new[prefix..new_end]) {
+            if std::mem::discriminant(&old.kind) == std::mem::discriminant(&new.kind) {
+                Rc::make_mut(new).id = old.id;
+            }
+        }
+    }
+
     #[must_use]
     pub fn index_of(&self, id: BlockId) -> Option<usize> {
         self.blocks.iter().position(|block| block.id == id)
