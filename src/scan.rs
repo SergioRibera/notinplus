@@ -210,12 +210,12 @@ impl Component for Scanner {
                                 *pictures.write() += 1;
                             }
                             Event::Found(text) => {
-                                log::info!("scan: read a code of {} bytes", text.len());
+                                tracing::info!("scan: read a code of {} bytes", text.len());
                                 reply.send(Ok(Some(text)));
                                 Sheet::close();
                             }
                             Event::Failed(err) => {
-                                log::warn!("scan: {err}");
+                                tracing::warn!("scan: {err}");
                                 reply.send(Err(err));
                                 Sheet::close();
                             }

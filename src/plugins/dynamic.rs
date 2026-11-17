@@ -36,7 +36,7 @@ pub fn load_installed(catalog: &mut PluginCatalog) {
         match loader::load(&manifest) {
             Ok(loaded) => register(catalog, loaded, &manifest),
             Err(err) => {
-                log::warn!("plugin {}: {err}", manifest.display());
+                tracing::warn!("plugin {}: {err}", manifest.display());
                 catalog.record_failure(Failed {
                     name: dir
                         .file_name()
@@ -59,7 +59,7 @@ fn register(catalog: &mut PluginCatalog, loaded: Loaded, manifest_path: &Path) {
     match catalog.add(loaded.plugin, origin) {
         Ok(()) => catalog.keep_library(loaded.library),
         Err(err) => {
-            log::warn!("plugin {}: {err}", manifest_path.display());
+            tracing::warn!("plugin {}: {err}", manifest_path.display());
             catalog.record_failure(Failed {
                 name,
                 reason: std::sync::Arc::new(err),
@@ -238,7 +238,7 @@ impl Drop for Staged {
     fn drop(&mut self) {
         sismo::scope!("drop::plugin_staging");
         if let Err(err) = std::fs::remove_dir_all(&self.root) {
-            log::warn!("plugin staging {}: {err}", self.root.display());
+            tracing::warn!("plugin staging {}: {err}", self.root.display());
         }
     }
 }

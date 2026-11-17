@@ -32,5 +32,5 @@ redundant_pub_crate = "allow"
 [dependencies]
 fluent = "0.17"
 wincode = { version = "0.6", default-features = false, features = ["derive", "std"] }
-log = "0.4"
 fluent-syntax = { version = "0.12", optional = true }
+tracing = "0.1"

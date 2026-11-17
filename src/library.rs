@@ -150,7 +150,7 @@ impl Library {
         if yard.compact(now, TOMBSTONE_TTL_MS) > 0
             && let Err(err) = yard.save()
         {
-            log::error!("graveyard save: {err}");
+            tracing::error!("graveyard save: {err}");
         }
         Ok(())
     }
@@ -360,7 +360,7 @@ impl Library {
             yard.bury(graveyard::Buried::Folder, folder.0, now);
         }
         if let Err(err) = yard.save() {
-            log::error!("graveyard save: {err}");
+            tracing::error!("graveyard save: {err}");
         }
         self.persist_links()?;
         self.persist()
@@ -1564,7 +1564,7 @@ pub(crate) fn drop_undrawable(cover: &mut Option<Arc<[u8]>>) {
 fn keep_cover(id: ItemId, cover: Option<&[u8]>) {
     let cover = cover.filter(|bytes| crate::editor::images::decodable(bytes));
     if let Err(err) = bodies::write_cover(id, cover) {
-        log::error!("cover {id}: {err}");
+        tracing::error!("cover {id}: {err}");
     }
 }
 

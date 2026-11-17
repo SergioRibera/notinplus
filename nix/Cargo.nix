@@ -959,7 +959,7 @@ rec {
           }
           {
             name = "ndk-sys";
-            packageId = "ndk-sys";
+            packageId = "ndk-sys 0.6.0+11769913";
           }
           {
             name = "num_enum";
@@ -1031,46 +1031,6 @@ rec {
         features = {
         };
       };
-      "android_log-sys" = rec {
-        crateName = "android_log-sys";
-        version = "0.3.2";
-        edition = "2015";
-        sha256 = "13ag7m64w54zqixnfs4cxf6b6zpixvcq2h995sa65g32yly1lll4";
-        libName = "android_log_sys";
-        authors = [
-          "The android_log_sys Developers"
-        ];
-
-      };
-      "android_logger" = rec {
-        crateName = "android_logger";
-        version = "0.14.1";
-        edition = "2021";
-        sha256 = "09lqyhpzmqfhg0m4x92gdblx57q3wrk4f0dnwkra286pff77xc05";
-        authors = [
-          "The android_logger Developers"
-        ];
-        dependencies = [
-          {
-            name = "android_log-sys";
-            packageId = "android_log-sys";
-          }
-          {
-            name = "env_filter";
-            packageId = "env_filter 0.1.4";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "log";
-            packageId = "log";
-          }
-        ];
-        features = {
-          "default" = [ "regex" ];
-          "regex" = [ "env_filter/regex" ];
-        };
-        resolvedDefaultFeatures = [ "default" "regex" ];
-      };
       "android_system_properties" = rec {
         crateName = "android_system_properties";
         version = "0.1.6";
@@ -1083,122 +1043,6 @@ rec {
           {
             name = "libc";
             packageId = "libc";
-          }
-        ];
-
-      };
-      "anstream" = rec {
-        crateName = "anstream";
-        version = "1.0.0";
-        edition = "2021";
-        sha256 = "13d2bj0xfg012s4rmq44zc8zgy1q8k9yp7yhvfnarscnmwpj2jl2";
-        dependencies = [
-          {
-            name = "anstyle";
-            packageId = "anstyle";
-          }
-          {
-            name = "anstyle-parse";
-            packageId = "anstyle-parse";
-          }
-          {
-            name = "anstyle-query";
-            packageId = "anstyle-query";
-            optional = true;
-          }
-          {
-            name = "anstyle-wincon";
-            packageId = "anstyle-wincon";
-            optional = true;
-            target = { target, features }: (target."windows" or false);
-          }
-          {
-            name = "colorchoice";
-            packageId = "colorchoice";
-          }
-          {
-            name = "is_terminal_polyfill";
-            packageId = "is_terminal_polyfill";
-          }
-          {
-            name = "utf8parse";
-            packageId = "utf8parse";
-          }
-        ];
-        features = {
-          "auto" = [ "dep:anstyle-query" ];
-          "default" = [ "auto" "wincon" ];
-          "wincon" = [ "dep:anstyle-wincon" ];
-        };
-        resolvedDefaultFeatures = [ "auto" "wincon" ];
-      };
-      "anstyle" = rec {
-        crateName = "anstyle";
-        version = "1.0.14";
-        edition = "2021";
-        sha256 = "0030szmgj51fxkic1hpakxxgappxzwm6m154a3gfml83lq63l2wl";
-        features = {
-          "default" = [ "std" ];
-        };
-        resolvedDefaultFeatures = [ "default" "std" ];
-      };
-      "anstyle-parse" = rec {
-        crateName = "anstyle-parse";
-        version = "1.0.0";
-        edition = "2021";
-        sha256 = "03hkv2690s0crssbnmfkr76kw1k7ah2i6s5amdy9yca2n8w7zkjj";
-        libName = "anstyle_parse";
-        dependencies = [
-          {
-            name = "utf8parse";
-            packageId = "utf8parse";
-            optional = true;
-          }
-        ];
-        features = {
-          "core" = [ "dep:arrayvec" ];
-          "default" = [ "utf8" ];
-          "utf8" = [ "dep:utf8parse" ];
-        };
-        resolvedDefaultFeatures = [ "default" "utf8" ];
-      };
-      "anstyle-query" = rec {
-        crateName = "anstyle-query";
-        version = "1.1.5";
-        edition = "2021";
-        sha256 = "1p6shfpnbghs6jsa0vnqd8bb8gd7pjd0jr7w0j8jikakzmr8zi20";
-        libName = "anstyle_query";
-        dependencies = [
-          {
-            name = "windows-sys";
-            packageId = "windows-sys 0.61.2";
-            target = { target, features }: (target."windows" or false);
-            features = [ "Win32_System_Console" "Win32_Foundation" ];
-          }
-        ];
-
-      };
-      "anstyle-wincon" = rec {
-        crateName = "anstyle-wincon";
-        version = "3.0.11";
-        edition = "2021";
-        sha256 = "0zblannm70sk3xny337mz7c6d8q8i24vhbqi42ld8v7q1wjnl7i9";
-        libName = "anstyle_wincon";
-        dependencies = [
-          {
-            name = "anstyle";
-            packageId = "anstyle";
-          }
-          {
-            name = "once_cell_polyfill";
-            packageId = "once_cell_polyfill";
-            target = { target, features }: (target."windows" or false);
-          }
-          {
-            name = "windows-sys";
-            packageId = "windows-sys 0.61.2";
-            target = { target, features }: (target."windows" or false);
-            features = [ "Win32_System_Console" "Win32_Foundation" ];
           }
         ];
 
@@ -4069,13 +3913,6 @@ rec {
         ];
 
       };
-      "colorchoice" = rec {
-        crateName = "colorchoice";
-        version = "1.0.5";
-        edition = "2021";
-        sha256 = "0w75k89hw39p0mnnhlrwr23q50rza1yjki44qvh2mgrnj065a1qx";
-
-      };
       "combine" = rec {
         crateName = "combine";
         version = "4.6.9";
@@ -5567,80 +5404,6 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" "default" "std" ];
       };
-      "defmt" = rec {
-        crateName = "defmt";
-        version = "1.2.0";
-        edition = "2021";
-        links = "defmt";
-        sha256 = "1qg3w0w7f0fn74xp60aci37swsjz6hbrqp3pngbm9js0qxd7k874";
-        authors = [
-          "The Knurling-rs developers"
-        ];
-        dependencies = [
-          {
-            name = "bitflags";
-            packageId = "bitflags 1.3.2";
-          }
-          {
-            name = "defmt-macros";
-            packageId = "defmt-macros";
-          }
-        ];
-        features = {
-          "unstable-test" = [ "defmt-macros/unstable-test" ];
-        };
-        resolvedDefaultFeatures = [ "alloc" ];
-      };
-      "defmt-macros" = rec {
-        crateName = "defmt-macros";
-        version = "1.2.0";
-        edition = "2021";
-        sha256 = "0rl3dlnl8lc4dqzdnr6q0vrpjz3qmdca5641334rbi4rpmbb02w4";
-        procMacro = true;
-        libName = "defmt_macros";
-        authors = [
-          "The Knurling-rs developers"
-        ];
-        dependencies = [
-          {
-            name = "defmt-parser";
-            packageId = "defmt-parser";
-          }
-          {
-            name = "proc-macro2";
-            packageId = "proc-macro2";
-          }
-          {
-            name = "quote";
-            packageId = "quote";
-          }
-          {
-            name = "syn";
-            packageId = "syn 3.0.9";
-            features = [ "full" "extra-traits" ];
-          }
-        ];
-        features = {
-        };
-      };
-      "defmt-parser" = rec {
-        crateName = "defmt-parser";
-        version = "1.1.0";
-        edition = "2021";
-        sha256 = "1849z1vp502s77sip4wzj6jimjl6x5vr7b2ivp2mds1dzdlqz5bi";
-        libName = "defmt_parser";
-        authors = [
-          "The Knurling-rs developers"
-        ];
-        dependencies = [
-          {
-            name = "thiserror";
-            packageId = "thiserror 2.0.21";
-          }
-        ];
-        features = {
-        };
-      };
       "deranged" = rec {
         crateName = "deranged";
         version = "0.5.9";
@@ -6807,104 +6570,6 @@ rec {
           }
         ];
 
-      };
-      "env_filter 0.1.4" = rec {
-        crateName = "env_filter";
-        version = "0.1.4";
-        edition = "2021";
-        sha256 = "1qk8yn4lsqzxsz025kf4kaabika6aidykqih3c2p1jjms9cw5wqv";
-        dependencies = [
-          {
-            name = "log";
-            packageId = "log";
-            features = [ "std" ];
-          }
-          {
-            name = "regex";
-            packageId = "regex";
-            optional = true;
-            usesDefaultFeatures = false;
-            features = [ "std" "perf" ];
-          }
-        ];
-        features = {
-          "default" = [ "regex" ];
-          "regex" = [ "dep:regex" ];
-        };
-        resolvedDefaultFeatures = [ "regex" ];
-      };
-      "env_filter 2.0.0" = rec {
-        crateName = "env_filter";
-        version = "2.0.0";
-        edition = "2021";
-        sha256 = "05s267np8pphhpxzrzl4j956gjj87f4ik6yas7l1x6kr0cd2f3ch";
-        dependencies = [
-          {
-            name = "log";
-            packageId = "log";
-          }
-          {
-            name = "regex";
-            packageId = "regex";
-            optional = true;
-            usesDefaultFeatures = false;
-            features = [ "perf" ];
-          }
-        ];
-        features = {
-          "default" = [ "std" "regex" ];
-          "regex" = [ "dep:regex" ];
-          "std" = [ "log/std" "regex?/std" ];
-        };
-        resolvedDefaultFeatures = [ "regex" "std" ];
-      };
-      "env_logger" = rec {
-        crateName = "env_logger";
-        version = "0.11.11";
-        edition = "2021";
-        sha256 = "1xnkbhnlwf45a6val2340bi7avi7fwgbm2g2kbf9g9vmgb91nryy";
-        dependencies = [
-          {
-            name = "anstream";
-            packageId = "anstream";
-            optional = true;
-            usesDefaultFeatures = false;
-            features = [ "wincon" ];
-          }
-          {
-            name = "anstyle";
-            packageId = "anstyle";
-            optional = true;
-          }
-          {
-            name = "env_filter";
-            packageId = "env_filter 2.0.0";
-            usesDefaultFeatures = false;
-            features = [ "std" ];
-          }
-          {
-            name = "jiff";
-            packageId = "jiff";
-            optional = true;
-            usesDefaultFeatures = false;
-            features = [ "std" ];
-          }
-          {
-            name = "log";
-            packageId = "log";
-            features = [ "std" ];
-          }
-        ];
-        features = {
-          "auto-color" = [ "color" "anstream/auto" ];
-          "color" = [ "dep:anstream" "dep:anstyle" ];
-          "default" = [ "auto-color" "humantime" "regex" ];
-          "humantime" = [ "dep:jiff" ];
-          "kv" = [ "log/kv" ];
-          "regex" = [ "env_filter/regex" ];
-          "unstable-kv" = [ "kv" ];
-        };
-        resolvedDefaultFeatures = [ "auto-color" "color" "default" "humantime" "regex" ];
       };
       "equator" = rec {
         crateName = "equator";
@@ -8566,10 +8231,6 @@ rec {
             packageId = "freya-engine";
           }
           {
-            name = "log";
-            packageId = "log";
-          }
-          {
             name = "notin-i18n";
             packageId = "notin-i18n";
           }
@@ -8578,6 +8239,10 @@ rec {
             packageId = "sismo";
             optional = true;
             usesDefaultFeatures = false;
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
           }
         ];
         buildDependencies = [
@@ -8724,10 +8389,6 @@ rec {
             usesDefaultFeatures = false;
           }
           {
-            name = "log";
-            packageId = "log";
-          }
-          {
             name = "pdfium-render";
             packageId = "pdfium-render";
             usesDefaultFeatures = false;
@@ -8738,6 +8399,10 @@ rec {
             packageId = "sismo";
             optional = true;
             usesDefaultFeatures = false;
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
           }
         ];
         features = {
@@ -13202,15 +12867,6 @@ rec {
         ];
 
       };
-      "is_terminal_polyfill" = rec {
-        crateName = "is_terminal_polyfill";
-        version = "1.70.2";
-        edition = "2021";
-        sha256 = "15anlc47sbz0jfs9q8fhwf0h3vs2w4imc030shdnq54sny5i7jx6";
-        features = {
-        };
-        resolvedDefaultFeatures = [ "default" ];
-      };
       "istmo" = rec {
         crateName = "istmo";
         version = "0.1.1-alpha.6";
@@ -13293,7 +12949,7 @@ rec {
           }
           {
             name = "ndk-sys";
-            packageId = "ndk-sys";
+            packageId = "ndk-sys 0.6.0+11769913";
             target = { target, features }: ("android" == target."os" or null);
           }
           {
@@ -14185,153 +13841,6 @@ rec {
         features = {
           "no-panic" = [ "dep:no-panic" ];
         };
-      };
-      "jiff" = rec {
-        crateName = "jiff";
-        version = "0.2.39";
-        edition = "2021";
-        sha256 = "0g7ghdl0minhwgkwf036ld5lmcdnwbf7kf5h75f9xj5si82h7irs";
-        authors = [
-          "Andrew Gallant <jamslam@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "defmt";
-            packageId = "defmt";
-            optional = true;
-          }
-          {
-            name = "jiff-core";
-            packageId = "jiff-core";
-            rename = "jcore";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "jiff-static";
-            packageId = "jiff-static";
-            optional = true;
-          }
-          {
-            name = "jiff-static";
-            packageId = "jiff-static";
-            target = { target, features }: false;
-          }
-          {
-            name = "log";
-            packageId = "log";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "portable-atomic";
-            packageId = "portable-atomic";
-            usesDefaultFeatures = false;
-            target = { target, features }: (!("ptr" == target."has_atomic" or null));
-          }
-          {
-            name = "portable-atomic-util";
-            packageId = "portable-atomic-util";
-            usesDefaultFeatures = false;
-            target = { target, features }: (!("ptr" == target."has_atomic" or null));
-          }
-          {
-            name = "serde_core";
-            packageId = "serde_core";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-        ];
-        devDependencies = [
-          {
-            name = "log";
-            packageId = "log";
-          }
-        ];
-        features = {
-          "alloc" = [ "jcore/alloc" "serde_core?/alloc" "portable-atomic-util/alloc" "defmt?/alloc" ];
-          "arbitrary" = [ "dep:arbitrary" "jcore/arbitrary" "std" ];
-          "default" = [ "std" "tz-system" "tz-fat" "tzdb-bundle-platform" "tzdb-zoneinfo" "tzdb-concatenated" "perf-inline" ];
-          "defmt" = [ "dep:defmt" "jcore/defmt" ];
-          "js" = [ "dep:wasm-bindgen" "dep:js-sys" ];
-          "logging" = [ "dep:log" "jcore/logging" ];
-          "serde" = [ "dep:serde_core" ];
-          "static" = [ "static-tz" "jiff-static?/tzdb" ];
-          "static-tz" = [ "dep:jiff-static" ];
-          "std" = [ "alloc" "jcore/std" "log?/std" "serde_core?/std" ];
-          "tz-fat" = [ "jcore/tz-fat" "jiff-static?/tz-fat" ];
-          "tz-system" = [ "std" "dep:windows-link" ];
-          "tzdb-bundle-always" = [ "dep:jiff-tzdb" "alloc" ];
-          "tzdb-bundle-platform" = [ "dep:jiff-tzdb-platform" "alloc" ];
-          "tzdb-concatenated" = [ "std" ];
-          "tzdb-zoneinfo" = [ "std" ];
-        };
-        resolvedDefaultFeatures = [ "alloc" "std" ];
-      };
-      "jiff-core" = rec {
-        crateName = "jiff-core";
-        version = "0.1.2";
-        edition = "2021";
-        sha256 = "14qf99yrvnzm8rsvz7va43kgij398x26wpfk6s6gpfjkxc4k7r5f";
-        libName = "jiff_core";
-        authors = [
-          "Andrew Gallant <jamslam@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "defmt";
-            packageId = "defmt";
-            optional = true;
-          }
-          {
-            name = "log";
-            packageId = "log";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-        ];
-        features = {
-          "alloc" = [ "defmt?/alloc" ];
-          "arbitrary" = [ "dep:arbitrary" "std" ];
-          "default" = [ "std" "tz-fat" ];
-          "defmt" = [ "dep:defmt" ];
-          "logging" = [ "dep:log" ];
-          "std" = [ "alloc" "log?/std" ];
-        };
-        resolvedDefaultFeatures = [ "alloc" "default" "std" "tz-fat" ];
-      };
-      "jiff-static" = rec {
-        crateName = "jiff-static";
-        version = "0.2.39";
-        edition = "2021";
-        sha256 = "0gd96qg3jvxapr4a06nbrq2dq4skjbx06hxprklx1dvyqrq29hvd";
-        procMacro = true;
-        libName = "jiff_static";
-        authors = [
-          "Andrew Gallant <jamslam@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "jiff-core";
-            packageId = "jiff-core";
-            rename = "jcore";
-          }
-          {
-            name = "proc-macro2";
-            packageId = "proc-macro2";
-          }
-          {
-            name = "quote";
-            packageId = "quote";
-          }
-          {
-            name = "syn";
-            packageId = "syn 2.0.119";
-          }
-        ];
-        features = {
-          "tzdb" = [ "dep:jiff-tzdb" ];
-        };
-        resolvedDefaultFeatures = [ "default" ];
       };
       "jni 0.21.1" = rec {
         crateName = "jni";
@@ -16695,7 +16204,7 @@ rec {
           }
           {
             name = "ndk-sys";
-            packageId = "ndk-sys";
+            packageId = "ndk-sys 0.6.0+11769913";
             rename = "ffi";
           }
           {
@@ -16750,7 +16259,25 @@ rec {
         ];
 
       };
-      "ndk-sys" = rec {
+      "ndk-sys 0.5.0+25.2.9519653" = rec {
+        crateName = "ndk-sys";
+        version = "0.5.0+25.2.9519653";
+        edition = "2021";
+        sha256 = "14bnxww0f17xl8pyn6j5kpkl98snjl9lin8i7qv4zzb0vmlnf6cc";
+        libName = "ndk_sys";
+        authors = [
+          "The Rust Windowing contributors"
+        ];
+        dependencies = [
+          {
+            name = "jni-sys";
+            packageId = "jni-sys 0.3.1";
+          }
+        ];
+        features = {
+        };
+      };
+      "ndk-sys 0.6.0+11769913" = rec {
         crateName = "ndk-sys";
         version = "0.6.0+11769913";
         edition = "2021";
@@ -17197,10 +16724,6 @@ rec {
             packageId = "istmo-core";
           }
           {
-            name = "log";
-            packageId = "log";
-          }
-          {
             name = "notin-align";
             packageId = "notin-align";
           }
@@ -17268,6 +16791,10 @@ rec {
             usesDefaultFeatures = false;
           }
           {
+            name = "tracing";
+            packageId = "tracing";
+          }
+          {
             name = "unicode-normalization";
             packageId = "unicode-normalization";
           }
@@ -17312,8 +16839,8 @@ rec {
             optional = true;
           }
           {
-            name = "log";
-            packageId = "log";
+            name = "tracing";
+            packageId = "tracing";
           }
           {
             name = "wincode";
@@ -17358,10 +16885,6 @@ rec {
             features = [ "toolbar" ];
           }
           {
-            name = "log";
-            packageId = "log";
-          }
-          {
             name = "notin-sdk";
             packageId = "notin-sdk";
           }
@@ -17374,6 +16897,10 @@ rec {
             packageId = "sismo";
             optional = true;
             usesDefaultFeatures = false;
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
           }
           {
             name = "wincode";
@@ -17441,10 +16968,6 @@ rec {
             packageId = "libloading";
           }
           {
-            name = "log";
-            packageId = "log";
-          }
-          {
             name = "notin-i18n";
             packageId = "notin-i18n";
           }
@@ -17453,6 +16976,10 @@ rec {
             packageId = "sismo";
             optional = true;
             usesDefaultFeatures = false;
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
           }
           {
             name = "uuid";
@@ -17691,11 +17218,6 @@ rec {
         ];
         dependencies = [
           {
-            name = "android_logger";
-            packageId = "android_logger";
-            target = { target, features }: ("android" == target."os" or null);
-          }
-          {
             name = "async-io";
             packageId = "async-io";
           }
@@ -17708,11 +17230,6 @@ rec {
             packageId = "chrono";
             usesDefaultFeatures = false;
             features = [ "clock" "std" ];
-          }
-          {
-            name = "env_logger";
-            packageId = "env_logger";
-            target = { target, features }: (!(("android" == target."os" or null) || ("ios" == target."os" or null) || ("tvos" == target."os" or null) || ("watchos" == target."os" or null) || ("visionos" == target."os" or null)));
           }
           {
             name = "flume";
@@ -17840,10 +17357,6 @@ rec {
             target = { target, features }: ("android" == target."os" or null);
           }
           {
-            name = "log";
-            packageId = "log";
-          }
-          {
             name = "loro";
             packageId = "loro";
           }
@@ -17880,6 +17393,11 @@ rec {
             name = "notin-ui-kit";
             packageId = "notin-ui-kit";
             features = [ "sismo" ];
+          }
+          {
+            name = "paranoid-android";
+            packageId = "paranoid-android";
+            target = { target, features }: ("android" == target."os" or null);
           }
           {
             name = "pollster";
@@ -17922,7 +17440,7 @@ rec {
             name = "sismo";
             packageId = "sismo";
             usesDefaultFeatures = false;
-            features = [ "log" "net" ];
+            features = [ "tracing" "net" ];
           }
           {
             name = "sismo-freya";
@@ -17936,6 +17454,15 @@ rec {
           {
             name = "torin";
             packageId = "torin";
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+          {
+            name = "tracing-subscriber";
+            packageId = "tracing-subscriber";
+            features = [ "env-filter" ];
           }
           {
             name = "uuid";
@@ -17980,6 +17507,10 @@ rec {
           {
             name = "freya-testing";
             packageId = "freya-testing";
+          }
+          {
+            name = "log";
+            packageId = "log";
           }
           {
             name = "rusqlite";
@@ -21493,15 +21024,6 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" "default" "race" "std" ];
       };
-      "once_cell_polyfill" = rec {
-        crateName = "once_cell_polyfill";
-        version = "1.70.2";
-        edition = "2021";
-        sha256 = "1zmla628f0sk3fhjdjqzgxhalr2xrfna958s632z65bjsfv8ljrq";
-        features = {
-        };
-        resolvedDefaultFeatures = [ "default" ];
-      };
       "oneshot" = rec {
         crateName = "oneshot";
         version = "0.1.13";
@@ -21760,6 +21282,48 @@ rec {
           "wide" = [ "dep:wide" ];
         };
         resolvedDefaultFeatures = [ "libm" ];
+      };
+      "paranoid-android" = rec {
+        crateName = "paranoid-android";
+        version = "0.2.2";
+        edition = "2018";
+        sha256 = "1p5a1jn373r67j4zgxr2f3qq5gjpfrkm8wkfipil66rp7pb9a5qh";
+        libName = "paranoid_android";
+        authors = [
+          "Raphaël Thériault <self@raftar.io>"
+        ];
+        dependencies = [
+          {
+            name = "lazy_static";
+            packageId = "lazy_static";
+          }
+          {
+            name = "ndk-sys";
+            packageId = "ndk-sys 0.5.0+25.2.9519653";
+            target = { target, features }: ("android" == target."os" or null);
+          }
+          {
+            name = "sharded-slab";
+            packageId = "sharded-slab";
+          }
+          {
+            name = "smallvec";
+            packageId = "smallvec";
+          }
+          {
+            name = "tracing-core";
+            packageId = "tracing-core";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "tracing-subscriber";
+            packageId = "tracing-subscriber";
+            usesDefaultFeatures = false;
+            features = [ "fmt" "smallvec" ];
+          }
+        ];
+        features = {
+        };
       };
       "parking" = rec {
         crateName = "parking";
@@ -22926,27 +22490,7 @@ rec {
           "default" = [ "fallback" ];
           "serde" = [ "dep:serde" ];
         };
-        resolvedDefaultFeatures = [ "default" "fallback" "require-cas" ];
-      };
-      "portable-atomic-util" = rec {
-        crateName = "portable-atomic-util";
-        version = "0.2.8";
-        edition = "2018";
-        sha256 = "059729m166s1ccvqfyj6lv0wz5kr4qh6yb2gphf3mk5yyfvkxaqh";
-        libName = "portable_atomic_util";
-        dependencies = [
-          {
-            name = "portable-atomic";
-            packageId = "portable-atomic";
-            usesDefaultFeatures = false;
-            features = [ "require-cas" ];
-          }
-        ];
-        features = {
-          "serde" = [ "dep:serde" ];
-          "std" = [ "alloc" ];
-        };
-        resolvedDefaultFeatures = [ "alloc" ];
+        resolvedDefaultFeatures = [ "default" "fallback" ];
       };
       "postcard" = rec {
         crateName = "postcard";
@@ -27187,6 +26731,23 @@ rec {
             features = [ "rt" "net" "time" "sync" "macros" ];
           }
           {
+            name = "tracing";
+            packageId = "tracing";
+            optional = true;
+          }
+          {
+            name = "tracing-core";
+            packageId = "tracing-core";
+            optional = true;
+          }
+          {
+            name = "tracing-subscriber";
+            packageId = "tracing-subscriber";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "registry" "std" ];
+          }
+          {
             name = "zudp";
             packageId = "zudp 0.3.9";
             optional = true;
@@ -27200,6 +26761,12 @@ rec {
             packageId = "log";
             features = [ "std" "kv" ];
           }
+          {
+            name = "tracing-subscriber";
+            packageId = "tracing-subscriber";
+            usesDefaultFeatures = false;
+            features = [ "registry" "std" ];
+          }
         ];
         features = {
           "default" = [ "log" "file" ];
@@ -27209,7 +26776,7 @@ rec {
           "stdio" = [ "dep:libc" ];
           "tracing" = [ "dep:tracing" "dep:tracing-core" "dep:tracing-subscriber" ];
         };
-        resolvedDefaultFeatures = [ "default" "file" "log" "net" ];
+        resolvedDefaultFeatures = [ "default" "file" "log" "net" "tracing" ];
       };
       "sismo-format" = rec {
         crateName = "sismo-format";
@@ -32146,19 +31713,6 @@ rec {
           }
         ];
 
-      };
-      "utf8parse" = rec {
-        crateName = "utf8parse";
-        version = "0.2.2";
-        edition = "2018";
-        sha256 = "088807qwjq46azicqwbhlmzwrbkz7l4hpw43sdkdyyk524vdxaq6";
-        authors = [
-          "Joe Wilm <joe@jwilm.com>"
-          "Christian Duerr <contact@christianduerr.com>"
-        ];
-        features = {
-        };
-        resolvedDefaultFeatures = [ "default" ];
       };
       "utf_types" = rec {
         crateName = "utf_types";

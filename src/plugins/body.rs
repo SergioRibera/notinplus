@@ -117,10 +117,10 @@ fn write(item: ItemId, bytes: Result<Vec<u8>, crate::doc::DocError>) {
     match bytes {
         Ok(bytes) => {
             if let Err(err) = bodies::write_doc_bytes(item, &bytes) {
-                log::warn!("body {item}: write failed: {err}");
+                tracing::warn!("body {item}: write failed: {err}");
             }
         }
-        Err(err) => log::warn!("body {item}: snapshot failed: {err}"),
+        Err(err) => tracing::warn!("body {item}: snapshot failed: {err}"),
     }
 }
 

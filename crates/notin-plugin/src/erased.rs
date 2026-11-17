@@ -116,7 +116,7 @@ impl<K: DocumentKind> KindAdapter<K> {
             return K::Content::default();
         }
         K::Content::from_bytes(bytes).unwrap_or_else(|err| {
-            log::warn!("content of kind does not decode, using empty: {err}");
+            tracing::warn!("content of kind does not decode, using empty: {err}");
             K::Content::default()
         })
     }

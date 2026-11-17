@@ -94,7 +94,7 @@ fn link(from: ItemId, to: ItemId, kind: LinkKind) {
                 ));
             }
             Err(err) => {
-                log::error!("link: {err}");
+                tracing::error!("link: {err}");
                 Toasts::get().show(
                     Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-pickers-link-failed"), "detail" => err.user_message()))
                         .tone(notin_ui_kit::ToastTone::Error),
@@ -278,7 +278,7 @@ pub fn create_quick(entry: notin_plugin::catalog::CatalogEntry, name: String, pu
                 crate::plugins::content::write(item, &entry.kind, &created.content);
                 purpose.pick(item);
             }
-            Err(err) => log::error!("create named: {err}"),
+            Err(err) => tracing::error!("create named: {err}"),
         }
     }));
 }

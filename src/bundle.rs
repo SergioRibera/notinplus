@@ -402,7 +402,7 @@ impl Staging {
 impl Drop for Staging {
     fn drop(&mut self) {
         if let Err(err) = std::fs::remove_dir_all(&self.dir) {
-            log::warn!("bundle staging {}: {err}", self.dir.display());
+            tracing::warn!("bundle staging {}: {err}", self.dir.display());
         }
     }
 }

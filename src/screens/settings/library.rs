@@ -37,7 +37,7 @@ impl Disk {
     #[sismo::function("settings::library_of")]
     fn of(path: &std::path::Path) -> Option<Self> {
         fs4::statvfs(path)
-            .inspect_err(|err| log::warn!("disk space of {}: {err}", path.display()))
+            .inspect_err(|err| tracing::warn!("disk space of {}: {err}", path.display()))
             .ok()
             .map(|stats| Self {
                 total: stats.total_space(),

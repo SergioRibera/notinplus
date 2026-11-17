@@ -84,13 +84,13 @@ pub fn latest(force: bool) -> Result<Release, UpdateError> {
             record.fetched_at = now;
             record.manifest = body;
             if let Err(err) = record.save() {
-                log::warn!("update cache save: {err}");
+                tracing::warn!("update cache save: {err}");
             }
             Ok(release)
         }
         Err(err) => match record.release() {
             Some(stale) if !force => {
-                log::info!("update check: {err}; using the kept manifest");
+                tracing::info!("update check: {err}; using the kept manifest");
                 Ok(stale)
             }
             _ => Err(err),

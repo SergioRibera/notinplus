@@ -261,7 +261,7 @@ pub fn spawn(window_id: u64) {
         let client = match pollster::block_on(PenClient::acquire_with(PenConfig::new(window_id))) {
             Ok(c) => c,
             Err(err) => {
-                log::warn!("pen client unavailable: {err:?}");
+                tracing::warn!("pen client unavailable: {err:?}");
                 return;
             }
         };
@@ -269,7 +269,7 @@ pub fn spawn(window_id: u64) {
         let (events, hover) = match (client.events(), client.hover()) {
             (Ok(e), Ok(h)) => (e, h),
             (Err(err), _) | (_, Err(err)) => {
-                log::warn!("pen streams unavailable: {err:?}");
+                tracing::warn!("pen streams unavailable: {err:?}");
                 return;
             }
         };
@@ -290,11 +290,11 @@ fn pump_events(stream: &TypedStream<PenEvent, ()>) {
             Ok(StreamItem::Event(event)) => apply(event, &mut dt),
             Ok(StreamItem::Completed | StreamItem::Cancelled) => break,
             Ok(StreamItem::Failed(err)) => {
-                log::warn!("pen event stream failed: {err:?}");
+                tracing::warn!("pen event stream failed: {err:?}");
                 break;
             }
             Err(err) => {
-                log::warn!("pen event recv error: {err:?}");
+                tracing::warn!("pen event recv error: {err:?}");
                 break;
             }
         }
@@ -596,7 +596,7 @@ fn mark_pen_seen() {
     }
     PEN_SEEN.store(true, std::sync::atomic::Ordering::Relaxed);
     if let Err(err) = (PenPresence { seen: true }).save() {
-        log::warn!("pen presence: {err}");
+        tracing::warn!("pen presence: {err}");
     }
     PEN_LISTENERS
         .lock()

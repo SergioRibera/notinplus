@@ -504,7 +504,7 @@ fn jump(controller: EditorController, mut scroll: ScrollController, anchor: Note
             }
             async_io::Timer::after(JUMP_RETRY).await;
         }
-        log::info!("notes: heading {slug} not found");
+        tracing::info!("notes: heading {slug} not found");
     });
 }
 

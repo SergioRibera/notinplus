@@ -14,13 +14,14 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use notinplus::{WINDOW_ID, app, pen_pump};
 
-    let logger = env_logger::Builder::from_env(
-        env_logger::Env::default()
-            .default_filter_or("info,freya_winit=off,freya_core=off,torin=off,ragnarok=off,"),
-    )
-    .build();
-    let max = logger.filter();
-    notinplus::diagnostics::init_logging(Some(Box::new(logger)), max);
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new(
+            "info,freya_winit=off,freya_core=off,torin=off,ragnarok=off",
+        )
+    });
+    notinplus::diagnostics::init_logging(Some(tracing_subscriber::Layer::boxed(
+        tracing_subscriber::Layer::with_filter(tracing_subscriber::fmt::layer(), filter),
+    )));
 
     let Some(documents) = notinplus::desktop::install()? else {
         return Ok(());

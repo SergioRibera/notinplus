@@ -67,8 +67,8 @@ impl Capture {
                     // fire and forget, and a camera still held makes the
                     // next scan find it busy.
                     match session.close().await {
-                        Ok(()) => log::info!("scan: camera released"),
-                        Err(err) => log::warn!("scan: releasing the camera: {err}"),
+                        Ok(()) => tracing::info!("scan: camera released"),
+                        Err(err) => tracing::warn!("scan: releasing the camera: {err}"),
                     }
                     found
                 });
@@ -80,7 +80,7 @@ impl Capture {
                 let _ = tx.send(event);
             });
         if let Err(err) = spawned {
-            log::warn!("scan: capture thread: {err}");
+            tracing::warn!("scan: capture thread: {err}");
         }
         (Self { stop }, rx)
     }
@@ -105,7 +105,7 @@ async fn open() -> Result<SessionHandle, ScanError> {
         .find(|device| device.facing == CameraFacing::Back)
         .or_else(|| devices.first())
         .ok_or(ScanError::Unavailable)?;
-    log::info!("scan: camera {} ({:?})", device.label, device.facing);
+    tracing::info!("scan: camera {} ({:?})", device.label, device.facing);
     let base = SessionConfig::new(&device.id)
         .with_target_fps(30)
         .with_initial_controls(CameraControls {
@@ -127,7 +127,7 @@ async fn open() -> Result<SessionHandle, ScanError> {
     for config in attempts {
         match client.open_session(config).await {
             Ok(session) => {
-                log::info!("scan: session {:?}", session.negotiated());
+                tracing::info!("scan: session {:?}", session.negotiated());
                 return Ok(session);
             }
             Err(CameraError::FormatUnsupported) => {}
@@ -158,7 +158,7 @@ fn read(
                 return Err(ScanError::Stopped);
             }
             Err(err) => {
-                log::warn!("scan: frame stream: {err}");
+                tracing::warn!("scan: frame stream: {err}");
                 return Err(ScanError::Stopped);
             }
         };

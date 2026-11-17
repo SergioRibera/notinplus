@@ -313,7 +313,7 @@ fn install() {
             Ok(Some(picked)) => picked,
             Ok(None) => return,
             Err(err) => {
-                log::warn!("pick plugin: {err}");
+                tracing::warn!("pick plugin: {err}");
                 return;
             }
         };
@@ -443,7 +443,7 @@ fn review_sheet(staged: Arc<Staged>, review: &Review) {
                             Toasts::get().show(Toast::new(tr!("settings-plugins-installed-toast", "name" => installed)));
                         }
                         Err(err) => {
-                            log::warn!("install plugin {name}: {err}");
+                            tracing::warn!("install plugin {name}: {err}");
                             incompatible(&name, err.user_message());
                         }
                     }

@@ -191,7 +191,7 @@ fn index() -> MutexGuard<'static, RefsIndex> {
 #[sismo::function("library::refs::persist")]
 fn persist(guard: &RefsIndex) {
     if let Err(err) = guard.save() {
-        log::warn!("refs index save: {err}");
+        tracing::warn!("refs index save: {err}");
     }
 }
 

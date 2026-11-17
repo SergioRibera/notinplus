@@ -112,12 +112,12 @@ fn use_catalogue() -> State<Option<Result<Arc<CatalogueView>, InstallFailure>>> 
                 #[cfg(feature = "sismo")]
                 sismo::scope!("bible::catalog_fetch");
                 let _ = tx.send(installer.catalogue().map(Arc::new).map_err(|e| {
-                    log::warn!("bible catalogue: {e}");
+                    tracing::warn!("bible catalogue: {e}");
                     InstallFailure::from(e)
                 }));
             });
         if let Err(err) = spawned {
-            log::warn!("bible catalogue thread: {err}");
+            tracing::warn!("bible catalogue thread: {err}");
         }
         let mut state = state;
         spawn(async move {

@@ -58,7 +58,7 @@ fn open_with(target: TabTarget, hint: OpenHint, dedupe: bool) {
     });
     freya::prelude::spawn_in_window(traced!("task::space::open", async move {
         let Ok(handle) = open_library().await else {
-            log::warn!("space::open: library unavailable");
+            tracing::warn!("space::open: library unavailable");
             return;
         };
         let opened = {
@@ -80,7 +80,7 @@ fn open_with(target: TabTarget, hint: OpenHint, dedupe: bool) {
                     });
                 }
             }
-            Err(err) => log::error!("space::open: {err}"),
+            Err(err) => tracing::error!("space::open: {err}"),
         }
     }));
 }
@@ -101,7 +101,7 @@ pub fn open_space(workspace: WorkspaceId) {
                 sismo::scope!("space::navigate");
                 let _ = crate::app::global_router().push(Route::Space { id: workspace });
             }
-            Err(err) => log::error!("space::open_space: {err}"),
+            Err(err) => tracing::error!("space::open_space: {err}"),
         }
     }));
 }
@@ -254,7 +254,7 @@ pub fn close_tab(target: TabTarget) {
         if let Some((pane, index)) = found
             && let Err(err) = lib.close_pane_tab(workspace, pane, index).await
         {
-            log::error!("close_tab: {err}");
+            tracing::error!("close_tab: {err}");
         }
     }));
 }

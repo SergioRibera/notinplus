@@ -73,7 +73,7 @@ fn deferred() -> &'static Deferred {
             .name("notein-deferred".to_owned())
             .spawn(move || deferred.run());
         if let Err(err) = spawned {
-            log::error!("deferred writes thread: {err}");
+            tracing::error!("deferred writes thread: {err}");
         }
     });
     deferred

@@ -136,15 +136,17 @@ istmo::runtime!(
 #[istmo::mobile_app]
 fn mobile_main() {
     #[cfg(target_os = "android")]
-    diagnostics::init_logging(
-        Some(Box::new(android_logger::AndroidLogger::new(
-            android_logger::Config::default().with_max_level(log::LevelFilter::Info),
-        ))),
-        log::LevelFilter::Info,
-    );
+    {
+        use tracing_subscriber::Layer as _;
+        diagnostics::init_logging(Some(
+            paranoid_android::layer("notinplus")
+                .with_filter(tracing_subscriber::filter::LevelFilter::INFO)
+                .boxed(),
+        ));
+    }
     #[cfg(not(target_os = "android"))]
-    diagnostics::init_logging(None, log::LevelFilter::Off);
-    log::info!("notinplus mobile entry point running");
+    diagnostics::init_logging(None);
+    tracing::info!("notinplus mobile entry point running");
     diagnostics::start_if_enabled();
 
     pen_pump::spawn(WINDOW_ID);

@@ -133,7 +133,7 @@ impl Catalog {
             .iter()
             .filter_map(|(tag, files)| {
                 let Some(lang) = Lang::from_locale(tag) else {
-                    log::warn!(target: "i18n", "unknown locale folder {tag}");
+                    tracing::warn!(target: "i18n", "unknown locale folder {tag}");
                     return None;
                 };
                 Some((lang, bundle(lang, files)))
@@ -161,7 +161,7 @@ impl Catalog {
             .or_else(|| (lang != Lang::FALLBACK).then(|| self.format(Lang::FALLBACK, id, args))?)
             .map_or_else(
                 || {
-                    log::warn!(target: "i18n", "missing message {id}");
+                    tracing::warn!(target: "i18n", "missing message {id}");
                     id.to_owned()
                 },
                 Cow::into_owned,
@@ -179,7 +179,7 @@ impl Catalog {
         let mut errors = Vec::new();
         let text = bundle.format_pattern(pattern, args, &mut errors);
         if !errors.is_empty() {
-            log::warn!(target: "i18n", "formatting {id} in {}: {errors:?}", lang.tag());
+            tracing::warn!(target: "i18n", "formatting {id} in {}: {errors:?}", lang.tag());
         }
         Some(text)
     }
@@ -193,11 +193,11 @@ fn bundle(lang: Lang, files: &[&str]) -> Bundle {
     for source in files {
         let resource =
             FluentResource::try_new((*source).to_owned()).unwrap_or_else(|(res, errors)| {
-                log::warn!(target: "i18n", "parsing {} locale: {errors:?}", lang.tag());
+                tracing::warn!(target: "i18n", "parsing {} locale: {errors:?}", lang.tag());
                 res
             });
         if let Err(errors) = bundle.add_resource(resource) {
-            log::warn!(target: "i18n", "loading {} locale: {errors:?}", lang.tag());
+            tracing::warn!(target: "i18n", "loading {} locale: {errors:?}", lang.tag());
         }
     }
     bundle

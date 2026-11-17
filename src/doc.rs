@@ -131,7 +131,7 @@ impl Default for Doc {
             Err(err) => {
                 // The seed only touches containers this build created;
                 // failure would mean the store itself is broken.
-                log::error!("seed doc store: {err}");
+                tracing::error!("seed doc store: {err}");
                 DocStore::unseeded()
             }
         };
@@ -266,7 +266,7 @@ impl Doc {
         match self.store.set_body(text) {
             Ok(changed) => changed,
             Err(err) => {
-                log::error!("doc body update: {err}");
+                tracing::error!("doc body update: {err}");
                 false
             }
         }
@@ -287,7 +287,7 @@ impl Doc {
         match self.store.edit_body(base, text) {
             Ok(view) => view,
             Err(err) => {
-                log::error!("doc body edit, replacing it whole: {err}");
+                tracing::error!("doc body edit, replacing it whole: {err}");
                 self.set_body(text).then(|| self.body_view())
             }
         }
@@ -303,7 +303,7 @@ impl Doc {
     #[sismo::function("doc::undo_body")]
     pub fn undo_body(&mut self) -> bool {
         self.store.undo_body().unwrap_or_else(|err| {
-            log::error!("doc body undo: {err}");
+            tracing::error!("doc body undo: {err}");
             false
         })
     }
@@ -313,7 +313,7 @@ impl Doc {
     #[sismo::function("doc::redo_body")]
     pub fn redo_body(&mut self) -> bool {
         self.store.redo_body().unwrap_or_else(|err| {
-            log::error!("doc body redo: {err}");
+            tracing::error!("doc body redo: {err}");
             false
         })
     }
@@ -339,7 +339,7 @@ impl Doc {
     #[sismo::function("doc::set_record")]
     pub fn set_record(&mut self, key: &str, bytes: &[u8]) -> bool {
         self.store.set_record(key, bytes).unwrap_or_else(|err| {
-            log::error!("doc record update: {err}");
+            tracing::error!("doc record update: {err}");
             false
         })
     }
@@ -348,7 +348,7 @@ impl Doc {
     #[sismo::function("doc::remove_record")]
     pub fn remove_record(&mut self, key: &str) -> bool {
         self.store.remove_record(key).unwrap_or_else(|err| {
-            log::error!("doc record removal: {err}");
+            tracing::error!("doc record removal: {err}");
             false
         })
     }
@@ -360,7 +360,7 @@ impl Doc {
     #[sismo::function("doc::emit")]
     pub fn emit(&mut self, op: DocOp) {
         if let Err(err) = self.store.apply(&op, self) {
-            log::error!("doc store apply: {err}");
+            tracing::error!("doc store apply: {err}");
         }
         self.apply(&op);
     }

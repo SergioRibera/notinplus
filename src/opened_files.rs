@@ -51,7 +51,7 @@ pub fn listen() {
     let documents = match Documents::acquire() {
         Ok(documents) => documents,
         Err(err) => {
-            log::warn!("opened files unavailable: {err}");
+            tracing::warn!("opened files unavailable: {err}");
             return;
         }
     };
@@ -61,7 +61,7 @@ pub fn listen() {
             match opened.recv_async().await {
                 Ok(document) => open(document).await,
                 Err(istmo::IstmoError::ChannelClosed) => break,
-                Err(err) => log::warn!("opened file: {err}"),
+                Err(err) => tracing::warn!("opened file: {err}"),
             }
         }
     }));
@@ -76,11 +76,11 @@ pub fn listen() {
 #[sismo::function("opened_files::open")]
 async fn open(document: OpenedDocument) {
     let Some(name) = document.name() else {
-        log::warn!("opened file without a name: {:?}", document.location);
+        tracing::warn!("opened file without a name: {:?}", document.location);
         return;
     };
     let Some(path) = document.path().map(Path::to_path_buf) else {
-        log::warn!("opened file {name} is not a local path");
+        tracing::warn!("opened file {name} is not a local path");
         return;
     };
     let picked = match read(path.clone()).await {
@@ -89,7 +89,7 @@ async fn open(document: OpenedDocument) {
             bytes,
         },
         Err(err) => {
-            log::warn!("read opened file {name}: {err}");
+            tracing::warn!("read opened file {name}: {err}");
             failed(&name, &err.user_message());
             return;
         }

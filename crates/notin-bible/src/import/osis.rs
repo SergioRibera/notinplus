@@ -436,7 +436,7 @@ fn materialise(db: &Db, bible_id: &str, parsed: &Parsed) -> Result<usize> {
         let tx = conn.transaction().map_err(crate::db::DbError::from)?;
         for (order_num, book) in parsed.books.iter().enumerate() {
             if book.id.is_empty() {
-                log::warn!("osis: skipping book with empty osisID");
+                tracing::warn!("osis: skipping book with empty osisID");
                 continue;
             }
             let name = book.name.clone().unwrap_or_else(|| book.id.clone());

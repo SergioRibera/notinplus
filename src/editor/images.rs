@@ -283,7 +283,7 @@ impl ItemImages {
             Ok(Some(picked)) => picked,
             Ok(None) => return Ok(None),
             Err(err) => {
-                log::warn!("image picker: {err}");
+                tracing::warn!("image picker: {err}");
                 return Ok(None);
             }
         };
@@ -329,7 +329,7 @@ pub(crate) struct StoredImage {
 }
 
 pub(crate) fn report_add_failure(err: &ImageError) {
-    log::warn!("adding an image: {err}");
+    tracing::warn!("adding an image: {err}");
     let text = tr!("errors-image-add", "reason" => err.user_message());
     Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
 }
@@ -593,7 +593,7 @@ fn use_loaded(item: ItemId, source: Option<Source>) -> State<Load> {
                     }
                     Err(err) => {
                         sismo::instant!("images::load_failed");
-                        log::warn!("{err}");
+                        tracing::warn!("{err}");
                         state.set(Load::Failed);
                     }
                 }

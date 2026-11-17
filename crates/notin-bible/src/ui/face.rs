@@ -177,7 +177,7 @@ impl Reader {
             st.current_book == book && st.current_chapter == chapter
         };
         if let Err(e) = state.write().jump_to(&self.db, book, chapter) {
-            log::warn!("bible: go to {book} {chapter}: {e}");
+            tracing::warn!("bible: go to {book} {chapter}: {e}");
             return;
         }
         if !here {
@@ -223,7 +223,7 @@ impl Reader {
     fn switch_bible(&self, bible_id: &str) {
         let mut state = self.state;
         if let Err(e) = state.write().switch_bible(&self.db, bible_id) {
-            log::warn!("bible: switch to {bible_id}: {e}");
+            tracing::warn!("bible: switch to {bible_id}: {e}");
         }
         self.verse_tops.clear();
     }
@@ -250,7 +250,7 @@ impl Reader {
         match moved {
             Ok(true) => self.to_top(),
             Ok(false) => {}
-            Err(e) => log::warn!("bible: chapter step: {e}"),
+            Err(e) => tracing::warn!("bible: chapter step: {e}"),
         }
     }
 
@@ -268,7 +268,7 @@ impl Reader {
         };
         match state.write().jump_to_entry(&self.db, &entry) {
             Ok(()) => self.to_top(),
-            Err(e) => log::warn!("bible: history: {e}"),
+            Err(e) => tracing::warn!("bible: history: {e}"),
         }
     }
 }
@@ -477,7 +477,7 @@ fn use_follow_content(ctx: &FaceContext<BibleKind>, db: &Db, state: State<BibleV
                     let fallback = st.bible_id.clone();
                     settle_place(&db, &mut st, &fallback);
                     if let Err(e) = st.ensure_current_loaded(&db) {
-                        log::warn!("bible: reload after a change: {e}");
+                        tracing::warn!("bible: reload after a change: {e}");
                     }
                 }
             });

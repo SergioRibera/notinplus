@@ -97,7 +97,7 @@ impl LibraryView {
             match library::shared().await {
                 Ok(handle) => return handle,
                 Err(err) => {
-                    log::error!("library open: {err}");
+                    tracing::error!("library open: {err}");
                     if retried {
                         Toasts::get().show(
                             Toast::new(tr!("state-library-unavailable")).tone(ToastTone::Error),
@@ -238,7 +238,7 @@ where
             Err(err) => Err(err),
         };
         if let Err(err) = result {
-            log::error!("{what:?}: {err}");
+            tracing::error!("{what:?}: {err}");
             let text = tr!("errors-headline-detail", "headline" => what.failure(), "detail" => err.user_message());
             Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
         }

@@ -137,7 +137,7 @@ pub fn duplicate(item: ItemId) {
                 );
             }
             Err(err) => {
-                log::error!("duplicate {item}: {err}");
+                tracing::error!("duplicate {item}: {err}");
                 Toasts::get()
                     .show(Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-duplicate-failed"), "detail" => err.user_message())).tone(ToastTone::Error));
             }
@@ -193,7 +193,7 @@ pub fn run_kind_action(item: ItemId, action: &str) {
             } => match freya::clipboard::Clipboard::set(text) {
                 Ok(()) => toast(message),
                 Err(err) => {
-                    log::warn!("clipboard: {err:?}");
+                    tracing::warn!("clipboard: {err:?}");
                     Toasts::get().show(Toast::new(tr!("flows-copy-failed")).tone(ToastTone::Error));
                 }
             },
@@ -245,7 +245,7 @@ pub fn share(what: notin_plugin::Share) {
             Err(err) => Err(istmo_share::ShareError::from(err)),
         };
         if let Err(err) = result {
-            log::warn!("share: {err}");
+            tracing::warn!("share: {err}");
             Toasts::get().show(Toast::new(tr!("flows-share-failed")).tone(ToastTone::Error));
         }
     }));
@@ -279,7 +279,7 @@ pub fn trash_items(items: Vec<ItemId>, fate: NotebookFate) {
         match lib.trash_items(&items, fate).await {
             Ok(receipt) => {
                 if let Err(err) = lib.close_item_tabs(&closing).await {
-                    log::warn!("close trashed tabs: {err}");
+                    tracing::warn!("close trashed tabs: {err}");
                 }
                 drop(lib);
                 let text = single.map_or_else(
@@ -289,7 +289,7 @@ pub fn trash_items(items: Vec<ItemId>, fate: NotebookFate) {
                 trashed_toast(text, receipt.batch);
             }
             Err(err) => {
-                log::error!("trash: {err}");
+                tracing::error!("trash: {err}");
                 Toasts::get().show(Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-trash-failed"), "detail" => err.user_message())).tone(ToastTone::Error));
             }
         }
@@ -411,7 +411,7 @@ pub fn trash_folder(folder: FolderId) {
                 trashed_toast(text, receipt.batch);
             }
             Err(err) => {
-                log::error!("trash folder: {err}");
+                tracing::error!("trash folder: {err}");
                 Toasts::get().show(Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-trash-failed"), "detail" => err.user_message())).tone(ToastTone::Error));
             }
         }

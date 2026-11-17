@@ -6,9 +6,11 @@ pub mod ui;
 
 use std::path::PathBuf;
 
-use log::{LevelFilter, Log};
 use notin_i18n::tr;
 use notin_plugin::UserMessage;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, Layer, Registry};
 
 use crate::persist::Persisted;
 
@@ -73,10 +75,19 @@ impl UserMessage for StartFailure {
     }
 }
 
-/// Install the global logger: every record still reaches `inner`, and
-/// the recorder keeps its own copy while remote diagnostics run.
-pub fn init_logging(inner: Option<Box<dyn Log>>, inner_max: LevelFilter) {
-    if let Err(err) = sismo::log::init(inner, inner_max) {
+/// Where a platform prints events: the console, logcat. Filtered by the
+/// platform, see [`init_logging`].
+pub type Output = Box<dyn Layer<Registry> + Send + Sync>;
+
+/// Install the global subscriber.
+///
+/// Every event reaches `output`, and the recorder keeps its own copy, by
+/// [`FILTER`], while remote diagnostics run. Crates that still write
+/// through `log` come in as events too.
+pub fn init_logging(output: Option<Output>) {
+    let recorder = sismo::SismoLayer.with_filter(EnvFilter::new(FILTER));
+    let subscriber = tracing_subscriber::registry().with(output).with(recorder);
+    if let Err(err) = subscriber.try_init() {
         eprintln!("logger already set: {err}");
     }
 }
@@ -86,7 +97,7 @@ pub fn start_if_enabled() {
     if DiagnosticsSettings::load().remote
         && let Err(err) = start()
     {
-        log::warn!("remote diagnostics: {err}");
+        tracing::warn!("remote diagnostics: {err}");
     }
 }
 
@@ -157,7 +168,7 @@ pub fn crash_reports() -> Vec<sismo::CrashReport> {
 pub fn delete_crash_reports() {
     for report in crash_reports() {
         if let Err(err) = sismo::delete_crash_report(&data_dir(), &report.name) {
-            log::warn!("crash report delete: {err}");
+            tracing::warn!("crash report delete: {err}");
         }
     }
 }
@@ -173,7 +184,49 @@ pub fn take_unseen_crash() -> Option<sismo::CrashReport> {
     }
     settings.seen_crash_ns = newest.written_unix_ns;
     if let Err(err) = settings.save() {
-        log::warn!("diagnostics settings save: {err}");
+        tracing::warn!("diagnostics settings save: {err}");
     }
     Some(newest)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    use tracing_subscriber::Layer;
+
+    use super::init_logging;
+
+    /// Where the test output lands.
+    #[derive(Clone, Default)]
+    struct Sink(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("sink lock").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn events_and_log_records_both_reach_the_output() {
+        let sink = Sink::default();
+        let writer = sink.clone();
+        init_logging(Some(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(move || writer.clone())
+                .boxed(),
+        ));
+        tracing::warn!("from tracing");
+        log::warn!("from a crate on log");
+        let out = String::from_utf8(sink.0.lock().expect("sink lock").clone()).expect("utf8");
+        assert!(out.contains("from tracing"), "{out}");
+        assert!(out.contains("from a crate on log"), "{out}");
+    }
 }

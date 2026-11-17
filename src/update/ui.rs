@@ -304,7 +304,7 @@ impl Component for DownloadSheet {
                             let _ = tx.send(download::fetch(&asset, &progress));
                         });
                     if let Err(err) = spawned {
-                        log::warn!("update download thread: {err}");
+                        tracing::warn!("update download thread: {err}");
                     }
                 }
                 let watched = Arc::clone(&progress);
@@ -331,7 +331,7 @@ impl Component for DownloadSheet {
                         }
                         Some(Err(super::UpdateError::Cancelled)) | None => {}
                         Some(Err(err)) => {
-                            log::warn!("update download: {err}");
+                            tracing::warn!("update download: {err}");
                             phase.set(Phase::Failed(UpdateFailure::from(&err)));
                         }
                     }
@@ -433,7 +433,7 @@ fn install(path: PathBuf, mut phase: State<Phase>) {
     let client = match InstallerClient::acquire() {
         Ok(client) => client,
         Err(err) => {
-            log::warn!("installer: {err}");
+            tracing::warn!("installer: {err}");
             reveal(&path);
             return;
         }
@@ -450,7 +450,7 @@ fn install(path: PathBuf, mut phase: State<Phase>) {
                 return;
             }
             Err(err) => {
-                log::warn!("install {}: {err}", path.display());
+                tracing::warn!("install {}: {err}", path.display());
                 Phase::Failed(UpdateFailure::Installer)
             }
         };

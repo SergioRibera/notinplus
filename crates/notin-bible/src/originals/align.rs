@@ -116,7 +116,7 @@ pub fn run(db: &Db, store: &Store, bible_id: &str) -> Result<(), DbError> {
                 })
             })
             .collect();
-        log::info!(
+        tracing::info!(
             "originals: {bible_id} {testament:?}: {} links, {} renderings",
             links.len(),
             renderings.len()

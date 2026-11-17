@@ -47,7 +47,7 @@ pub async fn load(client: &DataStoreClient) -> Result<Option<LibraryIndex>> {
     let index = notin_plugin::decode::<LibraryIndex>(&bytes)
         .map_err(|e| LibraryError::Codec(e.to_string()))?;
     if index.version != INDEX_VERSION {
-        log::warn!(
+        tracing::warn!(
             "library index version {} does not match {INDEX_VERSION}; starting over",
             index.version
         );
@@ -146,7 +146,7 @@ impl Writer {
                 sismo::scope!("library::store::set_bytes");
                 sismo::counter!("library.store.bytes", bytes.len());
                 if let Err(err) = pollster::block_on(client.set_bytes(key.to_owned(), bytes)) {
-                    log::error!("library store {key}: {err}");
+                    tracing::error!("library store {key}: {err}");
                 }
             }
             self.queue().busy = false;
@@ -166,7 +166,7 @@ pub fn store(client: &Arc<DataStoreClient>, key: &'static str, bytes: Vec<u8>) {
             .name("notein-store".to_owned())
             .spawn(move || writer().run(&client));
         if let Err(err) = spawned {
-            log::error!("library store thread: {err}");
+            tracing::error!("library store thread: {err}");
         }
     });
     let writer = writer();

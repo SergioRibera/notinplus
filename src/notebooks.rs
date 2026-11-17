@@ -23,7 +23,7 @@ pub fn new_notebook(item: ItemId) {
         };
         match created {
             Ok(id) => space::open(TabTarget::Item(id), OpenHint::Beside),
-            Err(err) => log::error!("create notebook: {err}"),
+            Err(err) => tracing::error!("create notebook: {err}"),
         }
     }));
 }

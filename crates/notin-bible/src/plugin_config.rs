@@ -105,11 +105,11 @@ pub fn load_shared(db: &Db) -> SharedConfig {
         Ok(values) => {
             for (key, value) in values {
                 if let Err(e) = apply_set(&config, &key, value) {
-                    log::warn!("bible: saved setting {key} ignored: {e}");
+                    tracing::warn!("bible: saved setting {key} ignored: {e}");
                 }
             }
         }
-        Err(e) => log::warn!("bible: settings not loaded: {e}"),
+        Err(e) => tracing::warn!("bible: settings not loaded: {e}"),
     }
     config
 }
@@ -301,7 +301,7 @@ impl PluginSettings for Settings {
         let level_before = effective_crossref_level(&self.config);
         apply_set(&self.config, key, value.clone())?;
         if let Err(e) = self.db.save_setting(key, &value) {
-            log::warn!("bible: setting {key} not saved: {e}");
+            tracing::warn!("bible: setting {key} not saved: {e}");
         }
         #[cfg(feature = "importer")]
         if key == KEY_CROSSREF_LEVEL && effective_crossref_level(&self.config) != level_before {

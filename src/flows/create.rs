@@ -71,7 +71,7 @@ fn session_tiles() -> Vec<EntryKey> {
             let mut log = UsageLog::load();
             let tiles = log.choose_tiles(&available, crate::format::now());
             if let Err(err) = log.save() {
-                log::warn!("usage log: {err}");
+                tracing::warn!("usage log: {err}");
             }
             Mutex::new(tiles)
         })
@@ -85,7 +85,7 @@ fn record_use(entry: &CatalogEntry) {
     let mut log = UsageLog::load();
     log.record(key(entry), crate::format::now());
     if let Err(err) = log.save() {
-        log::warn!("usage log: {err}");
+        tracing::warn!("usage log: {err}");
     }
 }
 
@@ -421,7 +421,7 @@ pub fn run(entry: CatalogEntry, context: Context) {
                     Ok(Some(picked)) => import_sheet(entry, context, picked, Landing::Open),
                     Ok(None) => {}
                     Err(err) => {
-                        log::error!("pick: {err}");
+                        tracing::error!("pick: {err}");
                         Toasts::get().show(
                             Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-create-picker-failed"), "detail" => err.user_message())).tone(ToastTone::Error),
                         );
@@ -564,7 +564,7 @@ fn form(entry: CatalogEntry, context: Context, choice: Option<String>) {
                 color: values.color,
             };
             if let Err(err) = remembered.save() {
-                log::warn!("last paper: {err}");
+                tracing::warn!("last paper: {err}");
             }
         }
         create(
@@ -816,7 +816,7 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
             {
                 Ok(item) => item,
                 Err(err) => {
-                    log::error!("create item: {err}");
+                    tracing::error!("create item: {err}");
                     Toasts::get()
                         .show(Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-create-failed"), "detail" => err.user_message())).tone(ToastTone::Error));
                     return;
@@ -826,7 +826,7 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
             if let Some(attachment) = &created.attachment
                 && let Err(err) = lib.attach_pdf(item, attachment).await
             {
-                log::error!("attach: {err}");
+                tracing::error!("attach: {err}");
             }
             drop(lib);
             item
@@ -892,19 +892,20 @@ fn prepare_attachment(item: ItemId, kind_id: &str, bytes: Vec<u8>) {
         let kind = std::sync::Arc::clone(&kind);
         std::thread::spawn(move || {
             sismo::scope!("flows::attachment_cover");
-            match kind.thumbnail(&content, &bytes) {
-                Some(cover) => match crate::library::shared_blocking() {
+            if let Some(cover) = kind.thumbnail(&content, &bytes) {
+                match crate::library::shared_blocking() {
                     Ok(handle) => {
                         let mut lib = pollster::block_on(handle.lock());
                         if let Err(err) =
                             pollster::block_on(lib.set_item_thumbnail(item, Some(cover)))
                         {
-                            log::error!("cover of {item}: {err}");
+                            tracing::error!("cover of {item}: {err}");
                         }
                     }
-                    Err(err) => log::error!("cover of {item}: {err}"),
-                },
-                None => log::warn!("cover of {item}: the kind drew none"),
+                    Err(err) => tracing::error!("cover of {item}: {err}"),
+                }
+            } else {
+                tracing::warn!("cover of {item}: the kind drew none");
             }
             content::index_blocking(item);
             let _ = finished.send(());
@@ -948,7 +949,7 @@ pub fn replace_attachment(item: ItemId, kind_id: String) {
             Ok(Some(picked)) => picked,
             Ok(None) => return,
             Err(err) => {
-                log::warn!("pick {kind_id}: {err}");
+                tracing::warn!("pick {kind_id}: {err}");
                 return;
             }
         };
@@ -968,7 +969,7 @@ pub fn replace_attachment(item: ItemId, kind_id: String) {
             return;
         };
         if let Err(err) = handle.lock().await.attach_pdf(item, &picked.bytes).await {
-            log::error!("replace attachment: {err}");
+            tracing::error!("replace attachment: {err}");
             Toasts::get()
                 .show(Toast::new(tr!("flows-create-replace-failed")).tone(ToastTone::Error));
             return;
@@ -1209,7 +1210,7 @@ pub fn new_mesa() {
                         let workspace = match lib.create_workspace(&title, None).await {
                             Ok(w) => w,
                             Err(err) => {
-                                log::error!("new mesa: {err}");
+                                tracing::error!("new mesa: {err}");
                                 return;
                             }
                         };
@@ -1219,13 +1220,13 @@ pub fn new_mesa() {
                             StartWith::Pick => chosen.into_iter().map(TabTarget::Item).collect(),
                         };
                         if let Err(err) = lib.set_active_workspace(Some(workspace)).await {
-                            log::error!("activate mesa: {err}");
+                            tracing::error!("activate mesa: {err}");
                         }
                         for target in targets {
                             if let Err(err) =
                                 crate::space::open_in(&mut lib, target, OpenHint::Focused).await
                             {
-                                log::error!("mesa tab: {err}");
+                                tracing::error!("mesa tab: {err}");
                             }
                         }
                         drop(lib);

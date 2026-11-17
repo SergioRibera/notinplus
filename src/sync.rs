@@ -520,7 +520,7 @@ pub fn use_presence() {
                 .name("notein-flush".into())
                 .spawn(crate::deferred::flush)
             {
-                log::warn!("flush thread: {err}");
+                tracing::warn!("flush thread: {err}");
             }
         }
         let _ = changes.send(focused);
@@ -782,7 +782,7 @@ fn open_library() -> Option<async_lock::MutexGuardArc<Library>> {
             Some(pollster::block_on(handle.lock_arc()))
         }
         Err(err) => {
-            log::error!("sync: open library: {err}");
+            tracing::error!("sync: open library: {err}");
             None
         }
     }
@@ -921,7 +921,7 @@ impl Service {
             .find(|p| p.device == from)
             .map_or_else(|| from.short(), |p| p.name.clone());
         if self.outdated.insert(from) {
-            log::warn!(
+            tracing::warn!(
                 "sync: {name} speaks protocol {version}, this build speaks {}",
                 notin_sync::PROTOCOL_VERSION
             );
@@ -939,7 +939,7 @@ impl Service {
     #[sismo::function("sync::save_profile")]
     fn save_profile(&mut self) {
         if let Err(err) = self.driver.profile().save(&self.profile_path) {
-            log::error!("device profile save: {err}");
+            tracing::error!("device profile save: {err}");
             self.error = Some(SyncProblem::ProfileSave(Arc::new(err)));
         } else {
             self.recovered(Recovery::ProfileSaved);
@@ -956,7 +956,7 @@ impl Service {
     fn save_shares(&mut self) {
         let book = self.driver.book();
         if let Err(err) = std::fs::write(&self.shares_path, book.encode()) {
-            log::error!("share book save: {err}");
+            tracing::error!("share book save: {err}");
             self.error = Some(SyncProblem::SharesSave(Arc::new(err)));
         } else {
             self.recovered(Recovery::SharesSaved);
@@ -1007,40 +1007,40 @@ impl Service {
                     sismo::scope!("sync::perform::send");
                     sismo::counter!("sync.out.bytes", bytes.len());
                     if let Some(Err(err)) = node.map(|n| n.send(device, lane, bytes)) {
-                        log::warn!("sync send: {err}");
+                        tracing::warn!("sync send: {err}");
                     }
                 }
                 Action::Connect { addr, public } => {
                     sismo::scope!("sync::perform::connect");
                     if let Some(Err(err)) = node.map(|n| n.connect(addr, public)) {
-                        log::warn!("sync connect: {err}");
+                        tracing::warn!("sync connect: {err}");
                     }
                 }
                 Action::ConnectHost { host, public } => {
                     sismo::scope!("sync::perform::connect_host");
                     if let Some(Err(err)) = node.map(|n| n.connect_host(host, public)) {
-                        log::warn!("sync connect: {err}");
+                        tracing::warn!("sync connect: {err}");
                     }
                 }
                 Action::ConnectVia { relay, public } => {
                     sismo::scope!("sync::perform::connect_via");
                     if let Some(Err(err)) = node.map(|n| n.connect_via(relay, public)) {
-                        log::warn!("sync connect: {err}");
+                        tracing::warn!("sync connect: {err}");
                     }
                 }
                 Action::Punch { device } => {
                     if let Some(Err(err)) = node.map(|n| n.punch(device)) {
-                        log::warn!("sync punch: {err}");
+                        tracing::warn!("sync punch: {err}");
                     }
                 }
                 Action::Disconnect { device } => {
                     if let Some(Err(err)) = node.map(|n| n.disconnect(device)) {
-                        log::warn!("sync disconnect: {err}");
+                        tracing::warn!("sync disconnect: {err}");
                     }
                 }
                 Action::Bulk { device, allowed } => {
                     if let Some(Err(err)) = node.map(|n| n.allow_bulk(device, allowed)) {
-                        log::warn!("sync bulk: {err}");
+                        tracing::warn!("sync bulk: {err}");
                     }
                 }
                 Action::Event(event) => self.on_driver_event(event),
@@ -1052,13 +1052,13 @@ impl Service {
     fn on_driver_event(&mut self, event: DriverEvent) {
         match event {
             DriverEvent::Paired(device) => {
-                log::info!("sync: paired with {}", device.name);
+                tracing::info!("sync: paired with {}", device.name);
                 self.last_failure = None;
                 self.save_profile();
                 notify(ShareNotice::Paired { name: device.name });
             }
             DriverEvent::Renamed { device, name } => {
-                log::info!("sync: {device:?} is now {name}");
+                tracing::info!("sync: {device:?} is now {name}");
                 self.save_profile();
             }
             DriverEvent::PairFailed { device, reason } => {
@@ -1146,7 +1146,7 @@ impl Service {
                 }
             }
             DriverEvent::TrustedRelay(device) => {
-                log::info!("sync: {device:?} waits at another relay");
+                tracing::info!("sync: {device:?} waits at another relay");
                 self.save_profile();
             }
             DriverEvent::RelayAdopted(relay) => {
@@ -1156,10 +1156,10 @@ impl Service {
             DriverEvent::RelayUnreachable { relay, why } => {
                 // Ours is the one shown; others' are retried quietly.
                 if self.driver.relay().is_some_and(|r| r.device() == relay) {
-                    log::warn!("sync: relay {relay:?} out of reach: {why:?}");
+                    tracing::warn!("sync: relay {relay:?} out of reach: {why:?}");
                     self.relay_failure = Some(why);
                 } else {
-                    log::debug!("sync: relay {relay:?} out of reach: {why:?}");
+                    tracing::debug!("sync: relay {relay:?} out of reach: {why:?}");
                 }
             }
             DriverEvent::RelayOnline(online) => {
@@ -1383,7 +1383,7 @@ impl Service {
                 self.driver.profile_mut().set_name(name.clone());
                 self.save_profile();
                 if let Some(Err(err)) = self.transport.node.as_ref().map(|n| n.set_name(name)) {
-                    log::warn!("sync rename: {err}");
+                    tracing::warn!("sync rename: {err}");
                 }
                 Vec::new()
             }
@@ -1484,7 +1484,7 @@ impl Service {
                 let parsed = relay.as_deref().map(str::parse::<RelayAddr>);
                 match parsed {
                     Some(Err(err)) => {
-                        log::warn!("sync relay: {err}");
+                        tracing::warn!("sync relay: {err}");
                         self.error = Some(SyncProblem::BadRelay);
                         Vec::new()
                     }
@@ -1517,7 +1517,7 @@ impl Service {
             .as_ref()
             .map(|node| if present { node.resume() } else { node.pause() });
         if let Some(Err(err)) = result {
-            log::warn!("sync presence: {err}");
+            tracing::warn!("sync presence: {err}");
         }
         if !present {
             return Ok(Vec::new());
@@ -1807,7 +1807,7 @@ impl Service {
         match Transport::start(&profile) {
             Ok(node) => transport.node = Some(node),
             Err(err) => {
-                log::warn!("sync network: {err}");
+                tracing::warn!("sync network: {err}");
                 error = Some(SyncProblem::Network(Arc::new(err)));
                 transport.lost(Instant::now());
             }
@@ -1853,7 +1853,7 @@ impl Service {
             }
             Err(notin_sync::SyncError::Version(version)) => self.report_outdated(from, version),
             Err(err) => {
-                log::error!("sync: {err}");
+                tracing::error!("sync: {err}");
                 self.error = Some(SyncProblem::Exchange(Arc::new(err)));
             }
         }
@@ -1862,7 +1862,7 @@ impl Service {
     /// The transport stopped: everyone is offline until it is back.
     #[sismo::function("sync::transport_lost")]
     fn transport_lost(&mut self, reason: &str) {
-        log::warn!("sync network stopped: {reason}");
+        tracing::warn!("sync network stopped: {reason}");
         self.on_net(NetEvent::Stopped(reason.to_owned()));
         self.transport.lost(Instant::now());
         self.error = Some(SyncProblem::Network(Arc::new(
@@ -1881,14 +1881,14 @@ impl Service {
                 if !self.transport.present
                     && let Err(err) = node.pause()
                 {
-                    log::warn!("sync presence: {err}");
+                    tracing::warn!("sync presence: {err}");
                 }
                 self.transport.node = Some(node);
                 self.transport.retry = None;
                 self.recovered(Recovery::TransportUp);
             }
             Err(err) => {
-                log::warn!("sync network: {err}");
+                tracing::warn!("sync network: {err}");
                 self.error = Some(SyncProblem::Network(Arc::new(err)));
                 self.transport.lost(now);
             }
@@ -1902,7 +1902,7 @@ impl Service {
         match self.on_cmd(Cmd::LocalChanged) {
             Ok(()) => self.recovered(Recovery::Exchanged),
             Err(err) => {
-                log::error!("sync: {err}");
+                tracing::error!("sync: {err}");
                 self.error = Some(SyncProblem::Exchange(Arc::new(err)));
             }
         }
@@ -1957,7 +1957,7 @@ fn run(cmds: &flume::Receiver<Cmd>) {
             }
             Ok(Step::Cmd(cmd)) => {
                 if let Err(err) = service.on_cmd(cmd) {
-                    log::error!("sync: {err}");
+                    tracing::error!("sync: {err}");
                     service.error = Some(SyncProblem::Exchange(Arc::new(err)));
                 }
             }
@@ -1987,7 +1987,7 @@ fn run(cmds: &flume::Receiver<Cmd>) {
                     service.perform(actions);
                 }
                 Err(err) => {
-                    log::error!("sync tick: {err}");
+                    tracing::error!("sync tick: {err}");
                     service.error = Some(SyncProblem::Exchange(Arc::new(err)));
                 }
             }

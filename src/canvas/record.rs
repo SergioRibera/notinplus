@@ -61,7 +61,7 @@ impl Board {
             .map_err(|e| e.to_string())
             .and_then(|bytes| std::fs::write(&recorder.path, bytes).map_err(|e| e.to_string()));
         if let Err(err) = saved {
-            log::warn!("ink recording {}: {err}", recorder.path.display());
+            tracing::warn!("ink recording {}: {err}", recorder.path.display());
         }
     }
 }

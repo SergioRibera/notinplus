@@ -303,7 +303,7 @@ impl Replica for LibraryReplica {
     fn blob_merge(&mut self, blob: Blob) -> Result<bool, ReplicaError> {
         sismo::counter!("sync.in.blob_bytes", blob.bytes.len());
         let Some(record) = SyncRecord::decode(&blob.bytes) else {
-            log::warn!("sync: undecodable record for {:?}", blob.head.key());
+            tracing::warn!("sync: undecodable record for {:?}", blob.head.key());
             return Ok(false);
         };
         let mut lib = Self::open()?;

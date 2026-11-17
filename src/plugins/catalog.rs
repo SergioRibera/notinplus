@@ -22,17 +22,17 @@ fn init() -> RwLock<PluginCatalog> {
     ];
     for plugin in builtins {
         if let Err(err) = catalog.add(plugin, Origin::Builtin) {
-            log::error!("builtin plugin: {err}");
+            tracing::error!("builtin plugin: {err}");
         }
     }
     match notin_bible::BiblePlugin::open() {
         Ok(bible) => {
             if let Err(err) = catalog.add(Arc::new(bible), Origin::Builtin) {
-                log::error!("builtin plugin: {err}");
+                tracing::error!("builtin plugin: {err}");
             }
         }
         Err(err) => {
-            log::error!("bible plugin: {err}");
+            tracing::error!("bible plugin: {err}");
             catalog.record_failure(Failed {
                 name: tr!("plugin-host-bible-name"),
                 reason: Arc::new(BibleUnavailable(err)),

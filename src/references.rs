@@ -407,7 +407,7 @@ pub fn insert_in_notebook(from: ItemId, target: SourceRef) {
         let notebook = match notebook {
             Ok(id) => id,
             Err(err) => {
-                log::error!("notebook for {from}: {err}");
+                tracing::error!("notebook for {from}: {err}");
                 Toasts::get()
                     .show(Toast::new(tr!("references-notebook-failed")).tone(ToastTone::Error));
                 return;
@@ -425,7 +425,7 @@ pub fn insert_in_notebook(from: ItemId, target: SourceRef) {
                 Err(err) => Err(err),
             };
             if let Err(err) = saved {
-                log::error!("append to notebook {notebook}: {err}");
+                tracing::error!("append to notebook {notebook}: {err}");
             }
         }
         crate::space::open(TabTarget::Item(notebook), OpenHint::Beside);

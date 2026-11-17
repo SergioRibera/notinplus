@@ -242,7 +242,7 @@ pub(crate) fn load_settings(db: &Db) -> Result<Vec<(String, ConfigValue)>> {
                 |(key, bytes)| match notin_sdk::decode::<ConfigValue>(&bytes) {
                     Ok(value) => Some((key, value)),
                     Err(e) => {
-                        log::warn!("bible: setting {key} unreadable, dropped: {e}");
+                        tracing::warn!("bible: setting {key} unreadable, dropped: {e}");
                         None
                     }
                 },

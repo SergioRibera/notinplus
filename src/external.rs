@@ -11,7 +11,7 @@ pub fn open_url(url: &str) {
     let client = match OpenerClient::acquire() {
         Ok(client) => client,
         Err(err) => {
-            log::warn!("opener: {err}");
+            tracing::warn!("opener: {err}");
             return;
         }
     };
@@ -21,7 +21,7 @@ pub fn open_url(url: &str) {
             Err(OpenError::NoHandler) => {
                 Toasts::get().show(Toast::new(tr!("external-no-handler")).tone(ToastTone::Error));
             }
-            Err(err) => log::warn!("open {url}: {err}"),
+            Err(err) => tracing::warn!("open {url}: {err}"),
         }
     });
 }

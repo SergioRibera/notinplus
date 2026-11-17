@@ -79,7 +79,7 @@ pub(crate) fn copy_link(link: &str) {
         Ok(()) => {
             Toasts::get().show(Toast::new(tr!("collab-link-copied")));
         }
-        Err(err) => log::warn!("copy invite: {err:?}"),
+        Err(err) => tracing::warn!("copy invite: {err:?}"),
     }
 }
 
@@ -394,7 +394,7 @@ impl Component for Joining {
 fn open_desk(title: String, docs: Vec<crate::library::ItemId>) {
     spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
-            log::warn!("shared desk: library unavailable");
+            tracing::warn!("shared desk: library unavailable");
             return;
         };
         let workspace = {
@@ -402,7 +402,7 @@ fn open_desk(title: String, docs: Vec<crate::library::ItemId>) {
             let workspace = match lib.create_workspace(&title, None).await {
                 Ok(id) => id,
                 Err(err) => {
-                    log::warn!("shared desk: create: {err}");
+                    tracing::warn!("shared desk: create: {err}");
                     return;
                 }
             };
@@ -415,7 +415,7 @@ fn open_desk(title: String, docs: Vec<crate::library::ItemId>) {
                         .add_tab(workspace, pane, crate::library::TabTarget::Item(doc))
                         .await
                     {
-                        log::warn!("shared desk: open {doc}: {err}");
+                        tracing::warn!("shared desk: open {doc}: {err}");
                     }
                 }
             }
@@ -484,7 +484,7 @@ pub(crate) fn save_copy(end: SessionEnd) {
             for item in &end.docs {
                 match lib.duplicate_item(*item).await {
                     Ok(_) => saved += 1,
-                    Err(err) => log::warn!("session copy {item}: {err}"),
+                    Err(err) => tracing::warn!("session copy {item}: {err}"),
                 }
             }
         }

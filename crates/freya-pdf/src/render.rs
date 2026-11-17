@@ -86,7 +86,7 @@ impl RenderPool {
             {
                 Ok(handle) => workers.push(handle),
                 // Fewer workers only render slower.
-                Err(err) => log::warn!("freya-pdf: worker {i} not started: {err}"),
+                Err(err) => tracing::warn!("freya-pdf: worker {i} not started: {err}"),
             }
         }
         *lock(&this.workers) = workers;

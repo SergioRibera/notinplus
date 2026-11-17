@@ -166,7 +166,7 @@ impl ViewState {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         if let Err(err) = std::fs::write(&target, &text) {
-            log::error!("save {}: {err}", target.display());
+            tracing::error!("save {}: {err}", target.display());
             Toasts::get().show(
                 Toast::new(tr!("external-files-save-as-md-failed", "name" => name))
                     .tone(ToastTone::Error),

@@ -145,14 +145,14 @@ fn spawn_load(
             }
         });
     if let Err(err) = spawned {
-        log::warn!("canvas image {item:?}: no loader thread: {err}");
+        tracing::warn!("canvas image {item:?}: no loader thread: {err}");
     }
 }
 
 #[sismo::function("canvas::decode_picture")]
 fn decode(item: ItemId, asset: &str) -> Option<SkImage> {
     let rgba = crate::editor::images::asset_rgba(item, asset)
-        .inspect_err(|err| log::warn!("canvas image {asset}: {err}"))
+        .inspect_err(|err| tracing::warn!("canvas image {asset}: {err}"))
         .ok()?;
     let (width, height) = rgba.dimensions();
     let info = ImageInfo::new(

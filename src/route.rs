@@ -88,7 +88,7 @@ pub(crate) fn init_canvas_mount(mount: CanvasMount, board: &Arc<Mutex<Board>>) {
             let handle = match crate::library::shared().await {
                 Ok(h) => h,
                 Err(err) => {
-                    log::warn!("init_canvas_mount: open_library: {err}");
+                    tracing::warn!("init_canvas_mount: open_library: {err}");
                     return;
                 }
             };
@@ -165,13 +165,13 @@ fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
                             Doc::default()
                         }
                         Err(err) => {
-                            log::error!("load_doc id={id:?}: {err}");
+                            tracing::error!("load_doc id={id:?}: {err}");
                             return;
                         }
                     }
                 }
                 Err(err) => {
-                    log::error!("open library on canvas enter: {err}");
+                    tracing::error!("open library on canvas enter: {err}");
                     return;
                 }
             },
@@ -249,7 +249,7 @@ fn spawn_autosave_worker(id: ItemId, board: &Arc<Mutex<Board>>, rx: flume::Recei
             }
         });
     if let Err(err) = spawned {
-        log::error!("autosave thread id={id:?}: {err}");
+        tracing::error!("autosave thread id={id:?}: {err}");
     }
 }
 
@@ -311,7 +311,7 @@ fn save(id: ItemId, board: &Arc<Mutex<Board>>) {
     let (bytes, captured) = match snapshot {
         Ok(snapshot) => snapshot,
         Err(err) => {
-            log::error!("autosave snapshot id={id:?}: {err}");
+            tracing::error!("autosave snapshot id={id:?}: {err}");
             return;
         }
     };
@@ -319,10 +319,10 @@ fn save(id: ItemId, board: &Arc<Mutex<Board>>) {
         Ok(handle) => {
             let mut lib = pollster::block_on(handle.lock());
             if let Err(err) = pollster::block_on(lib.save_doc_snapshot(id, &bytes, captured)) {
-                log::error!("autosave save_doc id={id:?}: {err}");
+                tracing::error!("autosave save_doc id={id:?}: {err}");
             }
         }
-        Err(err) => log::error!("autosave open library: {err}"),
+        Err(err) => tracing::error!("autosave open library: {err}"),
     }
     crate::plugins::builtin::canvas::after_save(id, &content, &bytes);
     sync_siblings(id, board);
@@ -378,7 +378,7 @@ fn spawn_view_worker(key: prefs::ViewKey, board: Arc<Mutex<Board>>, rx: flume::R
                 prefs::DocView::from_viewport(guard.viewport())
             };
             if let Err(err) = prefs::save_view(key, view) {
-                log::error!("save_view item={:?}: {err}", key.item);
+                tracing::error!("save_view item={:?}: {err}", key.item);
             }
         }
     }));
@@ -435,13 +435,13 @@ fn sync_siblings(item: ItemId, board: &Arc<Mutex<Board>>) {
         let updates = match exported {
             Ok(updates) => updates,
             Err(err) => {
-                log::error!("sibling sync export id={item:?}: {err}");
+                tracing::error!("sibling sync export id={item:?}: {err}");
                 continue;
             }
         };
         let merged = lock(&sibling).merge_updates(&updates);
         if let Err(err) = merged {
-            log::error!("sibling sync import id={item:?}: {err}");
+            tracing::error!("sibling sync import id={item:?}: {err}");
         }
     }
 }

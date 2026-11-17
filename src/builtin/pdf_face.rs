@@ -107,12 +107,12 @@ fn install_background(item: ItemId, mount: CanvasMount, pages: &PageRects) {
     let bg = match load_pdf_background(item, pages) {
         Ok(bg) => bg,
         Err(err) => {
-            log::error!("load pdf id={item:?}: {err}");
+            tracing::error!("load pdf id={item:?}: {err}");
             return;
         }
     };
     let Some(board) = crate::active_boards::get(mount) else {
-        log::warn!("PdfFace install_background: no board registered for {item:?}");
+        tracing::warn!("PdfFace install_background: no board registered for {item:?}");
         return;
     };
     sismo::scope!("pdf_face::set_background");

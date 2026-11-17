@@ -206,7 +206,7 @@ impl Updates {
                 let _ = tx.send(check::latest(force));
             });
         if let Err(err) = spawned {
-            log::warn!("update check thread: {err}");
+            tracing::warn!("update check thread: {err}");
             state.write().status = CheckStatus::Idle;
             return;
         }
@@ -227,7 +227,7 @@ impl Updates {
                     };
                 }
                 Err(err) => {
-                    log::warn!("update check: {err}");
+                    tracing::warn!("update check: {err}");
                     snapshot.status = if force {
                         CheckStatus::Failed(UpdateFailure::from(&err))
                     } else {
@@ -265,7 +265,7 @@ impl Updates {
         let mut record = UpdateRecord::load();
         change(&mut record);
         if let Err(err) = record.save() {
-            log::error!("update settings save: {err}");
+            tracing::error!("update settings save: {err}");
         }
         state.write().record = record;
     }

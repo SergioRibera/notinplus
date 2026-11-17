@@ -193,7 +193,7 @@ pub async fn run_async(query: String, data: std::sync::Arc<LibraryData>) -> Resu
             let _ = tx.send(run(&query, &data));
         });
     if let Err(err) = spawned {
-        log::error!("search thread: {err}");
+        tracing::error!("search thread: {err}");
         return Results::default();
     }
     rx.recv_async().await.unwrap_or_default()

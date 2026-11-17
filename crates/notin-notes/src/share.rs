@@ -71,7 +71,7 @@ fn copy_markdown(host: &Host, controller: EditorController, dialect: Dialect) {
     let toast = match freya::clipboard::Clipboard::set(controller.markdown(dialect)) {
         Ok(()) => HostToast::new(tr!("notes-toast-markdown-copied"), ToastTone::Info),
         Err(err) => {
-            log::warn!("notes: copy failed: {err:?}");
+            tracing::warn!("notes: copy failed: {err:?}");
             HostToast::new(tr!("notes-toast-copy-failed"), ToastTone::Error)
         }
     };

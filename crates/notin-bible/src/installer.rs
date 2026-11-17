@@ -138,7 +138,7 @@ impl Installer {
                 .name("bible-installer".to_owned())
                 .spawn(move || worker.drain());
             if let Err(err) = spawned {
-                log::error!("bible installer: {err}");
+                tracing::error!("bible installer: {err}");
                 let mut queue = self.lock();
                 queue.running = false;
                 let stuck: Vec<String> = queue.waiting.drain(..).collect();
@@ -199,7 +199,7 @@ impl Installer {
                 }
             });
         if let Err(err) = spawned {
-            log::warn!("bible install watch: {err}");
+            tracing::warn!("bible install watch: {err}");
         }
         stop
     }
@@ -233,7 +233,7 @@ impl Installer {
     pub fn resume(&self) {
         match self.db.pending_installs() {
             Ok(pending) => pending.iter().for_each(|id| self.enqueue(id)),
-            Err(e) => log::warn!("bible installer: pending downloads: {e}"),
+            Err(e) => tracing::warn!("bible installer: pending downloads: {e}"),
         }
     }
 

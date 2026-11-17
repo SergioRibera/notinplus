@@ -236,7 +236,7 @@ impl Transclusion {
         match value {
             Some(value) => {
                 if !valid_transclusion_attr(key, value) {
-                    log::warn!("transclusion: cannot write setting {key:?}={value:?}");
+                    tracing::warn!("transclusion: cannot write setting {key:?}={value:?}");
                     return false;
                 }
                 match self.attrs.iter_mut().find(|(k, _)| k == key) {
@@ -272,7 +272,7 @@ pub fn transclusion_color(attrs: &[(String, String)]) -> Option<Rgba> {
     let value = transclusion_attr(attrs, TRANSCLUSION_COLOR)?;
     value
         .parse::<Rgba>()
-        .inspect_err(|_| log::warn!("transclusion: {value:?} is not a colour, ignored"))
+        .inspect_err(|_| tracing::warn!("transclusion: {value:?} is not a colour, ignored"))
         .ok()
 }
 

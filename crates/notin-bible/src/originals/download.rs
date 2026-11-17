@@ -174,7 +174,7 @@ pub fn ensure(
             continue;
         }
         let url = format!("{base}/{}", entry.file);
-        log::info!("originals: downloading {url} ({} bytes)", entry.bytes);
+        tracing::info!("originals: downloading {url} ({} bytes)", entry.bytes);
         let compressed = client.get(&url).send()?.error_for_status()?.bytes()?;
         let digest = Sha256::digest(&compressed);
         let hex = digest.iter().fold(String::new(), |mut hex, byte| {

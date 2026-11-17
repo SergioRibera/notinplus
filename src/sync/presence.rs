@@ -405,7 +405,7 @@ fn ensure_ticker() {
                 }
             });
         if let Err(err) = spawned {
-            log::error!("presence thread: {err}");
+            tracing::error!("presence thread: {err}");
         }
     });
 }

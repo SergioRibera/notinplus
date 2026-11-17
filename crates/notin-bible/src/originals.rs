@@ -160,7 +160,7 @@ impl Originals {
             Ok(store) => Some(Arc::new(store)),
             Err(StoreError::Missing) => None,
             Err(err) => {
-                log::warn!("{err}");
+                tracing::warn!("{err}");
                 None
             }
         };
@@ -248,7 +248,7 @@ impl Originals {
                     }
                     Err(err) => {
                         use notin_sdk::UserMessage as _;
-                        log::warn!("{err}");
+                        tracing::warn!("{err}");
                         let failure = crate::install_background::InstallFailure::from(err);
                         this.set_progress(Progress::Failed(failure.user_message()));
                     }
@@ -256,7 +256,7 @@ impl Originals {
                 this.busy.store(false, Ordering::Release);
             });
         if let Err(err) = spawned {
-            log::warn!("bible originals thread: {err}");
+            tracing::warn!("bible originals thread: {err}");
             self.busy.store(false, Ordering::Release);
         }
     }
@@ -276,7 +276,7 @@ impl Originals {
                 this.busy.store(false, Ordering::Release);
             });
         if let Err(err) = spawned {
-            log::warn!("bible originals align thread: {err}");
+            tracing::warn!("bible originals align thread: {err}");
             self.busy.store(false, Ordering::Release);
         }
     }
@@ -291,7 +291,7 @@ impl Originals {
         let bibles = match self.db.list_bibles() {
             Ok(bibles) => bibles,
             Err(err) => {
-                log::warn!("originals: translations: {err}");
+                tracing::warn!("originals: translations: {err}");
                 self.set_progress(Progress::Idle);
                 return;
             }
@@ -304,7 +304,7 @@ impl Originals {
                 bible_id: bible.id.clone(),
             });
             if let Err(err) = align::run(&self.db, &store, &bible.id) {
-                log::warn!("originals: aligning {}: {err}", bible.id);
+                tracing::warn!("originals: aligning {}: {err}", bible.id);
             }
         }
         self.set_progress(Progress::Idle);

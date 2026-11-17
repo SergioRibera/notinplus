@@ -83,14 +83,14 @@ pub fn install() -> Result<Option<DocumentsPublisher>, Box<dyn std::error::Error
 
     match istmo_share::DesktopShare::with_global_registry() {
         Ok(share) => runtime.register_host(istmo_share::ShareHost::new(share)),
-        Err(err) => log::warn!("share backend unavailable: {err}"),
+        Err(err) => tracing::warn!("share backend unavailable: {err}"),
     }
 
     // One sample before the settings load, so the interface language
     // can follow the desktop locale on the first frame.
     match istmo_plugins::system_info::SystemInfoPublisher::install(&runtime) {
         Ok(mut system_info) => system_info.tick(),
-        Err(err) => log::warn!("system info unavailable: {err}"),
+        Err(err) => tracing::warn!("system info unavailable: {err}"),
     }
 
     log_storage_paths();
@@ -120,9 +120,9 @@ fn log_storage_paths() {
         .join("data_store")
         .join(format!("{}.bin", crate::library::index::NAMESPACE));
 
-    log::info!("istmo data_dir       : {}", data_root.display());
-    log::info!("library docs / pdfs  : {}", library_root.display());
-    log::info!("library index blob   : {}", data_store_file.display());
+    tracing::info!("istmo data_dir       : {}", data_root.display());
+    tracing::info!("library docs / pdfs  : {}", library_root.display());
+    tracing::info!("library index blob   : {}", data_store_file.display());
     println!("[notinplus] data_dir       : {}", data_root.display());
     println!("[notinplus] library bodies : {}", library_root.display());
     println!("[notinplus] index blob     : {}", data_store_file.display());

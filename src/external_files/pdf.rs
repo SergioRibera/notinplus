@@ -57,7 +57,7 @@ impl Component for PdfBody {
                 opened.set(match rx.recv_async().await {
                     Ok(Ok(doc)) => Opened::Ready(doc),
                     Ok(Err(err)) => {
-                        log::error!("open pdf: {err}");
+                        tracing::error!("open pdf: {err}");
                         Opened::Failed
                     }
                     Err(_) => Opened::Failed,

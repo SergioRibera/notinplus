@@ -412,7 +412,7 @@ impl Install<'_> {
             .replace("{bible_id}", self.bible_id)
             .replace("{book}", book_id);
         if let Err(e) = fetch_if_stale(self.client, &url, &book_path, self.cache_ttl) {
-            log::warn!("biblionlabs: skipping {book_id}: {e}");
+            tracing::warn!("biblionlabs: skipping {book_id}: {e}");
             return Ok(None);
         }
         let book_bytes = std::fs::read(&book_path)?;
@@ -422,7 +422,7 @@ impl Install<'_> {
             match serde_json::from_slice(&book_bytes) {
                 Ok(d) => d,
                 Err(e) => {
-                    log::warn!("biblionlabs: {book_id} parse failed: {e}");
+                    tracing::warn!("biblionlabs: {book_id} parse failed: {e}");
                     return Ok(None);
                 }
             }
@@ -470,7 +470,7 @@ impl CrossRefs<'_> {
                 .replace("{level}", self.level.as_str())
                 .replace("{book}", book_id);
             if let Err(e) = fetch_if_stale(self.client, &xref_url, &xref_path, self.cache_ttl) {
-                log::debug!("biblionlabs: no cross-refs for {book_id}: {e}");
+                tracing::debug!("biblionlabs: no cross-refs for {book_id}: {e}");
                 continue;
             }
             let value: serde_json::Value = match std::fs::read(&xref_path)
@@ -479,7 +479,7 @@ impl CrossRefs<'_> {
             {
                 Ok(v) => v,
                 Err(e) => {
-                    log::debug!("biblionlabs: read {book_id} xrefs: {e}");
+                    tracing::debug!("biblionlabs: read {book_id} xrefs: {e}");
                     continue;
                 }
             };
@@ -495,7 +495,7 @@ impl CrossRefs<'_> {
                 tx.commit().map_err(crate::db::DbError::from)?;
                 Ok(())
             }) {
-                log::debug!("biblionlabs: insert {book_id} xrefs: {e}");
+                tracing::debug!("biblionlabs: insert {book_id} xrefs: {e}");
             }
         }
         Ok(())

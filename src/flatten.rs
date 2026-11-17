@@ -126,13 +126,13 @@ pub fn paint(canvas: &Canvas, doc: &Doc, item: ItemId, paper: [u8; 4]) {
 fn text_fonts() -> FontCollection {
     let mut provider = TypefaceFontProvider::new();
     let loader = FontMgr::custom_empty().unwrap_or_default();
-    let mut add =
-        |family: &str, bytes: &[u8]| match loader.new_from_data(SkData::new_copy(bytes), None) {
-            Some(typeface) => {
-                provider.register_typeface(typeface, Some(family));
-            }
-            None => log::warn!("flatten: font {family} does not load"),
-        };
+    let mut add = |family: &str, bytes: &[u8]| {
+        if let Some(typeface) = loader.new_from_data(SkData::new_copy(bytes), None) {
+            provider.register_typeface(typeface, Some(family));
+        } else {
+            tracing::warn!("flatten: font {family} does not load");
+        }
+    };
     add(FONT_FAMILY, FONT_BYTES);
     let plugin_fonts = crate::plugins::catalog().fonts();
     for font in plugin_fonts {
@@ -209,10 +209,10 @@ fn on_dark([r, g, b, a]: [u8; 4]) -> bool {
 #[sismo::function("flatten::load_image")]
 fn load_image(item: ItemId, image: &ImageBox) -> Option<SkImage> {
     let bytes = bodies::read_asset(item, &image.asset)
-        .inspect_err(|err| log::warn!("flatten: image {}: {err}", image.asset))
+        .inspect_err(|err| tracing::warn!("flatten: image {}: {err}", image.asset))
         .ok()?;
     if !crate::editor::images::decodable(&bytes) {
-        log::warn!("flatten: image {} is too big to draw", image.asset);
+        tracing::warn!("flatten: image {} is too big to draw", image.asset);
         return None;
     }
     SkImage::from_encoded(SkData::new_copy(&bytes))

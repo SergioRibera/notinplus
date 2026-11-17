@@ -50,8 +50,8 @@ pdfium-render = { version = "0.9", default-features = false, features = [
     "image_latest",
     "thread_safe",
 ] }
-log             = "0.4"
 image           = { version = "0.25", default-features = false }
+tracing = "0.1"
 
 [lints.rust]
 missing_debug_implementations = "warn"

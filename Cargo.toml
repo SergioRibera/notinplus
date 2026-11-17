@@ -60,7 +60,6 @@ freya-pdf = { version = "0.1.0-alpha.4", path = "crates/freya-pdf", features = [
 wincode = { version = "0.6", default-features = false, features = ["derive", "std"] }
 flume = { version = "0.11", features = ["async"] }
 pollster = "0.4"
-log = "0.4"
 async-io = "2"
 async-lock = "3"
 uuid = { version = "1", features = ["v4"] }
@@ -90,13 +89,15 @@ sha2 = "0.10"
 semver = "1"
 istmo-installer = { version = "0.1.0-alpha.4", path = "crates/istmo-installer" }
 # Remote diagnostics, streamed to the sismo viewer on the LAN.
-sismo = { version = "0.1.1", default-features = false, features = ["log", "net"] }
+sismo = { version = "0.1.1", default-features = false, features = ["tracing", "net"] }
 sismo-freya = "0.1.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
-android_logger = "0.14"
 freya-clipboard = "=0.5.0-rc.13"
 jni = { version = "0.21", default-features = false }
+paranoid-android = "0.2"
 # Freya-winit doesn't pin an Android activity backend on winit, so we
 # opt in additively. Cargo feature unification propagates the feature
 # to freya-winit's own winit dep — both crates end up compiled against
@@ -108,7 +109,6 @@ winit = { version = "0.30", features = ["android-game-activity"] }
 [target.'cfg(any(target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))'.dependencies]
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos")))'.dependencies]
-env_logger = "0.11"
 # Samples the desktop locale for the interface language.
 istmo-plugins = "0.1.1-alpha.6"
 istmo-window = "0.1.1-alpha.6"
@@ -116,6 +116,7 @@ istmo-camera = { version = "0.1.1-alpha.6", features = ["desktop"] }
 
 [dev-dependencies]
 freya-testing = "=0.5.0-rc.13"
+log = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
 
 [build-dependencies]

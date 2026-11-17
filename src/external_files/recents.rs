@@ -98,7 +98,7 @@ impl Recents {
             return;
         }
         if let Err(err) = recents.save() {
-            log::warn!("external recents: {err}");
+            tracing::warn!("external recents: {err}");
         }
         notify();
     }
@@ -180,7 +180,7 @@ pub fn reopen(recent: &Recent) {
                 }
             }
             Err(err) => {
-                log::warn!("reopen {}: {err}", recent.path);
+                tracing::warn!("reopen {}: {err}", recent.path);
                 crate::opened_files::failed(&recent.name, &err.user_message());
             }
         }

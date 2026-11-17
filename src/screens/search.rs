@@ -57,7 +57,7 @@ impl Line {
             let mut history = History::load();
             history.push(&remember);
             if let Err(err) = history.save() {
-                log::warn!("search history: {err}");
+                tracing::warn!("search history: {err}");
             }
         };
         match self {

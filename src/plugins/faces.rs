@@ -199,7 +199,7 @@ pub(crate) fn use_jumps(kind: &'static str, item: ItemId, target: impl Apply) {
                         }
                         async_io::Timer::after(MOUNT_POLL).await;
                     }
-                    log::info!("jump: {kind} face never became ready");
+                    tracing::info!("jump: {kind} face never became ready");
                 }
             };
             if let Some(anchor) = first {

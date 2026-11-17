@@ -47,7 +47,7 @@ impl Decorator for LiveQuotes {
         }
         for (key, value) in transclusion.attrs {
             if !KNOWN_SETTINGS.contains(&key.as_str()) {
-                log::debug!("live quote: unknown setting {key}={value}, kept as is");
+                tracing::debug!("live quote: unknown setting {key}={value}, kept as is");
             }
         }
         let color = transclusion.color();

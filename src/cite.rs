@@ -123,7 +123,7 @@ pub fn copy(target: &SourceRef, form: CiteForm) -> bool {
             true
         }
         Err(err) => {
-            log::warn!("cite: clipboard: {err:?}");
+            tracing::warn!("cite: clipboard: {err:?}");
             Toasts::get().show(Toast::new(tr!("cite-copy-failed")).tone(ToastTone::Error));
             false
         }

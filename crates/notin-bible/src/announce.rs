@@ -136,7 +136,7 @@ fn watch_installs(installer: Installer, db: Db) {
             }
         });
     if let Err(err) = spawned {
-        log::error!("bible: install announcer: {err}");
+        tracing::error!("bible: install announcer: {err}");
     }
 }
 
@@ -211,7 +211,7 @@ fn watch_originals(originals: Arc<Originals>, db: Db) {
             }
         });
     if let Err(err) = spawned {
-        log::error!("bible: originals announcer: {err}");
+        tracing::error!("bible: originals announcer: {err}");
     }
 }
 

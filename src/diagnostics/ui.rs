@@ -15,7 +15,7 @@ fn remember(remote: bool) {
         ..DiagnosticsSettings::load()
     };
     if let Err(err) = settings.save() {
-        log::error!("diagnostics settings save: {err}");
+        tracing::error!("diagnostics settings save: {err}");
     }
 }
 

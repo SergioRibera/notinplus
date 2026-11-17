@@ -118,7 +118,7 @@ fn lang_of(locale: Option<&istmo::plugins::Locale>) -> Lang {
 fn device_lang() -> Lang {
     let locale = istmo::plugins::SystemInfoClient::acquire()
         .and_then(|info| info.current_locale())
-        .map_err(|err| log::warn!("system locale: {err}"))
+        .map_err(|err| tracing::warn!("system locale: {err}"))
         .ok()
         .flatten();
     lang_of(locale.as_ref())
@@ -545,7 +545,7 @@ impl SettingsStore {
         settings.publish(*self.device.peek());
         self.theme.set(settings.appearance.into());
         if let Err(err) = settings.save() {
-            log::error!("settings save: {err}");
+            tracing::error!("settings save: {err}");
         }
     }
 }
@@ -576,7 +576,7 @@ pub fn use_settings_root() -> SettingsStore {
                     }
                 }));
             }
-            Err(err) => log::warn!("system locale updates: {err}"),
+            Err(err) => tracing::warn!("system locale updates: {err}"),
         }
         let store = SettingsStore {
             state,

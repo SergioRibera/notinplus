@@ -219,13 +219,13 @@ pub fn spawn_fetch_footnotes(
             let client = match http_client() {
                 Ok(c) => c,
                 Err(e) => {
-                    log::debug!("footnotes: client build: {e}");
+                    tracing::debug!("footnotes: client build: {e}");
                     return;
                 }
             };
             let cache_dir = plugin_config::platform_cache_dir();
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                log::debug!("footnotes: mkdir: {e}");
+                tracing::debug!("footnotes: mkdir: {e}");
                 return;
             }
             let helloao = helloao::Helloao {
@@ -236,15 +236,15 @@ pub fn spawn_fetch_footnotes(
             };
             match helloao.footnotes_for_chapter(&bible_id, &book_id, chapter) {
                 Ok(n) => {
-                    log::debug!("footnotes: {book_id} {chapter} → {n} rows");
+                    tracing::debug!("footnotes: {book_id} {chapter} → {n} rows");
                     if n > 0 {
                         landed();
                     }
                 }
-                Err(e) => log::debug!("footnotes: fetch failed for {book_id} {chapter}: {e}"),
+                Err(e) => tracing::debug!("footnotes: fetch failed for {book_id} {chapter}: {e}"),
             }
         })
-        .map_or_else(|e| log::warn!("footnotes thread: {e}"), drop);
+        .map_or_else(|e| tracing::warn!("footnotes thread: {e}"), drop);
 }
 
 /// Lazy section-heading fetch.
@@ -272,13 +272,13 @@ pub fn spawn_fetch_headings(db: Db, bible_id: String, book_id: String, chapter: 
             let client = match http_client() {
                 Ok(c) => c,
                 Err(e) => {
-                    log::debug!("headings: client build: {e}");
+                    tracing::debug!("headings: client build: {e}");
                     return;
                 }
             };
             let cache_dir = plugin_config::platform_cache_dir();
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                log::debug!("headings: mkdir: {e}");
+                tracing::debug!("headings: mkdir: {e}");
                 return;
             }
             let helloao = helloao::Helloao {
@@ -288,11 +288,11 @@ pub fn spawn_fetch_headings(db: Db, bible_id: String, book_id: String, chapter: 
                 cache_ttl: CACHE_TTL,
             };
             match helloao.headings_for_chapter(&bible_id, source, &book_id, chapter) {
-                Ok(n) => log::debug!("headings: {book_id} {chapter} → {n} rows (via {source})"),
-                Err(e) => log::debug!("headings: fetch failed for {book_id} {chapter}: {e}"),
+                Ok(n) => tracing::debug!("headings: {book_id} {chapter} → {n} rows (via {source})"),
+                Err(e) => tracing::debug!("headings: fetch failed for {book_id} {chapter}: {e}"),
             }
         })
-        .map_or_else(|e| log::warn!("headings thread: {e}"), drop);
+        .map_or_else(|e| tracing::warn!("headings thread: {e}"), drop);
 }
 
 /// Raw biblionlabs layout: `bibles/<id>/manifest.json` holds the book
@@ -318,7 +318,7 @@ pub(crate) fn run(
     config: &SharedConfig,
     progress: &SharedInstallProgress,
 ) {
-    log::info!("bible install thread: starting for {bible_id}");
+    tracing::info!("bible install thread: starting for {bible_id}");
     edit(progress, |p| {
         *p = InstallProgress {
             bible_id: bible_id.to_owned(),
@@ -368,7 +368,7 @@ pub(crate) fn run(
             // The shared cross-reference set, when this is the first
             // translation or the level changed since.
             if let Err(e) = ensure_cross_refs(db, &client, &cache_dir, config, &on_progress) {
-                log::warn!("bible install: cross-refs: {e}");
+                tracing::warn!("bible install: cross-refs: {e}");
             }
             // The translation shows only after its headings, so the first
             // passage opened already has them.
@@ -387,7 +387,7 @@ pub(crate) fn run(
                 p.stage = InstallStage::Finished;
                 p.error = None;
             });
-            log::info!("bible install: {bible_id} done, {verses} verses");
+            tracing::info!("bible install: {bible_id} done, {verses} verses");
         }
         Err(e) => fail(progress, e),
     }
@@ -424,7 +424,7 @@ fn ensure_cross_refs(
     }
     .run(&books, &mut on_progress)?;
     db.set_meta(META_CROSSREF_LEVEL, level.as_str())?;
-    log::info!("bible cross-refs: set at {}", level.as_str());
+    tracing::info!("bible cross-refs: set at {}", level.as_str());
     Ok(())
 }
 
@@ -437,7 +437,7 @@ pub fn spawn_refresh_cross_refs(db: Db, config: &SharedConfig) {
         Ok(bibles) if bibles.is_empty() => return,
         Ok(_) => {}
         Err(e) => {
-            log::warn!("bible cross-refs: installed translations: {e}");
+            tracing::warn!("bible cross-refs: installed translations: {e}");
             return;
         }
     }
@@ -447,7 +447,7 @@ pub fn spawn_refresh_cross_refs(db: Db, config: &SharedConfig) {
         .spawn(move || {
             let client = match http_client() {
                 Ok(c) => c,
-                Err(e) => return log::warn!("bible cross-refs: http client: {e}"),
+                Err(e) => return tracing::warn!("bible cross-refs: http client: {e}"),
             };
             let cache_dir = plugin_config::platform_cache_dir();
             let level = plugin_config::effective_crossref_level(&config);
@@ -459,13 +459,13 @@ pub fn spawn_refresh_cross_refs(db: Db, config: &SharedConfig) {
             match ensure_cross_refs(&db, &client, &cache_dir, &config, report) {
                 Ok(()) => announce::cross_refs(announce::CrossRefsJob::Done),
                 Err(e) => {
-                    log::warn!("bible cross-refs: {e}");
+                    tracing::warn!("bible cross-refs: {e}");
                     announce::cross_refs(announce::CrossRefsJob::Failed(InstallFailure::from(e)));
                 }
             }
         });
     if let Err(e) = spawned {
-        log::warn!("bible cross-refs thread: {e}");
+        tracing::warn!("bible cross-refs thread: {e}");
     }
 }
 
@@ -495,7 +495,7 @@ fn catalogue_meta(
             })
             .unwrap_or_default(),
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
                 "bible install: catalogue lookup failed, the name falls back to the id: {e}"
             );
             biblionlabs::BibleMeta::default()
@@ -517,7 +517,7 @@ fn prefetch_all_headings(
     progress: &SharedInstallProgress,
 ) {
     let Some(source) = helloao::helloao_headings_id_for_bible(bible_id) else {
-        log::debug!("headings prefetch: no sibling id for {bible_id}; skipping");
+        tracing::debug!("headings prefetch: no sibling id for {bible_id}; skipping");
         return;
     };
     edit(progress, |p| {
@@ -536,13 +536,13 @@ fn prefetch_all_headings(
         });
     });
     match result {
-        Ok(n) => log::info!("headings prefetch: {bible_id} inserted {n} rows via {source}"),
-        Err(e) => log::warn!("headings prefetch: {bible_id} failed: {e}"),
+        Ok(n) => tracing::info!("headings prefetch: {bible_id} inserted {n} rows via {source}"),
+        Err(e) => tracing::warn!("headings prefetch: {bible_id} failed: {e}"),
     }
 }
 
 fn fail(progress: &SharedInstallProgress, err: biblionlabs::ImportError) {
-    log::error!("bible: install failed: {err}");
+    tracing::error!("bible: install failed: {err}");
     let failure = InstallFailure::from(err);
     edit(progress, |p| {
         p.stage = InstallStage::Failed;

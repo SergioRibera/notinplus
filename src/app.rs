@@ -121,7 +121,7 @@ fn spawn_prefs_worker(board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
                 }
             };
             if let Err(err) = prefs::save_prefs(&snapshot) {
-                log::error!("save_prefs: {err}");
+                tracing::error!("save_prefs: {err}");
             }
         }
     }));
@@ -140,7 +140,7 @@ pub fn run() {
         // handle that `#[istmo::mobile_app]` stashed, and pass the loop
         // in via `with_event_loop`.
         let Some(app) = istmo::android::android_app() else {
-            log::error!("no AndroidApp: #[istmo::mobile_app] must run before app::run");
+            tracing::error!("no AndroidApp: #[istmo::mobile_app] must run before app::run");
             return;
         };
         let event_loop = match EventLoop::<NativeEvent>::with_user_event()
@@ -149,7 +149,7 @@ pub fn run() {
         {
             Ok(event_loop) => event_loop,
             Err(err) => {
-                log::error!("android event loop: {err}");
+                tracing::error!("android event loop: {err}");
                 return;
             }
         };
@@ -181,13 +181,13 @@ pub fn run() {
             if let Some(publisher) = crate::desktop::PEN_PUBLISHER.get()
                 && let Err(err) = publisher.register_window(crate::WINDOW_ID, &*window)
             {
-                log::warn!("pen register_window failed: {err}");
+                tracing::warn!("pen register_window failed: {err}");
             }
             // The share sheet anchors on the window on macOS / Windows.
             if let Err(err) = istmo_window::WindowRegistry::global()
                 .register(istmo_window::WindowId(crate::WINDOW_ID), &*window)
             {
-                log::warn!("share window registration failed: {err}");
+                tracing::warn!("share window registration failed: {err}");
             }
         }));
         launch(cfg);

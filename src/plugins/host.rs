@@ -80,7 +80,7 @@ impl ShellHost {
     #[sismo::function("plugins::host_send")]
     fn send(&self, event: HostEvent) {
         if self.events.send(event).is_err() {
-            log::warn!("host event dropped: pump gone");
+            tracing::warn!("host event dropped: pump gone");
         }
     }
 

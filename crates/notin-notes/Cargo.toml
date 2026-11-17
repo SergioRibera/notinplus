@@ -32,11 +32,11 @@ notin-sdk = { version = "0.1.0-alpha.4", path = "../notin-sdk" }
 freya-markdown-editor = { version = "0.1.0-alpha.4", path = "../freya-markdown-editor", default-features = false, features = ["toolbar"] }
 notin-ui-kit = { version = "0.1.0-alpha.4", path = "../notin-ui-kit" }
 async-io = "2"
-log = "0.4"
 freya = { version = "=0.5.0-rc.13", features = ["icons", "icons-lucide"] }
 # Standalone icons crate: `creation_entries` needs SVG bytes.
 freya-icons = { version = "=0.4.0", features = ["lucide"] }
 wincode = { version = "0.6", default-features = false, features = ["derive", "std"] }
+tracing = "0.1"
 
 [dev-dependencies]
 freya-testing = "=0.5.0-rc.13"

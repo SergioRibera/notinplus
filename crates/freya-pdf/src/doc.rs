@@ -44,7 +44,7 @@ fn load_pdfium() -> Result<Pdfium, String> {
         match Pdfium::bind_to_library(&path) {
             Ok(b) => return Ok(Pdfium::new(b)),
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "PDFIUM_LIB_PATH set to {:?} but binding failed: {e}; falling back to system loader",
                     path.display()
                 );

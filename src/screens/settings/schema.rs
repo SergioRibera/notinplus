@@ -382,7 +382,7 @@ impl FieldRow {
                             }
                         }
                         Ok(None) => {}
-                        Err(err) => log::warn!("plugin file: {err}"),
+                        Err(err) => tracing::warn!("plugin file: {err}"),
                     }
                 }));
             }))

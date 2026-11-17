@@ -55,12 +55,13 @@ impl AppLink {
     #[sismo::function("deep_link::run_action")]
     fn run(self) {
         match self {
-            Self::Create(key) => match crate::flows::create::entry_for(&key) {
-                Some(entry) => {
+            Self::Create(key) => {
+                if let Some(entry) = crate::flows::create::entry_for(&key) {
                     crate::flows::create::run(entry, crate::flows::create::Context::default());
+                } else {
+                    tracing::warn!("deep link: no creation entry {}/{}", key.plugin, key.entry);
                 }
-                None => log::warn!("deep link: no creation entry {}/{}", key.plugin, key.entry),
-            },
+            }
             Self::Open(item) => crate::flows::open(item),
         }
     }
@@ -69,7 +70,7 @@ impl AppLink {
 /// Route a URL the operating system handed to the app.
 #[sismo::function("deep_link::open")]
 pub fn open(url: &str) {
-    log::info!("deep link: {url}");
+    tracing::info!("deep link: {url}");
     if crate::sync::recognize_link(url).is_some() {
         crate::screens::collab::invitation(url.to_owned());
         return;
@@ -78,11 +79,10 @@ pub fn open(url: &str) {
         action.run();
         return;
     }
-    match SourceRef::from_url(url) {
-        Some(src) => {
-            crate::plugins::navigate::open(&src, notin_plugin::services::Placement::Preferred);
-        }
-        None => log::warn!("deep link ignored: {url}"),
+    if let Some(src) = SourceRef::from_url(url) {
+        crate::plugins::navigate::open(&src, notin_plugin::services::Placement::Preferred);
+    } else {
+        tracing::warn!("deep link ignored: {url}");
     }
 }
 
@@ -93,7 +93,7 @@ pub fn listen() {
     let stream = match istmo::plugins::DeepLinks::acquire() {
         Ok(plugin) => plugin.stream(),
         Err(err) => {
-            log::warn!("deep links unavailable: {err}");
+            tracing::warn!("deep links unavailable: {err}");
             return;
         }
     };
@@ -102,7 +102,7 @@ pub fn listen() {
             match stream.recv_async().await {
                 Ok(link) => open(&link.uri),
                 Err(istmo::IstmoError::ChannelClosed) => break,
-                Err(err) => log::warn!("deep link: {err}"),
+                Err(err) => tracing::warn!("deep link: {err}"),
             }
         }
     }));
@@ -174,7 +174,7 @@ fn publish_launcher_shortcuts(targets: Vec<istmo_share::ShareTarget>) {
             Err(err) => Err(istmo_share::ShareError::from(err)),
         };
         if let Err(err) = result {
-            log::warn!("launcher shortcuts: {err}");
+            tracing::warn!("launcher shortcuts: {err}");
         }
     }));
 }

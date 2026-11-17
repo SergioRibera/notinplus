@@ -166,7 +166,7 @@ impl Lowering<'_> {
                     attrs.retain(|(k, _)| k != key);
                     attrs.push((key.to_owned(), value.to_owned()));
                 }
-                _ => log::warn!("transclusion [!{kind}]: ignoring marker word {word:?}"),
+                _ => tracing::warn!("transclusion [!{kind}]: ignoring marker word {word:?}"),
             }
         }
         let (url, label) = source_link(last)?;

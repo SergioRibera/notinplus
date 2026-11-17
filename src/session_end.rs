@@ -74,13 +74,13 @@ fn store(ends: &[SessionEnd]) {
         match notin_plugin::encode(ends) {
             Ok(bytes) => std::fs::write(&path, bytes),
             Err(err) => {
-                log::warn!("session end: encode: {err}");
+                tracing::warn!("session end: encode: {err}");
                 return;
             }
         }
     };
     if let Err(err) = written {
-        log::warn!("session end: save {}: {err}", path.display());
+        tracing::warn!("session end: save {}: {err}", path.display());
     }
 }
 
@@ -150,17 +150,17 @@ pub fn resolve(end: SessionEnd) {
     });
     freya::prelude::spawn_in_window(async move {
         let Ok(handle) = crate::library::shared().await else {
-            log::warn!("session end: library unavailable");
+            tracing::warn!("session end: library unavailable");
             return;
         };
         {
             let mut lib = handle.lock().await;
             if let Err(err) = lib.close_item_tabs(&end.docs).await {
-                log::warn!("session end: close tabs: {err}");
+                tracing::warn!("session end: close tabs: {err}");
             }
             for item in &end.docs {
                 if let Err(err) = lib.forget_item(*item).await {
-                    log::warn!("session end: drop {item}: {err}");
+                    tracing::warn!("session end: drop {item}: {err}");
                 }
             }
         }

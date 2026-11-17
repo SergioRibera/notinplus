@@ -83,7 +83,7 @@ impl TextBody {
                 save.set(match result {
                     Ok(()) => SaveState::Saved,
                     Err(err) => {
-                        log::error!("save {}: {err}", autosave.path.display());
+                        tracing::error!("save {}: {err}", autosave.path.display());
                         SaveState::Failed
                     }
                 });

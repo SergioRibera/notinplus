@@ -127,7 +127,7 @@ pub fn bury(kind: Buried, id: [u8; 16], at: u64) {
     let mut yard = Graveyard::load();
     yard.bury(kind, id, at);
     if let Err(err) = yard.save() {
-        log::error!("graveyard save: {err}");
+        tracing::error!("graveyard save: {err}");
     }
 }
 

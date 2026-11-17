@@ -204,7 +204,7 @@ fn run(
             Ok(Some(saved)) => super::transfer::done_sheet(saved, bytes, mime),
             Ok(None) => {}
             Err(err) => {
-                log::error!("export as: {err}");
+                tracing::error!("export as: {err}");
                 let text = tr!("errors-headline-detail", "headline" => tr!("export-failed"), "detail" => err.user_message());
                 Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
             }

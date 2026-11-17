@@ -124,7 +124,7 @@ fn changed(item: ItemId) {
 #[sismo::function("plugins::content_write")]
 pub fn write(item: ItemId, kind: &str, bytes: &[u8]) {
     if let Err(err) = bodies::write_plugin_snapshot(item, kind, bytes) {
-        log::error!("content write {item}: {err}");
+        tracing::error!("content write {item}: {err}");
         return;
     }
     changed(item);
@@ -211,7 +211,7 @@ fn store_unsaved(item: ItemId, kind: &str) {
     }
     drop(waiting);
     if let Err(err) = written {
-        log::error!("content save {item}: {err}");
+        tracing::error!("content save {item}: {err}");
         return;
     }
     changed(item);
@@ -264,7 +264,7 @@ pub fn reindex(item: ItemId) {
                     }
                 }
             })
-            .map_err(|err| log::error!("reindex thread: {err}"))
+            .map_err(|err| tracing::error!("reindex thread: {err}"))
             .ok()
             .map(|_| tx)
     });
@@ -303,7 +303,7 @@ pub fn index_library() {
                 index(item);
             }
         })
-        .map_or_else(|err| log::error!("index thread: {err}"), drop);
+        .map_or_else(|err| tracing::error!("index thread: {err}"), drop);
 }
 
 /// Drop `item` from its kind's index (it left the library).

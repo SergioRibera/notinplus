@@ -241,7 +241,7 @@ impl Autosave {
         if let Some(text) = self.take()
             && let Err(err) = std::fs::write(&self.path, text)
         {
-            log::error!("save {}: {err}", self.path.display());
+            tracing::error!("save {}: {err}", self.path.display());
         }
     }
 }

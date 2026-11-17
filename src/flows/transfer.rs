@@ -493,7 +493,7 @@ fn run_export(scope: ExportScope, choices: Choices) {
         let bytes = match result {
             Ok(bytes) => bytes,
             Err(err) => {
-                log::error!("export: {err}");
+                tracing::error!("export: {err}");
                 let text = tr!("errors-headline-detail", "headline" => tr!("flows-transfer-export-failed"), "detail" => err.user_message());
                 Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
                 return;
@@ -530,7 +530,7 @@ fn save_copy(
                 no_space(bytes.len(), scope, choices);
             }
             Err(err) => {
-                log::error!("save copy: {err}");
+                tracing::error!("save copy: {err}");
                 let text = tr!("errors-headline-detail", "headline" => tr!("flows-transfer-save-failed"), "detail" => err.user_message());
                 Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
             }
@@ -657,7 +657,7 @@ pub fn import() {
             Ok(Some(picked)) => picked,
             Ok(None) => return,
             Err(err) => {
-                log::error!("pick bundle: {err}");
+                tracing::error!("pick bundle: {err}");
                 return;
             }
         };
@@ -695,7 +695,7 @@ pub async fn review_bundle(picked: crate::files::Picked) {
                 newer_version();
             }
             Ok(Err(err)) => {
-                log::error!("bundle {name}: {err}");
+                tracing::error!("bundle {name}: {err}");
                 damaged(&name);
             }
             Err(_) => damaged(&name),
@@ -967,7 +967,7 @@ fn commit(pending: Pending, mut plan: ImportPlan) {
         {
             Ok(folder) => folder,
             Err(err) => {
-                log::error!("import folder: {err}");
+                tracing::error!("import folder: {err}");
                 let text = tr!("errors-headline-detail", "headline" => tr!("flows-transfer-import-failed"), "detail" => err.user_message());
                 Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
                 return;
@@ -994,7 +994,7 @@ fn commit(pending: Pending, mut plan: ImportPlan) {
                 );
             }
             Err(err) => {
-                log::error!("import: {err}");
+                tracing::error!("import: {err}");
                 let text = tr!("errors-headline-detail", "headline" => tr!("flows-transfer-import-failed"), "detail" => err.user_message());
                 Toasts::get().show(Toast::new(text).tone(ToastTone::Error));
             }
