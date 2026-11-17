@@ -371,11 +371,12 @@ fn use_follow_typing(
     let content_top = use_hook(|| Rc::new(Cell::new(0.0_f32)));
     {
         let content_top = content_top.clone();
-        // Revision, viewport height and focus at the last run: following only
-        // on their changes leaves the scroll to the user in between.
+        // Revision of what was typed here, viewport height and focus at the
+        // last run: following only on their changes leaves the scroll to the
+        // user in between, also while text from others lands.
         let seen = use_hook(|| Rc::new(Cell::new((0_u64, 0.0_f32, false))));
         use_side_effect(move || {
-            let revision = controller.revision();
+            let revision = controller.local_revision();
             let focused = controller.has_focus();
             let viewport = *viewport.read();
             let height = viewport.map_or(0.0, |area| area.height());
