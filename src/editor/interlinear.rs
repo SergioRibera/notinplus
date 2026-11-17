@@ -55,39 +55,39 @@ impl Component for InterlinearView {
             }
             .into_element_with_size(index, widths, width)
         };
-        let body = match measured {
-            Some(sizes) => {
-                let lines = pack(&sizes, room_now, gap);
-                rect()
-                    .width(Size::fill())
-                    .spacing(line_gap)
-                    .children(lines.into_iter().map(|line| {
-                        let order: Vec<usize> = if rtl {
-                            line.into_iter().rev().collect()
+        let packed = |sizes: Vec<f32>| {
+            let lines = pack(&sizes, room_now, gap);
+            rect()
+                .width(Size::fill())
+                .spacing(line_gap)
+                .children(lines.into_iter().map(|line| {
+                    let order: Vec<usize> = if rtl {
+                        line.into_iter().rev().collect()
+                    } else {
+                        line
+                    };
+                    rect()
+                        .width(Size::fill())
+                        .horizontal()
+                        .main_align(if rtl {
+                            Alignment::End
                         } else {
-                            line
-                        };
-                        rect()
-                            .width(Size::fill())
-                            .horizontal()
-                            .main_align(if rtl {
-                                Alignment::End
-                            } else {
-                                Alignment::Start
-                            })
-                            .spacing(gap)
-                            .children(
-                                order
-                                    .into_iter()
-                                    .map(|i| column(i, &words[i], Some(sizes[i].min(room_now)))),
-                            )
-                            .into_element()
-                    }))
-                    .into_element()
-            }
-            // First frame: every column at its own width in one row, to
-            // measure them; the next frame lays the lines out.
-            None => rect()
+                            Alignment::Start
+                        })
+                        .spacing(gap)
+                        .children(
+                            order
+                                .into_iter()
+                                .map(|i| column(i, &words[i], Some(sizes[i].min(room_now)))),
+                        )
+                        .into_element()
+                }))
+                .into_element()
+        };
+        // First frame: every column at its own width in one row, to measure
+        // them; the next frame lays the lines out.
+        let measuring = || {
+            rect()
                 .width(Size::fill())
                 .overflow(Overflow::Clip)
                 .child(
@@ -103,8 +103,9 @@ impl Component for InterlinearView {
                                 .map(|(i, word)| column(i, word, None)),
                         ),
                 )
-                .into_element(),
+                .into_element()
         };
+        let body = measured.map_or_else(measuring, packed);
         rect()
             .width(Size::fill())
             .on_sized(move |event: Event<SizedEventData>| {
