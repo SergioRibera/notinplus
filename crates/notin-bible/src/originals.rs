@@ -11,6 +11,7 @@
 //! downloads the packs and aligns the translations in the background.
 
 pub mod align;
+pub mod describe;
 #[cfg(feature = "importer")]
 pub mod download;
 pub mod morph;

@@ -21,7 +21,8 @@ use notin_ui_kit::{
 
 use super::Reader;
 use crate::db::LinkRow;
-use crate::originals::{self, LemmaRef, Progress, Store, WordView, align, morph, respell};
+use crate::originals::describe::{self, Also, Meaning};
+use crate::originals::{self, LemmaRef, Progress, Store, WordView, morph};
 use crate::plugin_config;
 
 /// Which tab the verse panel shows.
@@ -135,25 +136,13 @@ impl VerseWords {
             .ok()
             .flatten()
             .unwrap_or_default();
-        let language = match testament {
-            originals::Testament::Old => morph::Language::Hebrew,
-            originals::Testament::New => morph::Language::Greek,
-        };
+        let language = describe::language_of(testament);
         let rows = words
             .into_iter()
-            .map(|word| {
-                let here = links
-                    .iter()
-                    .filter(|l| l.position == word.position)
-                    .map(|l| align::span_text(&verse_text, l))
-                    .filter(|s| !s.is_empty())
-                    .collect::<Vec<_>>()
-                    .join(" … ");
-                Row {
-                    here: (!here.is_empty()).then_some(here),
-                    word,
-                    language,
-                }
+            .map(|word| Row {
+                here: describe::here_span(&links, &verse_text, word.position),
+                word,
+                language,
             })
             .collect();
         Some(Self {
@@ -341,7 +330,7 @@ impl Component for WordRow {
                     .content(Content::Flex)
                     .cross_align(Alignment::End)
                     .spacing(8.0)
-                    .child(original_text(&word.surface, 20.0, p.t1))
+                    .child(original_text(&word.surface, 20.0, p.t1, self.row.language))
                     .child(
                         label()
                             .text(word.translit.replace('.', ""))
@@ -372,29 +361,35 @@ impl WordRow {
         let word = &self.row.word;
         let lemma = self.store.lemma(word.lemma);
         let lang = Lang::current();
-        let hebrew = self.row.language == morph::Language::Hebrew;
         let function_word = morph::is_function_word(&word.morph, self.row.language);
 
         let (base, respelling) = lemma.as_ref().map_or_else(
             || (word.surface.clone(), String::new()),
             |l| {
-                let respelling = if hebrew {
-                    respell::hebrew(lang, &l.translit, &l.pronunciation_strong)
-                } else {
-                    respell::greek(lang, &l.lemma, &l.pronunciation_strong)
-                };
-                (l.lemma.clone(), respelling)
+                (
+                    l.lemma.clone(),
+                    describe::respelling(l, self.row.language, lang),
+                )
             },
         );
         let Meaning {
             here,
             here_english,
             also,
-        } = self.meaning(lemma.as_ref(), lang);
-        let grammar = grammar_line(word, self.row.language);
+        } = describe::meaning(
+            self.reader.kind.originals(),
+            &self.store,
+            &self.words.bible_id,
+            &self.words.bible_name,
+            word,
+            self.row.here.as_deref(),
+            self.row.language,
+            lang,
+        );
+        let grammar = describe::grammar_line(word, self.row.language);
         let derivation = lemma
             .as_ref()
-            .map(|l| derivation_text(&self.store, &l.derivation_en, lang))
+            .map(|l| describe::derivation_text(&self.store, &l.derivation_en, lang))
             .filter(|d| !d.is_empty());
         let count = lemma.as_ref().map_or(0, |l| l.count);
         let testament = match self.row.language {
@@ -431,7 +426,7 @@ impl WordRow {
                             .role(TextRole::Meta)
                             .color(p.t3),
                     )
-                    .child(original_text(&base, 18.0, p.t1))
+                    .child(original_text(&base, 18.0, p.t1, self.row.language))
                     .maybe_child(pronounced.map(|text| {
                         label()
                             .text(text)
@@ -441,7 +436,7 @@ impl WordRow {
                     })),
             )
             .child(labelled(&tr!("originals-here"), here, here_english))
-            .maybe_child((!function_word).then(|| also.render()).flatten())
+            .maybe_child((!function_word).then(|| also_view(&also)).flatten())
             .maybe_child((!grammar.is_empty()).then(|| {
                 label()
                     .width(Size::fill())
@@ -508,165 +503,77 @@ impl WordRow {
     }
 }
 
-/// What the row says the word means.
-struct Meaning {
-    /// How it reads in this verse.
-    here: String,
-    /// `here` fell back to the English gloss.
-    here_english: bool,
-    /// What else it means.
-    also: Also,
-}
-
-/// The word's meaning beyond this verse.
-enum Also {
-    /// How the open translation renders the lemma elsewhere, with how
-    /// many times each.
-    Renderings {
-        bible: String,
-        items: Vec<(String, u32)>,
-    },
-    /// The dictionary senses, with a note when they are English or
-    /// machine translated.
-    Senses {
-        items: Vec<String>,
-        note: Option<String>,
-    },
-}
-
-impl Also {
-    /// The block under «Aquí»; `None` when there is nothing to say.
-    fn render(&self) -> Option<Element> {
-        let p = palette();
-        match self {
-            Self::Renderings { items, .. } if items.is_empty() => None,
-            Self::Senses { items, .. } if items.is_empty() => None,
-            Self::Renderings { bible, items } => Some(
-                rect()
-                    .width(Size::fill())
-                    .spacing(4.0)
-                    .child(
-                        paragraph()
-                            .width(Size::fill())
-                            .font_size(tokens::text::META)
-                            .color(p.t3)
-                            .span(
-                                Span::new(bible.clone())
-                                    .font_weight(FontWeight::BOLD)
-                                    .color(p.t2),
-                            )
-                            .span(Span::new(format!(" {}", tr!("originals-renders")))),
-                    )
-                    .children(items.iter().enumerate().map(|(i, (token, count))| {
-                        rect()
-                            .key(i)
-                            .width(Size::fill())
-                            .horizontal()
-                            .content(Content::Flex)
-                            .cross_align(Alignment::End)
-                            .spacing(8.0)
-                            .child(
-                                label()
-                                    .width(Size::flex(1.0))
-                                    .text(token.clone())
-                                    .font_size(tokens::text::BODY)
-                                    .color(p.t1),
-                            )
-                            .child(
-                                label()
-                                    .text(tr!("originals-times", "count" => *count))
-                                    .font_size(tokens::text::META)
-                                    .color(p.t3),
-                            )
-                            .into_element()
-                    }))
-                    .into_element(),
-            ),
-            Self::Senses { items, note } => Some(
-                rect()
-                    .width(Size::fill())
-                    .spacing(4.0)
-                    .child(
-                        label()
-                            .width(Size::fill())
-                            .text(note.as_ref().map_or_else(
-                                || tr!("originals-senses"),
-                                |note| tr!("originals-senses-noted", "note" => note.clone()),
-                            ))
-                            .font_size(tokens::text::META)
-                            .font_weight(FontWeight::BOLD)
-                            .color(p.t3),
-                    )
-                    .child(
-                        label()
-                            .width(Size::fill())
-                            .text(items.join(", "))
-                            .font_size(tokens::text::BODY)
-                            .color(p.t1),
-                    )
-                    .into_element(),
-            ),
-        }
-    }
-}
-
-impl WordRow {
-    /// Here: the aligned span, else the pack's contextual gloss. Also:
-    /// how this translation renders the lemma elsewhere, else the senses
-    /// in the interface language, else the English ones.
-    fn meaning(&self, lemma: Option<&crate::originals::LemmaView>, lang: Lang) -> Meaning {
-        let word = &self.row.word;
-        // An article or a particle aligns noisily; its own gloss says more.
-        let span = (!morph::is_function_word(&word.morph, self.row.language))
-            .then_some(self.row.here.as_ref())
-            .flatten();
-        let (here, here_english) = match (span, &word.gloss) {
-            (Some(span), _) => (span.clone(), false),
-            (None, Some(gloss)) => (gloss.clone(), false),
-            (None, None) => (word.gloss_en.clone(), lang != Lang::En),
-        };
-        let renderings = self
-            .reader
-            .kind
-            .originals()
-            .renderings(&self.words.bible_id, word.lemma);
-        if !renderings.is_empty() {
-            return Meaning {
-                here,
-                here_english,
-                also: Also::Renderings {
-                    bible: self.words.bible_name.clone(),
-                    items: renderings
-                        .iter()
-                        .map(|r| (r.token.clone(), r.count))
-                        .collect(),
-                },
-            };
-        }
-        let senses = lemma
-            .map(|l| self.store.senses(&l.strong, lang.tag()))
-            .unwrap_or_default();
-        if senses.is_empty() {
-            return Meaning {
-                here,
-                here_english,
-                also: Also::Senses {
-                    items: lemma.map(|l| l.senses_en.clone()).unwrap_or_default(),
-                    note: (lang != Lang::En).then(|| tr!("originals-meaning-english")),
-                },
-            };
-        }
-        let automatic = senses
-            .iter()
-            .all(|s| s.origin == originals_format::Origin::Auto);
-        Meaning {
-            here,
-            here_english,
-            also: Also::Senses {
-                items: senses.into_iter().map(|s| s.text).collect(),
-                note: automatic.then(|| tr!("originals-automatic")),
-            },
-        }
+/// The block under «Aquí»; `None` when there is nothing to say.
+fn also_view(also: &Also) -> Option<Element> {
+    let p = palette();
+    match also {
+        Also::Renderings { items, .. } if items.is_empty() => None,
+        Also::Senses { items, .. } if items.is_empty() => None,
+        Also::Renderings { bible, items } => Some(
+            rect()
+                .width(Size::fill())
+                .spacing(4.0)
+                .child(
+                    paragraph()
+                        .width(Size::fill())
+                        .font_size(tokens::text::META)
+                        .color(p.t3)
+                        .span(
+                            Span::new(bible.clone())
+                                .font_weight(FontWeight::BOLD)
+                                .color(p.t2),
+                        )
+                        .span(Span::new(format!(" {}", tr!("originals-renders")))),
+                )
+                .children(items.iter().enumerate().map(|(i, (token, count))| {
+                    rect()
+                        .key(i)
+                        .width(Size::fill())
+                        .horizontal()
+                        .content(Content::Flex)
+                        .cross_align(Alignment::End)
+                        .spacing(8.0)
+                        .child(
+                            label()
+                                .width(Size::flex(1.0))
+                                .text(token.clone())
+                                .font_size(tokens::text::BODY)
+                                .color(p.t1),
+                        )
+                        .child(
+                            label()
+                                .text(tr!("originals-times", "count" => *count))
+                                .font_size(tokens::text::META)
+                                .color(p.t3),
+                        )
+                        .into_element()
+                }))
+                .into_element(),
+        ),
+        Also::Senses { items, note } => Some(
+            rect()
+                .width(Size::fill())
+                .spacing(4.0)
+                .child(
+                    label()
+                        .width(Size::fill())
+                        .text(note.as_ref().map_or_else(
+                            || tr!("originals-senses"),
+                            |note| tr!("originals-senses-noted", "note" => note.clone()),
+                        ))
+                        .font_size(tokens::text::META)
+                        .font_weight(FontWeight::BOLD)
+                        .color(p.t3),
+                )
+                .child(
+                    label()
+                        .width(Size::fill())
+                        .text(items.join(", "))
+                        .font_size(tokens::text::BODY)
+                        .color(p.t1),
+                )
+                .into_element(),
+        ),
     }
 }
 
@@ -698,84 +605,6 @@ fn origin_block(derivation: String, lang: Lang) -> impl IntoElement {
         )
 }
 
-/// The dictionary's derivation ("plural of H433;") with every Strong
-/// number replaced by the word it names and its pronunciation, so the
-/// line reads without the numbering.
-fn derivation_text(store: &Store, derivation: &str, lang: Lang) -> String {
-    let mut out = String::with_capacity(derivation.len());
-    let mut rest = derivation.trim().trim_end_matches(';').trim_end();
-    while let Some((before, number, after)) = next_strong_number(rest) {
-        out.push_str(before);
-        match store.lemma_by_strong(number) {
-            Some(lemma) => {
-                let respelling = if number.starts_with('H') {
-                    respell::hebrew(lang, &lemma.translit, &lemma.pronunciation_strong)
-                } else {
-                    respell::greek(lang, &lemma.lemma, &lemma.pronunciation_strong)
-                };
-                out.push_str(&lemma.lemma);
-                out.push_str(" (");
-                out.push_str(if respelling.is_empty() {
-                    &lemma.translit
-                } else {
-                    &respelling
-                });
-                out.push(')');
-            }
-            None => out.push_str(number),
-        }
-        rest = after;
-    }
-    out.push_str(rest);
-    out
-}
-
-/// The text before the first Strong number in `text`, the number and
-/// the text after it.
-fn next_strong_number(text: &str) -> Option<(&str, &str, &str)> {
-    let bytes = text.as_bytes();
-    let mut start = 0;
-    while start < bytes.len() {
-        let at_word_start = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
-        if at_word_start && matches!(bytes[start], b'H' | b'G') {
-            let mut end = start + 1;
-            while end < bytes.len() && bytes[end].is_ascii_digit() {
-                end += 1;
-            }
-            if end > start + 1 {
-                if end < bytes.len() && bytes[end].is_ascii_uppercase() {
-                    end += 1;
-                }
-                let bounded = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
-                if bounded {
-                    return Some((&text[..start], &text[start..end], &text[end..]));
-                }
-            }
-        }
-        start += 1;
-    }
-    None
-}
-
-/// The grammar of a word in words, its prefixes and suffixes after it.
-fn grammar_line(word: &WordView, language: morph::Language) -> String {
-    let mut grammar = morph::describe(&word.morph, language);
-    for affix in &word.affixes {
-        let affix_grammar = morph::describe(&affix.morph, language).join(", ");
-        grammar.push(format!(
-            "+ {} ({}{})",
-            affix.lemma,
-            affix.gloss_en,
-            if affix_grammar.is_empty() {
-                String::new()
-            } else {
-                format!(", {affix_grammar}")
-            }
-        ));
-    }
-    grammar.join(", ")
-}
-
 /// A caption in the margin and its text.
 fn labelled(caption: &str, text: String, muted: bool) -> impl IntoElement {
     let p = palette();
@@ -800,9 +629,20 @@ fn labelled(caption: &str, text: String, muted: bool) -> impl IntoElement {
         )
 }
 
-/// Hebrew or Greek text, in whatever font the system has for the script.
-fn original_text(text: &str, size: f32, color: Color) -> impl IntoElement {
-    label().text(text.to_owned()).font_size(size).color(color)
+/// Hebrew or Greek text, in the font the plugin bundles for `language`.
+fn original_text(
+    text: &str,
+    size: f32,
+    color: Color,
+    language: morph::Language,
+) -> impl IntoElement {
+    label()
+        .text(text.to_owned())
+        .font_family(crate::fonts::original_family(
+            language == morph::Language::Hebrew,
+        ))
+        .font_size(size)
+        .color(color)
 }
 
 /// The title and the count line over the occurrences of `lemma`;
@@ -1053,24 +893,5 @@ impl Component for Card {
                 )
                 .child(action),
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::next_strong_number;
-
-    #[test]
-    fn strong_numbers_are_found_whole_words_only() {
-        assert_eq!(
-            next_strong_number("plural of H433;"),
-            Some(("plural of ", "H433", ";"))
-        );
-        assert_eq!(
-            next_strong_number("from H2616A and (G1)"),
-            Some(("from ", "H2616A", " and (G1)"))
-        );
-        assert_eq!(next_strong_number("HAG12 is not one"), None);
-        assert_eq!(next_strong_number("a primitive root"), None);
     }
 }
