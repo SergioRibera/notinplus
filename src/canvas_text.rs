@@ -43,7 +43,7 @@ const ROTATE_OFFSET: f32 = 34.0;
 const ROTATE_SNAP: f32 = 4.0;
 /// Inner space between a box's bounds and its text, in world units: it
 /// zooms with the text, or every zoom level would wrap lines differently.
-const BOX_PADDING: (f32, f32) = (4.0, 6.0);
+pub(crate) const BOX_PADDING: (f32, f32) = (4.0, 6.0);
 
 /// Editor shared by every text box of a pane.
 ///

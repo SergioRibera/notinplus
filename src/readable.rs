@@ -177,18 +177,18 @@ fn file_name(name: &str) -> String {
     }
 }
 
-/// Draw `doc`'s ink and images (`item`'s files) inside world rectangle
-/// `area` (`x, y, width, height`) onto `rgba` (`w`×`h` pixels), under the
-/// pattern of `paper` when given.
+/// Draw `doc` (images from `item`'s files) inside world rectangle `area`
+/// (`x, y, width, height`) onto `rgba` (`w`×`h` pixels, `backdrop` RGBA
+/// where nothing is drawn yet), under the pattern of `paper` when given.
 #[sismo::function("readable::composite")]
 fn composite(
     doc: &Doc,
     item: ItemId,
     area: (f32, f32, f32, f32),
     rgba: &mut [u8],
-    w: u32,
-    h: u32,
+    (w, h): (u32, u32),
     paper: Option<Paper>,
+    backdrop: [u8; 4],
 ) {
     let info = ImageInfo::new(
         (i32::try_from(w).unwrap_or(0), i32::try_from(h).unwrap_or(0)),
@@ -220,7 +220,7 @@ fn composite(
             (area.0, area.1, area.0 + area.2, area.1 + area.3),
         );
     }
-    crate::flatten::paint(canvas, doc, item);
+    crate::flatten::paint(canvas, doc, item, backdrop);
     canvas.restore();
     let _ = surface.read_pixels(&info, rgba, usize::try_from(w).unwrap_or(0) * 4, (0, 0));
 }
@@ -252,7 +252,7 @@ pub(crate) fn pdf_pages(
             pdf.render_page_rgba(index, w.max(1), h.max(1)).ok()?
         };
         if let Some(doc) = &doc {
-            composite(doc, item, *rect, &mut rgba, w, h, None);
+            composite(doc, item, *rect, &mut rgba, (w, h), None, [255; 4]);
         }
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         out.push(PageImage {
@@ -300,7 +300,7 @@ pub(crate) fn canvas_pixels(item: ItemId, render: CanvasRender) -> Option<PageIm
         .flatten()
         .collect();
     let pattern = render.paper.map(|(_, pattern)| pattern);
-    composite(&doc, item, area, &mut rgba, w, h, pattern);
+    composite(&doc, item, area, &mut rgba, (w, h), pattern, fill);
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     Some(PageImage {
         rgba,

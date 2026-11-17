@@ -1,21 +1,28 @@
 //! A canvas doc painted onto a Skia canvas without the UI: card covers
 //! and the PDFs of "read in other apps".
 //!
-//! Draws what the board paints from world units itself: ink and images.
-//! Text boxes are laid out by the note editor and have no painter here
-//! yet, so they neither draw nor count towards the bounds.
+//! Draws what the board paints from world units itself (ink and images)
+//! and the text boxes, laid out by [`MarkdownPicture`], which follows the
+//! note editor's look without its UI.
 
+use freya::prelude::Color;
 use freya_canvas_bg::{
     BgPaintCtx, CanvasBackground, DotGridBackground, GridBackground, LinedBackground,
     Rect as WorldRect, RedrawHandle,
 };
-use freya_engine::prelude::{Canvas, Color as SkColor, Paint, Rect, SkData, SkImage};
+use freya_engine::prelude::{
+    Canvas, Color as SkColor, FontCollection, FontMgr, Paint, Rect, SkData, SkImage,
+    TypefaceFontProvider,
+};
+use freya_markdown_editor::{EditorTheme, MarkdownPicture};
 use notin_plugin::create::Paper;
 
+use crate::canvas_text::{BOX_PADDING, FONT_BYTES, FONT_FAMILY};
 use crate::doc::Doc;
 use crate::image_box::ImageBox;
 use crate::library::{ItemId, bodies};
 use crate::render::BrushRegistry;
+use crate::text_box::{TEXT_BASE_SIZE, TextBox};
 
 /// World bounds `(min_x, min_y, max_x, max_y)` of everything [`paint`]
 /// draws, `None` when there is nothing.
@@ -38,6 +45,12 @@ pub fn bounds(doc: &Doc) -> Option<(f32, f32, f32, f32)> {
         }
         for image in &layer.images {
             let (x0, y0, x1, y1) = image.frame.bounds(image.height);
+            grow(x0, y0, x1, y1);
+        }
+        for text in layer.texts.iter().filter(|t| !t.is_blank()) {
+            // The height does not depend on the colour.
+            let height = LaidText::new(text, [0; 4]).height;
+            let (x0, y0, x1, y1) = text.frame.bounds(height);
             grow(x0, y0, x1, y1);
         }
     }
@@ -66,26 +79,131 @@ pub fn paint_paper(canvas: &Canvas, paper: Paper, area: (f32, f32, f32, f32)) {
 
 /// Draw `doc` in world units under the canvas's current transform. Images
 /// come from `item`'s `assets/` folder; one that cannot be read is skipped.
+/// Text boxes that follow the theme are dark on light `paper` (RGBA) and
+/// light on dark.
 #[sismo::function("flatten::paint")]
-pub fn paint(canvas: &Canvas, doc: &Doc, item: ItemId) {
+pub fn paint(canvas: &Canvas, doc: &Doc, item: ItemId, paper: [u8; 4]) {
     let registry = BrushRegistry::default();
     for layer in doc.layers.iter().filter(|l| l.visible) {
+        let opacity = layer.opacity.clamp(0.0, 1.0);
         // Images under the ink of their layer, as the board paints them.
         for image in &layer.images {
             if let Some(decoded) = load_image(item, image) {
-                draw_image(canvas, &decoded, image, layer.opacity.clamp(0.0, 1.0));
+                draw_image(canvas, &decoded, image, opacity);
             }
         }
-        sismo::scope!("flatten::strokes");
-        for stroke in &layer.strokes {
-            let Some(preset) = doc.preset(stroke.brush) else {
-                continue;
-            };
-            let path = registry.stroke_path(preset, stroke);
-            let paint: Paint = registry.brush(preset.kind).paint(preset, stroke.color);
-            canvas.draw_path(&path, &paint);
+        {
+            sismo::scope!("flatten::strokes");
+            for stroke in &layer.strokes {
+                let Some(preset) = doc.preset(stroke.brush) else {
+                    continue;
+                };
+                let path = registry.stroke_path(preset, stroke);
+                let paint: Paint = registry.brush(preset.kind).paint(preset, stroke.color);
+                canvas.draw_path(&path, &paint);
+            }
+        }
+        let texts: Vec<&TextBox> = layer.texts.iter().filter(|t| !t.is_blank()).collect();
+        if texts.is_empty() {
+            continue;
+        }
+        sismo::scope!("flatten::texts");
+        let faded = opacity < 0.999;
+        if faded {
+            canvas.save_layer_alpha_f(None, opacity);
+        }
+        for text in texts {
+            LaidText::new(text, paper).paint(canvas, text);
+        }
+        if faded {
+            canvas.restore();
         }
     }
+}
+
+/// Fonts text boxes are laid out with: the canvas hand, every plugin's
+/// fonts and the system's.
+fn text_fonts() -> FontCollection {
+    let mut provider = TypefaceFontProvider::new();
+    let loader = FontMgr::custom_empty().unwrap_or_default();
+    let mut add =
+        |family: &str, bytes: &[u8]| match loader.new_from_data(SkData::new_copy(bytes), None) {
+            Some(typeface) => {
+                provider.register_typeface(typeface, Some(family));
+            }
+            None => log::warn!("flatten: font {family} does not load"),
+        };
+    add(FONT_FAMILY, FONT_BYTES);
+    let plugin_fonts = crate::plugins::catalog().fonts();
+    for font in plugin_fonts {
+        add(font.family, font.bytes);
+    }
+    let mut fonts = FontCollection::new();
+    fonts.set_default_font_manager(FontMgr::default(), None);
+    fonts.set_dynamic_font_manager(FontMgr::from(provider));
+    fonts
+}
+
+thread_local! {
+    static TEXT_FONTS: FontCollection = text_fonts();
+}
+
+/// A text box laid out as the canvas shows it at 100%.
+struct LaidText {
+    picture: MarkdownPicture,
+    /// Height of the box, padding included, in world units.
+    height: f32,
+}
+
+impl LaidText {
+    /// Lay `text` out over a backdrop of colour `paper` (RGBA), whose
+    /// lightness picks the text colour of boxes that follow the theme.
+    #[sismo::function("flatten::lay_text")]
+    fn new(text: &TextBox, paper: [u8; 4]) -> Self {
+        let base = if on_dark(paper) {
+            EditorTheme::dark()
+        } else {
+            EditorTheme::light()
+        };
+        let mut theme = base.clone().zoomed(TEXT_BASE_SIZE / base.body_size);
+        theme.fonts.insert(0, FONT_FAMILY.into());
+        if let Some([r, g, b, a]) = text.custom_color() {
+            theme.colors.text = Color::from_argb(a, r, g, b);
+        }
+        let (pad_y, pad_x) = BOX_PADDING;
+        let width = pad_x.mul_add(-2.0, text.frame.width);
+        let picture =
+            TEXT_FONTS.with(|fonts| MarkdownPicture::layout(&text.markdown, &theme, width, fonts));
+        let height = pad_y.mul_add(2.0, picture.height());
+        Self { picture, height }
+    }
+
+    /// Draw it in `text`'s frame, turned around the frame's centre.
+    fn paint(&self, canvas: &Canvas, text: &TextBox) {
+        let (cx, cy) = text.frame.center(self.height);
+        let (pad_y, pad_x) = BOX_PADDING;
+        canvas.save();
+        canvas.translate((cx, cy));
+        canvas.rotate(text.frame.rotation, None);
+        self.picture.paint(
+            canvas,
+            (
+                text.frame.width.mul_add(-0.5, pad_x),
+                self.height.mul_add(-0.5, pad_y),
+            ),
+        );
+        canvas.restore();
+    }
+}
+
+/// Whether `paper` (RGBA) is dark enough to need light text. Transparent
+/// paper is read as white, the page most exports land on.
+fn on_dark([r, g, b, a]: [u8; 4]) -> bool {
+    let luma = 0.0722f32.mul_add(
+        f32::from(b),
+        0.2126f32.mul_add(f32::from(r), 0.7152 * f32::from(g)),
+    );
+    a > 0 && luma < 128.0
 }
 
 #[sismo::function("flatten::load_image")]
@@ -157,7 +275,7 @@ mod tests {
         surface
             .canvas()
             .clear(freya_engine::prelude::SkColor::WHITE);
-        paint(surface.canvas(), doc, ItemId::default());
+        paint(surface.canvas(), doc, ItemId::default(), [255; 4]);
         let image = surface.image_snapshot();
         let pixmap = image.peek_pixels().expect("raster pixels");
         pixmap.bytes().expect("pixel bytes").to_vec()
@@ -179,6 +297,91 @@ mod tests {
             .collect();
         let id = doc.push_stroke(brush, [10, 10, 10, 255], points);
         (doc, id)
+    }
+
+    fn text_doc(markdown: &str, color: [u8; 4]) -> Doc {
+        let mut doc = Doc::default();
+        doc.emit(DocOp::AddText {
+            layer_id: 0,
+            text: TextBox {
+                id: crate::text_box::TextBoxId::new_v4(),
+                frame: TextFrame {
+                    x: 20.0,
+                    y: 20.0,
+                    width: 260.0,
+                    rotation: 0.0,
+                },
+                markdown: markdown.to_owned(),
+                color,
+            },
+        });
+        doc
+    }
+
+    /// RGBA pixels of `doc` painted on `paper`, 300 × 200 world units.
+    /// Also written as `<name>.png` under `$FLATTEN_SNAPSHOT_DIR` when set.
+    fn render_text(doc: &Doc, paper: [u8; 4], name: &str) -> Vec<u8> {
+        crate::paths::sandbox();
+        let mut surface = freya_engine::prelude::raster_n32_premul((300, 200)).expect("raster");
+        let [r, g, b, a] = paper;
+        surface.canvas().clear(SkColor::from_argb(a, r, g, b));
+        paint(surface.canvas(), doc, ItemId::default(), paper);
+        let image = surface.image_snapshot();
+        if let Some(dir) = std::env::var_os("FLATTEN_SNAPSHOT_DIR") {
+            let png = image
+                .encode(None, freya_engine::prelude::EncodedImageFormat::PNG, None)
+                .expect("png");
+            std::fs::write(
+                std::path::Path::new(&dir).join(format!("{name}.png")),
+                png.as_bytes(),
+            )
+            .expect("write snapshot");
+        }
+        let pixmap = image.peek_pixels().expect("raster pixels");
+        pixmap.bytes().expect("pixel bytes").to_vec()
+    }
+
+    /// Pixels of `pixels` (300 wide) inside rows `rows` that differ from
+    /// `paper`.
+    fn marked(pixels: &[u8], rows: std::ops::Range<usize>, paper: [u8; 4]) -> usize {
+        rows.flat_map(|y| (0..300).map(move |x| (y * 300 + x) * 4))
+            .filter(|&at| {
+                pixels[at..at + 3]
+                    .iter()
+                    .zip(&paper)
+                    .any(|(c, p)| c.abs_diff(*p) > 60)
+            })
+            .count()
+    }
+
+    #[test]
+    fn text_boxes_paint_and_count_towards_the_bounds() {
+        crate::paths::sandbox();
+        let doc = text_doc(
+            "# Título\n\nUn **texto** con *estilo*.\n\n- uno\n- dos",
+            crate::text_box::AUTO_TEXT_COLOR,
+        );
+        let (x0, y0, x1, y1) = bounds(&doc).expect("text has bounds");
+        assert!((x0 - 20.0).abs() < 0.5 && (y0 - 20.0).abs() < 0.5);
+        assert!((x1 - 280.0).abs() < 0.5);
+        assert!(y1 > 100.0, "heading, paragraph and list stack up: {y1}");
+
+        let white = [255; 4];
+        let pixels = render_text(&doc, white, "text_on_white");
+        assert!(marked(&pixels, 20..60, white) > 50, "heading drawn");
+        assert_eq!(marked(&pixels, 0..18, white), 0, "nothing above the box");
+    }
+
+    #[test]
+    fn theme_text_turns_light_on_dark_paper() {
+        let doc = text_doc("Hola", crate::text_box::AUTO_TEXT_COLOR);
+        let dark = [30, 30, 36, 255];
+        let pixels = render_text(&doc, dark, "text_on_dark");
+        let brightest = (20..60)
+            .flat_map(|y| (0..300).map(move |x| (y * 300 + x) * 4))
+            .map(|at| pixels[at])
+            .max();
+        assert!(brightest > Some(150), "light text: {brightest:?}");
     }
 
     #[test]

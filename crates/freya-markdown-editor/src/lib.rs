@@ -18,6 +18,7 @@ pub mod document;
 mod editor;
 mod labels;
 pub mod markdown;
+mod picture;
 mod popup;
 mod profile;
 mod theme;
@@ -37,6 +38,7 @@ pub use editor::{
     SuggestionGroup, SuggestionRun, SuggestionSource,
 };
 pub use labels::{Label, Labels};
+pub use picture::MarkdownPicture;
 pub use popup::PopupReporter;
 pub use theme::{EditorColors, EditorTheme};
 #[cfg(feature = "toolbar")]
@@ -54,9 +56,9 @@ pub mod prelude {
     pub use crate::{
         ActiveFormat, AtomSlot, BlockShell, BlockSuggestions, CodeContext, Decorator, Decorators,
         EditorColors, EditorController, EditorTheme, EmbedContext, ImageContext, ImagePicker,
-        ImageRequest, InputContext, Label, Labels, MarkdownEditor, MathContext, PopupReporter,
-        PrefixTokens, RemoteCaret, SchemeEmbed, Selection, SpanStyle, Suggestion, SuggestionAction,
-        SuggestionGroup, SuggestionRun, SuggestionSource, TextMatch, TextPosition,
-        TransclusionContext, use_editor_controller, use_editor_controller_with,
+        ImageRequest, InputContext, Label, Labels, MarkdownEditor, MarkdownPicture, MathContext,
+        PopupReporter, PrefixTokens, RemoteCaret, SchemeEmbed, Selection, SpanStyle, Suggestion,
+        SuggestionAction, SuggestionGroup, SuggestionRun, SuggestionSource, TextMatch,
+        TextPosition, TransclusionContext, use_editor_controller, use_editor_controller_with,
     };
 }

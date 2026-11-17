@@ -33,7 +33,7 @@ pub fn canvas(doc: &Doc, item: ItemId, paper: [u8; 4]) -> Option<Vec<u8>> {
     sk.translate((x0.mul_add(-scale, MARGIN), y0.mul_add(-scale, MARGIN)));
     sk.scale((scale, scale));
     sismo::counter!("thumbnail.strokes", doc.stroke_count());
-    crate::flatten::paint(sk, doc, item);
+    crate::flatten::paint(sk, doc, item, paper);
     sk.restore();
     let image = {
         sismo::scope!("thumbnail::image_snapshot");
