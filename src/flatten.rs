@@ -70,6 +70,12 @@ pub fn paint_paper(canvas: &Canvas, paper: Paper, area: (f32, f32, f32, f32)) {
 pub fn paint(canvas: &Canvas, doc: &Doc, item: ItemId) {
     let registry = BrushRegistry::default();
     for layer in doc.layers.iter().filter(|l| l.visible) {
+        // Images under the ink of their layer, as the board paints them.
+        for image in &layer.images {
+            if let Some(decoded) = load_image(item, image) {
+                draw_image(canvas, &decoded, image, layer.opacity.clamp(0.0, 1.0));
+            }
+        }
         sismo::scope!("flatten::strokes");
         for stroke in &layer.strokes {
             let Some(preset) = doc.preset(stroke.brush) else {
@@ -78,11 +84,6 @@ pub fn paint(canvas: &Canvas, doc: &Doc, item: ItemId) {
             let path = registry.stroke_path(preset, stroke);
             let paint: Paint = registry.brush(preset.kind).paint(preset, stroke.color);
             canvas.draw_path(&path, &paint);
-        }
-        for image in &layer.images {
-            if let Some(decoded) = load_image(item, image) {
-                draw_image(canvas, &decoded, image, layer.opacity.clamp(0.0, 1.0));
-            }
         }
     }
 }

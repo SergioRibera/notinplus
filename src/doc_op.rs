@@ -53,6 +53,17 @@ pub enum DocOp {
         id: u32,
         opacity: f32,
     },
+    /// Last writer wins.
+    RenameLayer {
+        id: u32,
+        name: String,
+    },
+    /// Move layer `id` to paint-order position `to` (`0` = bottom); past
+    /// the end means the top.
+    MoveLayer {
+        id: u32,
+        to: u32,
+    },
     /// Insert a bookmark. Full struct carried so a replay from the
     /// log is deterministic — no out-of-band state needed.
     AddBookmark {

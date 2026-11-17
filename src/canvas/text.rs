@@ -95,14 +95,20 @@ pub struct TextScene {
 }
 
 impl TextScene {
+    /// Layers holding text boxes, bottom to top. Images are painted by the
+    /// board itself, so only text boxes need a slot between passes.
+    pub fn text_layers(&self) -> impl Iterator<Item = &TextLayerView> {
+        self.layers.iter().filter(|layer| !layer.texts.is_empty())
+    }
+
     /// Layer index ranges painted by each canvas pass: one pass below each
-    /// layer's text boxes, plus a last pass up to the top layer.
+    /// [`Self::text_layers`] entry, plus a last pass up to the top layer.
     #[must_use]
     #[sismo::function("canvas_text::paint_passes")]
     pub fn paint_passes(&self) -> Vec<std::ops::Range<usize>> {
         let mut passes = Vec::with_capacity(self.layers.len() + 1);
         let mut start = 0;
-        for layer in &self.layers {
+        for layer in self.text_layers() {
             passes.push(start..layer.index + 1);
             start = layer.index + 1;
         }
@@ -151,9 +157,16 @@ impl Board {
             .enumerate()
             .filter(|(_, layer)| layer.visible)
             .filter_map(|(index, layer)| {
-                let scene_text = |text: &TextBox| SceneText {
-                    height: self.text_height(text.id),
-                    text: text.clone(),
+                let scene_text = |text: &TextBox| {
+                    let mut text = text.clone();
+                    if let Some((dx, dy)) = self.drag_offset_of_text(text.id) {
+                        text.frame.x += dx;
+                        text.frame.y += dy;
+                    }
+                    SceneText {
+                        height: self.text_height(text.id),
+                        text,
+                    }
                 };
                 let mut texts: Vec<SceneText> = layer
                     .texts
@@ -206,7 +219,7 @@ impl Board {
         }
     }
 
-    fn text_height(&self, id: TextBoxId) -> f32 {
+    pub(super) fn text_height(&self, id: TextBoxId) -> f32 {
         self.text_heights
             .get(&id)
             .copied()
@@ -651,5 +664,17 @@ mod tests {
         board.add_layer();
         let passes = board.text_scene().paint_passes();
         assert_eq!(passes, vec![0..1, 1..2]);
+    }
+
+    #[test]
+    fn images_alone_do_not_split_the_paint() {
+        let mut board = Board {
+            last_surface_size: (400.0, 300.0),
+            ..Board::default()
+        };
+        assert!(board.add_image_at_view_center("a.png", (20, 20)));
+        board.add_layer();
+        let passes = board.text_scene().paint_passes();
+        assert_eq!(passes, vec![0..2]);
     }
 }

@@ -402,6 +402,17 @@ impl Doc {
                     l.opacity = opacity.clamp(0.0, 1.0);
                 }
             }
+            DocOp::RenameLayer { id, name } => {
+                if let Some(l) = self.layers.iter_mut().find(|l| l.id == *id) {
+                    l.name.clone_from(name);
+                }
+            }
+            DocOp::MoveLayer { id, to } => {
+                if let Some((from, to)) = self.layer_move(*id, *to) {
+                    let layer = self.layers.remove(from);
+                    self.layers.insert(to, layer);
+                }
+            }
             DocOp::AddBookmark { bookmark } => {
                 if !self.bookmarks.iter().any(|b| b.id == bookmark.id) {
                     self.bookmarks.push(bookmark.clone());
@@ -622,6 +633,13 @@ impl Doc {
                         image: image.clone(),
                     });
                 }
+                // AddLayer puts it on top; back to where it was.
+                if let Some(index) = self.layer_index(*id) {
+                    ops.push(DocOp::MoveLayer {
+                        id: *id,
+                        to: u32::try_from(index).unwrap_or(u32::MAX),
+                    });
+                }
                 if self.active_layer == *id {
                     // RemoveLayer's apply arm moves `active_layer` to
                     // a neighbour. Restoring the removed layer must
@@ -657,6 +675,24 @@ impl Doc {
                     vec![DocOp::SetLayerOpacity {
                         id: *id,
                         opacity: l.opacity,
+                    }]
+                })
+                .unwrap_or_default(),
+            DocOp::RenameLayer { id, .. } => self
+                .layer(*id)
+                .map(|l| {
+                    vec![DocOp::RenameLayer {
+                        id: *id,
+                        name: l.name.clone(),
+                    }]
+                })
+                .unwrap_or_default(),
+            DocOp::MoveLayer { id, .. } => self
+                .layer_index(*id)
+                .map(|from| {
+                    vec![DocOp::MoveLayer {
+                        id: *id,
+                        to: u32::try_from(from).unwrap_or(u32::MAX),
                     }]
                 })
                 .unwrap_or_default(),
@@ -962,6 +998,21 @@ impl Doc {
         self.layers.iter().find(|l| l.id == id)
     }
 
+    /// Paint-order position of layer `id` (`0` = bottom).
+    #[must_use]
+    pub fn layer_index(&self, id: u32) -> Option<usize> {
+        self.layers.iter().position(|l| l.id == id)
+    }
+
+    /// `(from, to)` positions of a [`DocOp::MoveLayer`] of layer `id` to
+    /// `to`, `None` when it does not move.
+    fn layer_move(&self, id: u32, to: u32) -> Option<(usize, usize)> {
+        let from = self.layer_index(id)?;
+        let last = self.layers.len() - 1;
+        let to = usize::try_from(to).map_or(last, |to| to.min(last));
+        (from != to).then_some((from, to))
+    }
+
     pub fn layer_mut(&mut self, id: u32) -> Option<&mut Layer> {
         self.layers.iter_mut().find(|l| l.id == id)
     }
@@ -1177,6 +1228,66 @@ mod tests {
         assert_eq!(d.layers.len(), 1);
         let back = Doc::from_snapshot(&d.snapshot_bytes().unwrap()).unwrap();
         assert_eq!(back, d);
+    }
+
+    fn layer_ids(d: &Doc) -> Vec<u32> {
+        d.layers.iter().map(|l| l.id).collect()
+    }
+
+    #[test]
+    fn layers_move_and_rename_in_store_and_state_alike() {
+        let mut d = Doc::default();
+        let l1 = d.add_layer("Layer 2");
+        let l2 = d.add_layer("Layer 3");
+        let mut replica = Doc::from_snapshot(&d.snapshot_bytes().unwrap()).unwrap();
+        let since = replica.version();
+
+        let ops = [
+            DocOp::MoveLayer { id: l2, to: 0 },
+            DocOp::RenameLayer {
+                id: 0,
+                name: "Fondo".into(),
+            },
+            DocOp::MoveLayer { id: l1, to: 99 },
+        ];
+        let mut undo = Vec::new();
+        for op in ops {
+            undo.push(d.inverse_before_apply(&op));
+            d.emit(op);
+        }
+        assert_eq!(layer_ids(&d), vec![l2, 0, l1]);
+        assert_eq!(d.layer(0).unwrap().name, "Fondo");
+
+        let back = Doc::from_snapshot(&d.snapshot_bytes().unwrap()).unwrap();
+        assert_eq!(back, d);
+        replica
+            .import_updates(&d.updates_since(&since).unwrap())
+            .unwrap();
+        assert_eq!(replica, d);
+
+        for inverse in undo.into_iter().rev() {
+            for op in inverse {
+                d.emit(op);
+            }
+        }
+        assert_eq!(layer_ids(&d), vec![0, l1, l2]);
+        assert_eq!(d.layer(0).unwrap().name, "Layer 1");
+    }
+
+    #[test]
+    fn removing_a_middle_layer_undoes_in_place() {
+        let mut d = Doc::default();
+        let l1 = d.add_layer("Layer 2");
+        let l2 = d.add_layer("Layer 3");
+        let op = DocOp::RemoveLayer { id: l1 };
+        let inverse = d.inverse_before_apply(&op);
+        d.emit(op);
+        for op in inverse {
+            d.emit(op);
+        }
+        assert_eq!(layer_ids(&d), vec![0, l1, l2]);
+        let back = Doc::from_snapshot(&d.snapshot_bytes().unwrap()).unwrap();
+        assert_eq!(layer_ids(&back), vec![0, l1, l2]);
     }
 
     #[test]

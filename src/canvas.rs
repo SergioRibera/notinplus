@@ -52,6 +52,7 @@ use notin_beautify::Pt;
 mod beautify;
 mod ink_cache;
 mod lasso;
+mod picture;
 mod record;
 mod snap;
 mod tools;
@@ -133,6 +134,15 @@ impl RedrawNotifier {
     fn ping(&self) {
         let _ = self.0.try_send(());
     }
+}
+
+/// Direction through the layer stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    /// Towards the top: painted later, over more.
+    Up,
+    /// Towards the bottom.
+    Down,
 }
 
 /// Immutable, UI-friendly summary of a layer.
@@ -318,6 +328,8 @@ pub struct Board {
     remote: HashMap<notin_sync::DeviceId, RemoteHand>,
     /// Bumped whenever the committed ink may paint differently.
     ink_rev: u64,
+    /// Decoded canvas images, painted under each layer's ink.
+    pictures: picture::Pictures,
     /// Bumped whenever the background asks for a repaint.
     paper_rev: Arc<AtomicU64>,
     /// Edits are refused: the document is shared with us to look at.
@@ -496,6 +508,7 @@ impl Default for Board {
             remote: HashMap::new(),
             read_only: false,
             ink_rev: 0,
+            pictures: picture::Pictures::default(),
             paper_rev,
         }
     }
@@ -1425,6 +1438,59 @@ impl Board {
         self.notify_commit();
     }
 
+    /// Rename layer `id`. Blank names are ignored.
+    #[sismo::function("canvas::rename_layer")]
+    pub fn rename_layer(&mut self, id: u32, name: &str) {
+        let name = name.trim();
+        let Some(layer) = self.doc.layer(id) else {
+            return;
+        };
+        if name.is_empty() || layer.name == name {
+            return;
+        }
+        self.apply_op(DocOp::RenameLayer {
+            id,
+            name: name.to_owned(),
+        });
+        self.notify_commit();
+    }
+
+    /// Move layer `id` one step up (`Up`, painted later) or down in the
+    /// stack. `false` when it is already at that end.
+    #[sismo::function("canvas::step_layer")]
+    pub fn step_layer(&mut self, id: u32, step: Step) -> bool {
+        let Some(from) = self.doc.layer_index(id) else {
+            return false;
+        };
+        let to = match step {
+            Step::Up => from + 1,
+            Step::Down => match from.checked_sub(1) {
+                Some(to) => to,
+                None => return false,
+            },
+        };
+        if to >= self.doc.layers.len() {
+            return false;
+        }
+        self.apply_op(DocOp::MoveLayer {
+            id,
+            to: u32::try_from(to).unwrap_or(u32::MAX),
+        });
+        self.notify_commit();
+        true
+    }
+
+    /// Id of the layer next to `id` in the stack, `step` away.
+    #[must_use]
+    pub fn layer_beside(&self, id: u32, step: Step) -> Option<u32> {
+        let index = self.doc.layer_index(id)?;
+        let next = match step {
+            Step::Up => index.checked_add(1)?,
+            Step::Down => index.checked_sub(1)?,
+        };
+        self.doc.layers.get(next).map(|l| l.id)
+    }
+
     /// Add a bookmark at `world` in world coordinates. If a stroke
     /// lies within `sticky_radius` world-units of the point, the pin
     /// adopts a [`StrokeAnchor`] pointing at the nearest one so later
@@ -1828,6 +1894,8 @@ impl Board {
             | DocOp::SetLayerVisible { .. }
             | DocOp::SetLayerLocked { .. }
             | DocOp::SetLayerOpacity { .. }
+            | DocOp::RenameLayer { .. }
+            | DocOp::MoveLayer { .. }
             | DocOp::AddBookmark { .. }
             | DocOp::UpdateBookmark { .. }
             | DocOp::DeleteBookmark { .. }
@@ -2165,7 +2233,21 @@ impl Board {
         if pass.base {
             self.settle_surface(surface);
         }
-        if !self.paint_cached(canvas, surface, pass, cache) {
+        // The in-flight stroke paints in its own layer's pass, so what lies
+        // above that layer covers it while it is drawn as it will once
+        // committed.
+        let live = self
+            .live_layer_index()
+            .filter(|index| pass.layers.contains(index));
+        if self.paint_cached(canvas, surface, pass, cache, live) {
+            if live.is_some() {
+                canvas.save();
+                canvas.translate((self.viewport.tx, self.viewport.ty));
+                canvas.scale((self.viewport.scale, self.viewport.scale));
+                self.paint_live_stroke(canvas);
+                canvas.restore();
+            }
+        } else {
             sismo::scope!("canvas::paint_direct");
             if pass.base {
                 self.paint_base(canvas, surface);
@@ -2173,7 +2255,7 @@ impl Board {
             canvas.save();
             canvas.translate((self.viewport.tx, self.viewport.ty));
             canvas.scale((self.viewport.scale, self.viewport.scale));
-            self.paint_layers(canvas, surface, pass.layers.clone());
+            self.paint_layers(canvas, surface, pass.layers.clone(), live);
             canvas.restore();
         }
         if pass.base {
@@ -2202,7 +2284,14 @@ impl Board {
         surface: SurfaceBounds,
         pass: &PaintPass,
         cache: &mut InkCache,
+        live: Option<usize>,
     ) -> bool {
+        if let Some(index) = live
+            && !self.on_top_of(pass.layers.clone(), index)
+        {
+            sismo::instant!("canvas::cache_skip_live_below");
+            return false;
+        }
         let erasing = self
             .erase_session
             .as_ref()
@@ -2238,7 +2327,7 @@ impl Board {
                 target.save();
                 target.translate((self.viewport.tx, self.viewport.ty));
                 target.scale((self.viewport.scale, self.viewport.scale));
-                self.paint_layers(target, bounds, pass.layers.clone());
+                self.paint_layers(target, bounds, pass.layers.clone(), None);
                 target.restore();
             });
             if !drawn {
@@ -2253,10 +2342,11 @@ impl Board {
     /// Whether the layers at `range` hold anything to paint.
     #[sismo::function("canvas::has_ink")]
     fn has_ink(&self, range: std::ops::Range<usize>) -> bool {
-        self.doc
-            .layers
-            .get(range)
-            .is_some_and(|layers| layers.iter().any(|l| l.visible && !l.strokes.is_empty()))
+        self.doc.layers.get(range).is_some_and(|layers| {
+            layers
+                .iter()
+                .any(|l| l.visible && !(l.strokes.is_empty() && l.images.is_empty()))
+        })
     }
 
     /// Whether any visible ink of the layers at `range` blends with what
@@ -2361,15 +2451,18 @@ impl Board {
         canvas.restore();
     }
 
-    /// Committed strokes of the layers at `range` (paint order indices), in
-    /// world coordinates.
+    /// Images, then committed strokes, of the layers at `range` (paint
+    /// order indices), in world coordinates. The in-flight stroke goes
+    /// right above the strokes of layer `live`.
     #[sismo::function("canvas::paint_layers")]
     fn paint_layers(
         &self,
         canvas: &freya_engine::prelude::Canvas,
         surface: SurfaceBounds,
         range: std::ops::Range<usize>,
+        live: Option<usize>,
     ) {
+        let first = range.start;
         let Some(layers) = self.doc.layers.get(range) else {
             return;
         };
@@ -2401,19 +2494,32 @@ impl Board {
             .map(|s| s.circles.as_slice())
             .filter(|c| !c.is_empty());
         let active_layer = self.doc.active_layer;
+        let world = self.visible_world(surface);
+        let world = (world.min_x, world.min_y, world.max_x, world.max_y);
 
-        for layer in layers {
+        for (offset, layer) in layers.iter().enumerate() {
             if !layer.visible {
                 continue;
             }
             sismo::scope!("canvas::paint_layer");
             sismo::counter!("canvas.layer_strokes", layer.strokes.len());
+            let opacity = layer.opacity.clamp(0.0, 1.0);
+            // Below the eraser's layer: rubbing ink off never cuts images.
+            self.pictures.paint(
+                canvas,
+                layer.images.iter().map(|image| {
+                    let offset = self.drag_offset_of_image(image.id).unwrap_or_default();
+                    (self.session_image(image), offset)
+                }),
+                world,
+                opacity,
+                &self.redraw_handle,
+            );
             let mask_this = mask_circles.is_some() && layer.id == active_layer;
             if mask_this {
                 sismo::scope!("canvas::eraser_save_layer");
                 canvas.save_layer(&SaveLayerRec::default());
             }
-            let opacity = layer.opacity.clamp(0.0, 1.0);
             let mut drawn = 0usize;
             {
                 sismo::scope!("canvas::paint_strokes");
@@ -2456,6 +2562,9 @@ impl Board {
                 }
             }
             sismo::counter!("canvas.layer_strokes_drawn", drawn);
+            if live == Some(first + offset) {
+                self.paint_live_stroke(canvas);
+            }
             if mask_this {
                 if let Some(circles) = mask_circles {
                     sismo::scope!("canvas::eraser_mask");
@@ -2471,6 +2580,61 @@ impl Board {
                 sismo::scope!("canvas::eraser_restore_layer");
                 canvas.restore();
             }
+        }
+    }
+
+    /// Paint-order index of the visible layer the in-flight stroke goes
+    /// into, `None` without one.
+    fn live_layer_index(&self) -> Option<usize> {
+        self.active.as_ref()?;
+        let id = self.active_layer_at_begin?;
+        self.doc
+            .layers
+            .iter()
+            .position(|l| l.id == id)
+            .filter(|&index| self.doc.layers[index].visible)
+    }
+
+    /// Whether nothing of the layers at `range` paints above layer `index`,
+    /// so the in-flight stroke can go over the pass as a whole.
+    fn on_top_of(&self, range: std::ops::Range<usize>, index: usize) -> bool {
+        let above = (index + 1)..range.end.max(index + 1);
+        self.doc.layers.get(above).is_none_or(|layers| {
+            layers
+                .iter()
+                .all(|l| !l.visible || (l.strokes.is_empty() && l.images.is_empty()))
+        })
+    }
+
+    /// The in-flight stroke, in world coordinates, faded like its layer.
+    #[sismo::function("canvas::paint_live_stroke")]
+    fn paint_live_stroke(&self, canvas: &freya_engine::prelude::Canvas) {
+        let Some(active) = &self.active else {
+            return;
+        };
+        sismo::counter!("canvas.live_stroke_points", active.points.len());
+        let Some(preset) = self.doc.preset(active.brush) else {
+            return;
+        };
+        let layer_opacity = self
+            .active_layer_at_begin
+            .and_then(|id| self.doc.layer(id))
+            .map_or(1.0, |l| l.opacity.clamp(0.0, 1.0));
+        let renderer = self.brush_registry.brush(preset.kind);
+        let mut paint = renderer.paint(preset, active.color);
+        if layer_opacity < 0.999 {
+            let base = paint.color();
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "clamped to the u8 range first"
+            )]
+            let scaled = (f32::from(base.a()) * layer_opacity).clamp(0.0, 255.0) as u8;
+            paint.set_color(base.with_a(scaled));
+        }
+        if !self.paint_morph(canvas, active, &paint) {
+            let path = self.brush_registry.stroke_path(preset, active);
+            canvas.draw_path(&path, &paint);
         }
     }
 
@@ -2496,27 +2660,10 @@ impl Board {
             canvas.draw_path(&path, &paint);
         }
         self.paint_settling(canvas);
-        if let Some(active) = &self.active {
-            sismo::scope!("canvas::paint_live_stroke");
-            sismo::counter!("canvas.live_stroke_points", active.points.len());
-            if let Some(preset) = self.doc.preset(active.brush) {
-                let layer_opacity = self
-                    .active_layer_at_begin
-                    .and_then(|id| self.doc.layer(id))
-                    .map_or(1.0, |l| l.opacity.clamp(0.0, 1.0));
-                let renderer = self.brush_registry.brush(preset.kind);
-                let mut paint = renderer.paint(preset, active.color);
-                if layer_opacity < 0.999 {
-                    let base = paint.color();
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let scaled = (f32::from(base.a()) * layer_opacity).clamp(0.0, 255.0) as u8;
-                    paint.set_color(base.with_a(scaled));
-                }
-                if !self.paint_morph(canvas, active, &paint) {
-                    let path = self.brush_registry.stroke_path(preset, active);
-                    canvas.draw_path(&path, &paint);
-                }
-            }
+        if self.live_layer_index().is_none() {
+            // Its layer is in no pass (it went away mid-stroke): keep it
+            // visible on top rather than dropping it.
+            self.paint_live_stroke(canvas);
         }
         if let Some((ax, ay, cx, cy)) = self.selection_rect {
             draw_selection_rect(canvas, ax, ay, cx, cy);

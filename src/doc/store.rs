@@ -350,6 +350,16 @@ impl DocStore {
                     layer.insert(LAYER_OPACITY, f64::from(opacity.clamp(0.0, 1.0)))?;
                 }
             }
+            DocOp::RenameLayer { id, name } => {
+                if let Some(layer) = self.layer_by_id(state, *id) {
+                    layer.insert(LAYER_NAME, name.as_str())?;
+                }
+            }
+            DocOp::MoveLayer { id, to } => {
+                if let Some((from, to)) = state.layer_move(*id, *to) {
+                    self.doc.get_movable_list(LAYERS).mov(from, to)?;
+                }
+            }
             DocOp::AddBookmark { bookmark } => {
                 if state.bookmark(bookmark.id).is_none() {
                     self.put_bookmark(bookmark)?;

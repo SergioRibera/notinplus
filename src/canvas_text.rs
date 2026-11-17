@@ -24,7 +24,7 @@ use notin_ui_kit::TapExt;
 use crate::canvas::{
     Board, InkCache, PaintPass, SceneText, SurfaceBounds, TextLayerView, TextScene, lock,
 };
-use crate::editor::images::{AssetImage, ItemImages};
+use crate::editor::images::ItemImages;
 use crate::image_box::{IMAGE_MIN_SIDE, ImageBox, ImageBoxId};
 use crate::library::model::ItemId;
 use crate::text_box::{TEXT_BASE_SIZE, TEXT_MIN_WIDTH, TextBoxId, TextFrame};
@@ -41,7 +41,8 @@ const HANDLE: f32 = 26.0;
 const ROTATE_OFFSET: f32 = 34.0;
 /// Rotations this close (degrees) to a multiple of 45° snap onto it.
 const ROTATE_SNAP: f32 = 4.0;
-/// Inner space between a box's bounds and its text, in screen pixels.
+/// Inner space between a box's bounds and its text, in world units: it
+/// zooms with the text, or every zoom level would wrap lines differently.
 const BOX_PADDING: (f32, f32) = (4.0, 6.0);
 
 /// Editor shared by every text box of a pane.
@@ -164,7 +165,11 @@ impl Component for CanvasLayers {
     fn render(&self) -> impl IntoElement {
         let board = Arc::clone(&self.board);
         let accent = notin_ui_kit::palette().accent;
-        lock(&board).set_lasso_accent([accent.r(), accent.g(), accent.b()]);
+        {
+            let mut guard = lock(&board);
+            guard.set_lasso_accent([accent.r(), accent.g(), accent.b()]);
+            guard.set_image_item(self.item);
+        }
         let scene = use_state({
             let board = Arc::clone(&board);
             move || lock(&board).text_scene()
@@ -188,14 +193,35 @@ impl Component for CanvasLayers {
             origin: *origin.read(),
         };
         let passes = PaintPass::split(scene.paint_passes());
-        let children = passes.into_iter().enumerate().flat_map(|(index, pass)| {
-            let canvas = pass_canvas(&board, pass, index);
-            let texts = scene
-                .layers
-                .get(index)
-                .map(|layer| text_layer(&board, layer, &scene, view, self.editor, self.item));
-            std::iter::once(canvas).chain(texts)
-        });
+        let text_layers: Vec<&TextLayerView> = scene.text_layers().collect();
+        // Pass, text layer, pass, …, pass, then the handles on top.
+        let slots = passes.len() + text_layers.len() + 1;
+        let mut children = Vec::with_capacity(slots);
+        for (index, pass) in passes.into_iter().enumerate() {
+            children.push(pass_canvas(
+                &board,
+                pass,
+                index,
+                slot_layer(children.len(), slots),
+            ));
+            if let Some(layer) = text_layers.get(index) {
+                children.push(text_layer(
+                    &board,
+                    layer,
+                    &scene,
+                    view,
+                    self.editor,
+                    self.item,
+                    slot_layer(children.len(), slots),
+                ));
+            }
+        }
+        children.push(handles_layer(
+            &board,
+            &scene,
+            view,
+            slot_layer(children.len(), slots),
+        ));
 
         rect()
             .width(Size::fill())
@@ -208,8 +234,26 @@ impl Component for CanvasLayers {
                     origin.set(next);
                 }
             })
-            .children(children.collect::<Vec<_>>())
+            .children(children)
     }
+}
+
+/// Freya layer of slot `index` out of `slots`.
+///
+/// Freya paints by layer, and a node's layer is its depth plus the offsets
+/// of its ancestors, with no stacking per subtree: a deep text box would
+/// paint over the shallow canvas of the next pass. Each slot is pushed
+/// above the deepest node of the slot below it, while the whole stack
+/// stays under the canvas tools (`Layer::Overlay`, `i16::MAX / 16` up).
+fn slot_layer(index: usize, slots: usize) -> Layer {
+    /// Deeper than any text box subtree; popups leave it as overlays.
+    const MAX_STEP: usize = 96;
+    /// Below this a box's own nodes could reach the next slot.
+    const MIN_STEP: usize = 24;
+    /// Room for the whole stack under the tools.
+    const BUDGET: usize = 1800;
+    let step = (BUDGET / slots.max(1)).clamp(MIN_STEP, MAX_STEP);
+    Layer::Relative(i16::try_from(index * step).unwrap_or(i16::MAX / 2))
 }
 
 /// Follow board redraws: refresh the scene when its revision moves, and the
@@ -246,7 +290,7 @@ fn watch_board(
 }
 
 #[sismo::function("canvas_text::pass_canvas")]
-fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize) -> Element {
+fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize, layer: Layer) -> Element {
     // Render callbacks never compare unequal, so a pass that changes shape
     // must remount: the key carries the whole pass.
     let key = format!(
@@ -257,6 +301,7 @@ fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize) -> Elem
     let mut cache = InkCache::default();
     rect()
         .key(key)
+        .layer(layer)
         .position(Position::new_absolute().top(0.).left(0.))
         .width(Size::fill())
         .height(Size::fill())
@@ -281,8 +326,7 @@ fn pass_canvas(board: &Arc<Mutex<Board>>, pass: PaintPass, index: usize) -> Elem
         .into_element()
 }
 
-/// The images and text boxes of one layer, images below. The handles of
-/// the box under edit or the selected image sit on top.
+/// The text boxes of one layer, right above its pass.
 #[sismo::function("canvas_text::text_layer")]
 fn text_layer(
     board: &Arc<Mutex<Board>>,
@@ -291,19 +335,8 @@ fn text_layer(
     view: View,
     editor: TextEditorSlot,
     item: Option<ItemId>,
+    slot: Layer,
 ) -> Element {
-    let images = layer.images.iter().filter_map(|image| {
-        Some(
-            CanvasImageBox {
-                item: item?,
-                image: image.clone(),
-                view,
-                selected: scene.selected_image == Some(image.id),
-                outlined: scene.image_mode,
-            }
-            .into_element(),
-        )
-    });
     let boxes = layer.texts.iter().map(|text| {
         let editing = scene.editing == Some(text.text.id);
         CanvasTextBox {
@@ -317,9 +350,39 @@ fn text_layer(
         }
         .into_element()
     });
-    let text_handles = layer
-        .texts
+    rect()
+        .key(format!("texts-{}", layer.index))
+        .layer(slot)
+        .position(Position::new_absolute().top(0.).left(0.))
+        .width(Size::fill())
+        .height(Size::fill())
+        .maybe(layer.opacity < 0.999, |r| r.opacity(layer.opacity))
+        .children(boxes)
+        .into_element()
+}
+
+/// Above every layer: image bounds (the board paints the pixels) and the
+/// handles of the box under edit or the selected image, so they stay
+/// reachable whatever covers their layer.
+#[sismo::function("canvas_text::handles_layer")]
+fn handles_layer(board: &Arc<Mutex<Board>>, scene: &TextScene, view: View, slot: Layer) -> Element {
+    let images = scene.layers.iter().flat_map(|layer| &layer.images);
+    let outlines = images.clone().filter_map(|image| {
+        let selected = scene.selected_image == Some(image.id);
+        outline(selected, scene.image_mode).map(|(width, color)| {
+            ImageOutline {
+                image: image.clone(),
+                view,
+                width,
+                color,
+            }
+            .into_element()
+        })
+    });
+    let text_handles = scene
+        .layers
         .iter()
+        .flat_map(|layer| &layer.texts)
         .find(|text| scene.editing == Some(text.text.id))
         .map(|text| BoxHandles {
             board: Arc::clone(board),
@@ -328,9 +391,8 @@ fn text_layer(
             height: text.height,
             view,
         });
-    let image_handles = layer
-        .images
-        .iter()
+    let image_handles = images
+        .clone()
         .find(|image| scene.selected_image == Some(image.id))
         .map(|image| BoxHandles {
             board: Arc::clone(board),
@@ -340,33 +402,29 @@ fn text_layer(
             view,
         });
     rect()
-        .key(format!("texts-{}", layer.index))
+        .key("canvas-handles")
+        .layer(slot)
         .position(Position::new_absolute().top(0.).left(0.))
         .width(Size::fill())
         .height(Size::fill())
-        .maybe(layer.opacity < 0.999, |r| r.opacity(layer.opacity))
-        .children(images)
-        .children(boxes)
+        .children(outlines)
         .maybe_child(text_handles)
         .maybe_child(image_handles)
         .into_element()
 }
 
-/// One image on the canvas. Never takes pointer input: taps reach the
-/// surface, which selects it through the board.
+/// Bounds of one image. Never takes pointer input: taps reach the surface,
+/// which selects images through the board.
 #[derive(Clone, PartialEq)]
-struct CanvasImageBox {
-    item: ItemId,
+struct ImageOutline {
     image: ImageBox,
     view: View,
-    selected: bool,
-    /// Show the bounds even while idle, so images can be found in image
-    /// mode.
-    outlined: bool,
+    width: f32,
+    color: Color,
 }
 
-impl Component for CanvasImageBox {
-    #[sismo::function("canvas_text::image_box_render")]
+impl Component for ImageOutline {
+    #[sismo::function("canvas_text::image_outline_render")]
     fn render(&self) -> impl IntoElement {
         let view = self.view;
         let frame = self.image.frame;
@@ -378,22 +436,12 @@ impl Component for CanvasImageBox {
             .height(Size::px(self.image.height * view.scale))
             .rotate(frame.rotation)
             .interactive(false)
-            .overflow(Overflow::Clip)
-            .map(
-                outline(self.selected, self.outlined),
-                |r, (width, color)| {
-                    r.border(
-                        Border::new()
-                            .width(width)
-                            .alignment(BorderAlignment::Inner)
-                            .fill(color),
-                    )
-                },
+            .border(
+                Border::new()
+                    .width(self.width)
+                    .alignment(BorderAlignment::Inner)
+                    .fill(self.color),
             )
-            .child(AssetImage {
-                item: self.item,
-                name: self.image.asset.clone(),
-            })
     }
 
     fn render_key(&self) -> DiffKey {
@@ -464,7 +512,7 @@ impl Component for CanvasTextBox {
             .on_sized(move |event: Event<SizedEventData>| {
                 lock(&board).set_text_height(id, event.area.height() / view.scale);
             })
-            .padding(BOX_PADDING)
+            .padding((BOX_PADDING.0 * view.scale, BOX_PADDING.1 * view.scale))
             .map(outline(self.editing, self.outlined), |r, (width, color)| {
                 r.border(
                     Border::new()

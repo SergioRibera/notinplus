@@ -470,6 +470,21 @@ fn load(source: &Source) -> Result<Loaded, ImageError> {
     })
 }
 
+/// Pixels of `name` in `item`'s `assets/` folder, decoded as RGBA and no
+/// longer on any side than images are shown at. Blocking: run it off the
+/// UI thread.
+///
+/// # Errors
+/// The file is missing, too big or not an image.
+#[sismo::function("images::asset_rgba")]
+pub(crate) fn asset_rgba(item: ItemId, name: &str) -> Result<image::RgbaImage, ImageError> {
+    let source = ItemImages::new(item)
+        .resolve(&format!("{ASSETS_DIR}/{name}"))
+        .ok_or(ImageError::Unsupported)?;
+    let loaded = load(&source)?;
+    Ok(image::load_from_memory(&loaded.bytes)?.into_rgba8())
+}
+
 /// An image of a note, loading in the background.
 #[derive(Clone, PartialEq)]
 struct NoteImage {
@@ -589,50 +604,6 @@ fn use_loaded(item: ItemId, source: Option<Source>) -> State<Load> {
         });
     });
     state
-}
-
-/// One file of an item's `assets/` folder, filling its parent (canvas
-/// images). Shows a placeholder while loading and a muted icon when the
-/// file cannot be read.
-#[derive(Clone, PartialEq)]
-pub(crate) struct AssetImage {
-    pub(crate) item: ItemId,
-    /// File name inside `assets/`.
-    pub(crate) name: String,
-}
-
-impl Component for AssetImage {
-    #[sismo::function("images::asset_image")]
-    fn render(&self) -> impl IntoElement {
-        let images = ItemImages::new(self.item);
-        let state = use_loaded(
-            self.item,
-            images.resolve(&format!("{ASSETS_DIR}/{}", self.name)),
-        );
-        let p = notin_ui_kit::palette();
-        let placeholder = |icon: Bytes| {
-            rect()
-                .width(Size::fill())
-                .height(Size::fill())
-                .background(p.s2)
-                .center()
-                .child(
-                    SvgViewer::new(icon)
-                        .color(p.t3)
-                        .width(Size::px(22.))
-                        .height(Size::px(22.)),
-                )
-                .into_element()
-        };
-        match &*state.read() {
-            Load::Ready(loaded) => ImageViewer::new((loaded.key, loaded.bytes.clone()))
-                .width(Size::fill())
-                .height(Size::fill())
-                .into_element(),
-            Load::Loading => placeholder(freya::icons::lucide::image()),
-            Load::Failed => placeholder(freya::icons::lucide::image_off()),
-        }
-    }
 }
 
 impl Component for NoteImage {

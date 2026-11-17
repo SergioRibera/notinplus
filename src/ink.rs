@@ -925,7 +925,16 @@ impl Component for LassoBar {
             move |()| f(&mut lock(&board))
         };
         let color_board = Arc::clone(board);
-        let items = vec![
+        let to_layer = |step: crate::canvas::Step| {
+            let board = Arc::clone(board);
+            move |()| {
+                if !lock(&board).selection_step_layer(step) {
+                    Toasts::get().show(Toast::new(tr!("ink-lasso-layer-none")));
+                }
+            }
+        };
+        let layered = lock(board).doc().layers.len() > 1;
+        let mut items = vec![
             BarItem::action(tr!("ink-lasso-move"), lucide::hand_grab(), |()| {
                 Toasts::get().show(Toast::new(tr!("ink-lasso-move-hint")));
             }),
@@ -951,13 +960,29 @@ impl Component for LassoBar {
                 lucide::undo_dot(),
                 b(Board::selection_original),
             ),
+        ];
+        if layered {
+            items.extend([
+                BarItem::action(
+                    tr!("ink-lasso-layer-up"),
+                    lucide::arrow_up_to_line(),
+                    to_layer(crate::canvas::Step::Up),
+                ),
+                BarItem::action(
+                    tr!("ink-lasso-layer-down"),
+                    lucide::arrow_down_to_line(),
+                    to_layer(crate::canvas::Step::Down),
+                ),
+            ]);
+        }
+        items.extend([
             BarItem::Divider,
             BarItem::action(
                 tr!("ink-lasso-delete"),
                 lucide::trash_2(),
                 b(Board::selection_delete),
             ),
-        ];
+        ]);
         // The selection is in pane coordinates; the bar floats over it in
         // the window, kept inside the pane.
         let (x0, y0, x1, y1) = self.bounds;
@@ -1115,12 +1140,62 @@ impl Layers {
             .into_element()
     }
 
-    /// New layer and delete layer.
-    fn actions(&self, bump: impl Fn() + Copy + 'static) -> Rect {
+    /// Name of the selected layer, editable in place.
+    fn name_row(
+        &self,
+        layer: &crate::canvas::LayerSnapshot,
+        bump: impl Fn() + Copy + 'static,
+    ) -> Element {
+        let board = Arc::clone(&self.board);
+        let id = layer.id;
+        notin_ui_kit::InlineEdit::row(
+            tr!("ink-layer-name"),
+            layer.name.clone(),
+            move |name: String| {
+                lock(&board).rename_layer(id, &name);
+                bump();
+            },
+        )
+        .into_element()
+    }
+
+    /// New layer, move the selected one up or down, delete it.
+    fn actions(&self, active: u32, bump: impl Fn() + Copy + 'static) -> Rect {
+        use crate::canvas::Step;
+        use freya::icons::lucide;
         let (add, remove) = (Arc::clone(&self.board), Arc::clone(&self.board));
+        let guard = lock(&self.board);
+        let (can_up, can_down) = (
+            guard.layer_beside(active, Step::Up).is_some(),
+            guard.layer_beside(active, Step::Down).is_some(),
+        );
+        drop(guard);
+        let step = |step: Step, icon: Bytes, hint: String, enabled: bool| {
+            let board = Arc::clone(&self.board);
+            IconButton::new(icon, hint)
+                .size(tokens::size::BUTTON_SM)
+                .enabled(enabled)
+                .on_press(move |_| {
+                    lock(&board).step_layer(active, step);
+                    bump();
+                })
+        };
         rect()
             .horizontal()
             .spacing(8.0)
+            .cross_align(Alignment::center())
+            .child(step(
+                Step::Up,
+                lucide::arrow_up(),
+                tr!("ink-layer-up"),
+                can_up,
+            ))
+            .child(step(
+                Step::Down,
+                lucide::arrow_down(),
+                tr!("ink-layer-down"),
+                can_down,
+            ))
             .child(
                 notin_ui_kit::Button::new(tr!("ink-layer-new"))
                     .tonal()
@@ -1169,7 +1244,12 @@ impl Component for Layers {
             .padding(8.0)
             .spacing(8.0)
             .child(notin_ui_kit::Group::default().children(rows))
-            .child(self.actions(bump))
+            .maybe_child(layers.iter().find(|layer| layer.id == active).map(|layer| {
+                notin_ui_kit::Group::default()
+                    .child(self.name_row(layer, bump))
+                    .into_element()
+            }))
+            .child(self.actions(active, bump))
             .child(
                 Text::new(tr!("ink-layer-hint"))
                     .role(TextRole::Hint)

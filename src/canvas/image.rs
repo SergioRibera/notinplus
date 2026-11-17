@@ -45,6 +45,15 @@ impl Board {
         }
     }
 
+    /// Library item whose `assets/` folder holds the images; `None` (scratch
+    /// surfaces) paints none.
+    pub fn set_image_item(&mut self, item: Option<crate::library::ItemId>) {
+        if self.pictures.set_item(item) {
+            self.ink_rev += 1;
+            self.notify();
+        }
+    }
+
     /// Select a stored image. Ends the previous selection first.
     #[sismo::function("canvas_image::select")]
     pub fn select_image(&mut self, id: ImageBoxId) {
@@ -75,6 +84,8 @@ impl Board {
         }
         session.current.frame = frame;
         session.current.height = height;
+        // The board paints the session's copy.
+        self.ink_rev += 1;
         self.touch_text_scene();
         self.notify();
     }

@@ -1,14 +1,16 @@
-//! Lasso: circle ink to select it, then move, recolor, duplicate,
-//! or delete it.
+//! Lasso: circle ink, text boxes and images to select them, then move,
+//! recolor, duplicate, delete them or send them to another layer.
 
 use freya_engine::prelude::{Canvas, Color as SkColor, Paint, PaintStyle, PathBuilder, PathEffect};
 
 use notin_beautify::{Context, Outcome, Pt, StrokeShape, beautify_all};
 
-use super::Board;
+use super::{Board, Step};
 use crate::brush::Stroke;
 use crate::doc_op::DocOp;
 use crate::ids::StrokeId;
+use crate::image_box::ImageBoxId;
+use crate::text_box::{TextBoxId, TextFrame};
 
 /// Share of a stroke's points that must fall inside the loop.
 const INSIDE_SHARE: f32 = 0.6;
@@ -16,11 +18,15 @@ const INSIDE_SHARE: f32 = 0.6;
 const GRAB_SLACK: f32 = 12.0;
 /// World offset of a duplicate.
 const DUPLICATE_OFFSET: f32 = 24.0;
+/// World distance from a text box's left edge to where its lines start.
+const TEXT_START: f32 = 16.0;
 
 /// What the lasso holds.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Selection {
     pub strokes: Vec<StrokeId>,
+    pub texts: Vec<TextBoxId>,
+    pub images: Vec<ImageBoxId>,
     /// World bounds `(min_x, min_y, max_x, max_y)`.
     pub bounds: (f32, f32, f32, f32),
     /// World offset of a move in progress.
@@ -31,7 +37,15 @@ pub struct Selection {
 impl Selection {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.strokes.is_empty()
+        self.strokes.is_empty() && self.texts.is_empty() && self.images.is_empty()
+    }
+
+    /// World offset the selection is dragged by, while it is.
+    const fn drag(&self) -> Option<(f32, f32)> {
+        match self.grab {
+            Some(_) => Some(self.offset),
+            None => None,
+        }
     }
 
     /// Current world offset of selected ink being dragged.
@@ -139,6 +153,10 @@ impl Board {
             && let Some(grab) = selection.grab
         {
             selection.offset = (world.0 - grab.0, world.1 - grab.1);
+            if !selection.texts.is_empty() {
+                // Text boxes are laid out by the UI from the scene.
+                self.touch_text_scene();
+            }
             self.notify();
             return;
         }
@@ -200,6 +218,24 @@ impl Board {
                     }
                 }
             }
+            // A box is caught when the loop goes around its centre or the
+            // start of its lines: short text leaves the centre of a wide box
+            // blank.
+            for text in &layer.texts {
+                let height = self.text_height(text.id);
+                let start = TEXT_START.min(text.frame.width * 0.5);
+                let line_start = text.frame.to_world(height, start, height * 0.5);
+                if inside(polygon, text.frame.center(height)) || inside(polygon, line_start) {
+                    selection.texts.push(text.id);
+                    bounds = Some(union(bounds, text.frame.bounds(height)));
+                }
+            }
+            for image in &layer.images {
+                if inside(polygon, image.frame.center(image.height)) {
+                    selection.images.push(image.id);
+                    bounds = Some(union(bounds, image.frame.bounds(image.height)));
+                }
+            }
         }
         selection.bounds = bounds.unwrap_or_default();
         selection
@@ -210,11 +246,31 @@ impl Board {
         let Some(selection) = self.lasso.selection.clone() else {
             return;
         };
-        let ops = selection
+        let moved = |frame: TextFrame| TextFrame {
+            x: frame.x + dx,
+            y: frame.y + dy,
+            ..frame
+        };
+        let mut ops: Vec<DocOp> = selection
             .strokes
             .iter()
             .map(|id| DocOp::MoveStroke { id: *id, dx, dy })
             .collect();
+        ops.extend(selection.texts.iter().filter_map(|id| {
+            let text = self.doc.text(*id)?;
+            Some(DocOp::SetTextFrame {
+                id: *id,
+                frame: moved(text.frame),
+            })
+        }));
+        ops.extend(selection.images.iter().filter_map(|id| {
+            let image = self.doc.image(*id)?;
+            Some(DocOp::SetImageFrame {
+                id: *id,
+                frame: moved(image.frame),
+                height: image.height,
+            })
+        }));
         self.apply_ops_as_one(ops);
         if let Some(s) = self.lasso.selection.as_mut() {
             s.bounds = (
@@ -240,6 +296,14 @@ impl Board {
                 ops.push(DocOp::PushStroke { layer_id, stroke });
             }
         }
+        ops.extend(selection.texts.iter().filter_map(|id| {
+            let text = self.doc.text(*id)?;
+            Some(DocOp::UpdateText {
+                id: *id,
+                markdown: text.markdown.clone(),
+                color,
+            })
+        }));
         self.apply_ops_as_one(ops);
     }
 
@@ -269,11 +333,37 @@ impl Board {
                 ops.push(DocOp::PushStroke { layer_id, stroke });
             }
         }
+        let shifted = |frame: TextFrame| TextFrame {
+            x: frame.x + d,
+            y: frame.y + d,
+            ..frame
+        };
+        for id in &selection.texts {
+            if let Some((layer_id, text)) = self.doc.locate_text(*id) {
+                let mut text = text.clone();
+                text.id = TextBoxId::new_v4();
+                text.frame = shifted(text.frame);
+                if let Some(height) = self.text_heights.get(id).copied() {
+                    self.text_heights.insert(text.id, height);
+                }
+                copy.texts.push(text.id);
+                ops.push(DocOp::AddText { layer_id, text });
+            }
+        }
+        for id in &selection.images {
+            if let Some((layer_id, image)) = self.doc.locate_image(*id) {
+                let mut image = image.clone();
+                image.id = ImageBoxId::new_v4();
+                image.frame = shifted(image.frame);
+                copy.images.push(image.id);
+                ops.push(DocOp::AddImage { layer_id, image });
+            }
+        }
         self.apply_ops_as_one(ops);
         self.lasso.selection = Some(copy);
     }
 
-    /// Delete the selected ink.
+    /// Delete the selection.
     #[sismo::function("lasso::delete")]
     pub fn selection_delete(&mut self) {
         let Some(selection) = self.lasso.selection.take() else {
@@ -283,8 +373,77 @@ impl Board {
             .strokes
             .iter()
             .map(|id| DocOp::RemoveStroke { id: *id })
+            .chain(
+                selection
+                    .texts
+                    .iter()
+                    .map(|id| DocOp::DeleteText { id: *id }),
+            )
+            .chain(
+                selection
+                    .images
+                    .iter()
+                    .map(|id| DocOp::DeleteImage { id: *id }),
+            )
             .collect();
         self.apply_ops_as_one(ops);
+    }
+
+    /// Layer every selected item can go to, one `step` away from its own:
+    /// the nearest visible, unlocked layer that way.
+    fn layer_for_step(&self, from: u32, step: Step) -> Option<u32> {
+        let mut at = from;
+        loop {
+            at = self.layer_beside(at, step)?;
+            let layer = self.doc.layer(at)?;
+            if layer.visible && !layer.locked {
+                return Some(at);
+            }
+        }
+    }
+
+    /// Send each selected item to the next layer `step` from its own
+    /// (skipping hidden and locked ones), as one undo step. It lands on top
+    /// of what that layer already holds. Items with nowhere to go stay.
+    /// `false` when nothing moved.
+    #[sismo::function("lasso::step_layer")]
+    pub fn selection_step_layer(&mut self, step: Step) -> bool {
+        let Some(selection) = self.lasso.selection.clone() else {
+            return false;
+        };
+        let mut ops = Vec::new();
+        for id in &selection.strokes {
+            if let Some((from, stroke)) = self.doc.locate_stroke(*id)
+                && let Some(layer_id) = self.layer_for_step(from, step)
+            {
+                ops.push(DocOp::RemoveStroke { id: *id });
+                ops.push(DocOp::PushStroke { layer_id, stroke });
+            }
+        }
+        for id in &selection.texts {
+            if let Some((from, text)) = self.doc.locate_text(*id)
+                && let Some(layer_id) = self.layer_for_step(from, step)
+            {
+                let text = text.clone();
+                ops.push(DocOp::DeleteText { id: *id });
+                ops.push(DocOp::AddText { layer_id, text });
+            }
+        }
+        for id in &selection.images {
+            if let Some((from, image)) = self.doc.locate_image(*id)
+                && let Some(layer_id) = self.layer_for_step(from, step)
+            {
+                let image = image.clone();
+                ops.push(DocOp::DeleteImage { id: *id });
+                ops.push(DocOp::AddImage { layer_id, image });
+            }
+        }
+        if ops.is_empty() {
+            return false;
+        }
+        self.apply_ops_as_one(ops);
+        self.notify();
+        true
     }
 
     /// Beautify the selected ink: handwriting is corrected word by word
@@ -407,12 +566,24 @@ impl Board {
         let Some(selection) = self.lasso.selection.as_ref() else {
             return;
         };
-        let bounds = selection
+        let ink = selection
             .strokes
             .iter()
             .filter_map(|id| self.doc.find_stroke(*id))
             .flat_map(|s| s.display_points().into_owned())
-            .fold(None, |acc, p| Some(union(acc, (p.x, p.y, p.x, p.y))));
+            .map(|p| (p.x, p.y, p.x, p.y));
+        let texts = selection.texts.iter().filter_map(|id| {
+            let text = self.doc.text(*id)?;
+            Some(text.frame.bounds(self.text_height(*id)))
+        });
+        let images = selection.images.iter().filter_map(|id| {
+            let image = self.doc.image(*id)?;
+            Some(image.frame.bounds(image.height))
+        });
+        let bounds = ink
+            .chain(texts)
+            .chain(images)
+            .fold(None, |acc, b| Some(union(acc, b)));
         if let (Some(bounds), Some(selection)) = (bounds, self.lasso.selection.as_mut()) {
             selection.bounds = bounds;
         }
@@ -432,8 +603,26 @@ impl Board {
         self.lasso
             .selection
             .as_ref()
-            .filter(|s| s.grab.is_some() && s.strokes.contains(&id))
-            .map(|s| s.offset)
+            .filter(|s| s.strokes.contains(&id))
+            .and_then(Selection::drag)
+    }
+
+    /// Whether text box `id` is being dragged, and by how much.
+    pub(super) fn drag_offset_of_text(&self, id: TextBoxId) -> Option<(f32, f32)> {
+        self.lasso
+            .selection
+            .as_ref()
+            .filter(|s| s.texts.contains(&id))
+            .and_then(Selection::drag)
+    }
+
+    /// Whether image `id` is being dragged, and by how much.
+    pub(super) fn drag_offset_of_image(&self, id: ImageBoxId) -> Option<(f32, f32)> {
+        self.lasso
+            .selection
+            .as_ref()
+            .filter(|s| s.images.contains(&id))
+            .and_then(Selection::drag)
     }
 
     /// Draw the lasso in the theme accent `[r, g, b]`.
@@ -615,5 +804,87 @@ mod board_tests {
         assert!(board.selection().is_some());
         board.set_input_mode(InputMode::Draw);
         assert!(board.selection().is_none());
+    }
+
+    /// A board with a stroke, a text box and an image inside [`SQUARE`] on
+    /// the bottom layer, and an empty layer above it.
+    fn mixed_board() -> (Board, u32, u32) {
+        let mut board = Board {
+            last_surface_size: (100.0, 100.0),
+            ..Board::default()
+        };
+        let bottom = board.doc().active_layer;
+        draw(&mut board, (20.0, 20.0), (60.0, 60.0));
+        board.begin_text_draft(30.0, 30.0);
+        board.set_session_markdown("hola");
+        board.end_text_session();
+        assert!(board.add_image_at_view_center("a.png", (20, 20)));
+        board.end_image_session();
+        let top = board.add_layer();
+        (board, bottom, top)
+    }
+
+    fn holder(board: &Board) -> (Option<u32>, Option<u32>, Option<u32>) {
+        let doc = board.doc();
+        let layer_of =
+            |f: &dyn Fn(&crate::doc::Layer) -> bool| doc.layers.iter().find(|l| f(l)).map(|l| l.id);
+        (
+            layer_of(&|l| !l.strokes.is_empty()),
+            layer_of(&|l| !l.texts.is_empty()),
+            layer_of(&|l| !l.images.is_empty()),
+        )
+    }
+
+    #[test]
+    fn lasso_takes_text_boxes_and_images_too() {
+        let (mut board, ..) = mixed_board();
+        board.set_input_mode(InputMode::Lasso);
+        lasso(&mut board, &SQUARE);
+        let selection = board.selection().expect("selection");
+        assert_eq!(
+            (
+                selection.strokes.len(),
+                selection.texts.len(),
+                selection.images.len()
+            ),
+            (1, 1, 1)
+        );
+        board.selection_delete();
+        let doc = board.doc();
+        assert!(
+            doc.layers
+                .iter()
+                .all(|l| l.texts.is_empty() && l.images.is_empty())
+        );
+        assert_eq!(doc.stroke_count(), 0);
+    }
+
+    #[test]
+    fn selection_goes_up_and_down_a_layer_as_one_step() {
+        let (mut board, bottom, top) = mixed_board();
+        board.set_input_mode(InputMode::Lasso);
+        lasso(&mut board, &SQUARE);
+        let depth = board.undo_depth();
+
+        assert!(!board.selection_step_layer(crate::canvas::Step::Down));
+        assert!(board.selection_step_layer(crate::canvas::Step::Up));
+        assert_eq!(holder(&board), (Some(top), Some(top), Some(top)));
+        assert_eq!(board.undo_depth(), depth + 1);
+        assert!(!board.selection_step_layer(crate::canvas::Step::Up));
+
+        assert!(board.undo());
+        assert_eq!(holder(&board), (Some(bottom), Some(bottom), Some(bottom)));
+    }
+
+    #[test]
+    fn locked_layers_are_skipped() {
+        let (mut board, bottom, middle) = mixed_board();
+        let top = board.add_layer();
+        board.set_layer_locked(middle, true);
+        board.set_input_mode(InputMode::Lasso);
+        lasso(&mut board, &SQUARE);
+        assert!(board.selection_step_layer(crate::canvas::Step::Up));
+        assert_ne!(holder(&board).0, Some(bottom));
+        assert_eq!(holder(&board), (Some(top), Some(top), Some(top)));
     }
 }
