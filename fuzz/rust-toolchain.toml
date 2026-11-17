@@ -1,0 +1,6 @@
+# The sanitizer flags in build.sh need nightly. Without this file rustup
+# picks the workspace's pinned stable from the parent directory, which
+# wins over whatever toolchain CI installs as the default.
+[toolchain]
+channel = "nightly"
+profile = "minimal"
