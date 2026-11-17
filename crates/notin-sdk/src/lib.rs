@@ -57,7 +57,7 @@ pub mod prelude {
         CreationRequest, DocId, DocMeta, DocumentKind, ExportFile, Face, FaceContext, Folded, Font,
         Hit, HostServices, HostUi, ImportPreview, ImportedFile, IndexReport, KindChoice, KindColor,
         KindInfo, Mark, NetFailure, OutlineIcon, OutlineNode, Payload, PayloadError, Plugin,
-        PluginInfo, Registrar, SearchQuery, SelectionMenu, Share, SourceRef, TextBody, Ui,
-        UserMessage, tr,
+        PluginInfo, Quote, QuoteOption, QuoteParts, Registrar, SearchQuery, SelectionMenu, Share,
+        SourceRef, TextBody, Ui, UserMessage, tr,
     };
 }

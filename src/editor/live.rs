@@ -1,13 +1,21 @@
 //! Quotes that keep showing what their source holds.
+//!
+//! Works for every document kind through the plugin contract: the kind
+//! writes the quote ([`notin_plugin::DocumentKind::quote_with`]) and names
+//! the parts a reader may show or hide
+//! ([`notin_plugin::DocumentKind::quote_options`]). The reader's choices
+//! live on the quote's marker, next to its text colour:
+//! `> [!notein:live color=#rrggbb hide=a,b show=c]`.
 
 use freya::prelude::*;
 use freya_markdown_editor::document::TRANSCLUSION_COLOR;
 use freya_markdown_editor::prelude::*;
 use notin_i18n::tr;
 use notin_plugin::bookmark::SourceRef;
+use notin_plugin::kind::{QuoteOption, QuoteParts};
 use notin_plugin::services::Placement;
 use notin_ui_kit::theme::palette;
-use notin_ui_kit::{IconButton, Popover, press_anchor, tokens};
+use notin_ui_kit::{IconButton, ListRow, Popover, Trailing, press_anchor, tokens};
 
 use super::CloseOnNavigate;
 use crate::references;
@@ -15,6 +23,13 @@ use crate::state::LibraryView;
 
 /// Marker of a quote that shows its source as it is now.
 pub const LIVE_QUOTE: &str = "notein:live";
+/// Marker setting: ids of the kind's quote options the reader hid.
+pub(crate) const QUOTE_HIDE: &str = "hide";
+/// Marker setting: ids of the kind's quote options the reader showed.
+pub(crate) const QUOTE_SHOW: &str = "show";
+
+/// Marker settings this host reads; any other is kept but logged.
+const KNOWN_SETTINGS: [&str; 3] = [TRANSCLUSION_COLOR, QUOTE_HIDE, QUOTE_SHOW];
 
 /// Draws [`LIVE_QUOTE`] transclusions from their source.
 pub(super) struct LiveQuotes;
@@ -30,18 +45,32 @@ impl Decorator for LiveQuotes {
         if transclusion.kind != LIVE_QUOTE || try_consume_context::<InsideQuote>().is_some() {
             return None;
         }
-        let mut theme = transclusion.theme.clone();
-        if let Some(color) = transclusion.color() {
-            theme = theme.tinted(color.into());
+        for (key, value) in transclusion.attrs {
+            if !KNOWN_SETTINGS.contains(&key.as_str()) {
+                log::debug!("live quote: unknown setting {key}={value}, kept as is");
+            }
         }
+        let color = transclusion.color();
+        let theme = color.map_or_else(
+            || transclusion.theme.clone(),
+            |color| transclusion.theme.clone().tinted(color.into()),
+        );
+        let target = SourceRef::from_link(transclusion.url);
         Some(
             LiveQuote {
-                target: SourceRef::from_link(transclusion.url),
+                options: references::quote_options(&target),
+                target,
                 label: transclusion.label.to_owned(),
                 fallback: transclusion.fallback.to_owned(),
                 theme,
-                color: transclusion.color(),
-                recolor: (!transclusion.read_only)
+                settings: Settings {
+                    color,
+                    parts: QuoteParts::from_lists(
+                        transclusion.attr(QUOTE_HIDE),
+                        transclusion.attr(QUOTE_SHOW),
+                    ),
+                },
+                edit: (!transclusion.read_only)
                     .then_some((transclusion.controller, transclusion.block)),
             }
             .into_element(),
@@ -49,19 +78,28 @@ impl Decorator for LiveQuotes {
     }
 }
 
+/// What the reader chose for one quote.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Settings {
+    /// Text colour; `None` follows the text around the quote.
+    color: Option<Rgba>,
+    parts: QuoteParts,
+}
+
 #[derive(Clone, PartialEq)]
 struct LiveQuote {
     target: SourceRef,
+    /// Parts its kind lets the reader show or hide.
+    options: Vec<QuoteOption>,
     /// Source as written when inserted.
     label: String,
     /// Content as written when inserted.
     fallback: String,
     /// The editor's theme with the quote's text colour.
     theme: EditorTheme,
-    /// Colour chosen for this quote, `None` while it follows its text.
-    color: Option<Rgba>,
-    /// Where a new colour is written; `None` while read only.
-    recolor: Option<(EditorController, BlockId)>,
+    settings: Settings,
+    /// Where new settings are written; `None` while read only.
+    edit: Option<(EditorController, BlockId)>,
 }
 
 impl Component for LiveQuote {
@@ -71,7 +109,8 @@ impl Component for LiveQuote {
         let mut hovered = use_state(|| false);
         let data = LibraryView::get().data();
         let chip = references::display(&self.target, data.as_deref());
-        let (body, source, gone) = match references::quote(&self.target, data.as_deref()) {
+        let found = references::quote_with(&self.target, data.as_deref(), &self.settings.parts);
+        let (body, source, gone) = match found {
             Some(quote) => (quote.body, quote.source, false),
             None => (self.fallback.clone(), self.label.clone(), true),
         };
@@ -80,18 +119,42 @@ impl Component for LiveQuote {
         let tint = chip.color.resolve(&p);
         let mut theme = self.theme.clone();
         if gone {
-            theme.colors.text = p.t3;
+            theme = theme.tinted(p.t3);
         }
-        let target = self.target.clone();
-        let recolor = self.recolor.map(|(controller, block)| {
-            let current = self.color;
-            IconButton::new(freya::icons::lucide::palette(), tr!("editor-quote-color"))
+        let open = {
+            let target = self.target.clone();
+            move || {
+                crate::plugins::navigate::open(&target, Placement::Preferred);
+                if let Some(close) = try_consume_context::<CloseOnNavigate>() {
+                    (close.0)();
+                }
+            }
+        };
+        let menu = self.edit.map(|(controller, block)| {
+            let options = self.options.clone();
+            let settings = self.settings.clone();
+            let (icon, hint) = if options.is_empty() {
+                (freya::icons::lucide::palette(), tr!("editor-quote-color"))
+            } else {
+                (
+                    freya::icons::lucide::ellipsis(),
+                    tr!("editor-quote-options"),
+                )
+            };
+            IconButton::new(icon, hint)
                 .size(tokens::size::BUTTON_SM * zoom.max(0.6))
                 .on_press(move |event: Event<PressEventData>| {
                     event.stop_propagation();
-                    open_colors(press_anchor(&event), controller, block, current);
+                    QuoteMenu {
+                        controller,
+                        block,
+                        options: options.clone(),
+                        settings: settings.clone(),
+                    }
+                    .open(press_anchor(&event));
                 })
         });
+        let footer_open = open.clone();
         rect()
             .width(Size::fill())
             .padding((px(8.), px(12.)))
@@ -112,23 +175,16 @@ impl Component for LiveQuote {
             .cursor(CursorIcon::Pointer)
             .on_pointer_enter(move |_| hovered.set(true))
             .on_pointer_leave(move |_| hovered.set_if_modified(false))
+            // Links and chips inside the body take their own taps; the rest
+            // of the quote opens its source.
             .on_press(move |event: Event<PressEventData>| {
                 event.stop_propagation();
-                crate::plugins::navigate::open(&target, Placement::Preferred);
-                if let Some(close) = try_consume_context::<CloseOnNavigate>() {
-                    (close.0)();
-                }
+                open();
             })
-            // Taps go through to the quote, which opens its source.
-            .child(
-                rect()
-                    .width(Size::fill())
-                    .interactive(false)
-                    .child(QuoteBody {
-                        markdown: body,
-                        theme,
-                    }),
-            )
+            .child(QuoteBody {
+                markdown: body,
+                theme,
+            })
             .child(
                 rect()
                     .width(Size::fill())
@@ -137,31 +193,41 @@ impl Component for LiveQuote {
                     .cross_align(Alignment::Center)
                     .spacing(px(6.))
                     .child(
-                        SvgViewer::new(chip.icon)
-                            .color(if gone { p.t3 } else { tint })
-                            .width(Size::px(px(13.)))
-                            .height(Size::px(px(13.))),
-                    )
-                    .child(
-                        label()
+                        rect()
                             .width(Size::flex(1.))
-                            .color(p.t2)
-                            .font_size(px(13.))
-                            .max_lines(1)
-                            .text_overflow(TextOverflow::Ellipsis)
-                            .text(if gone {
-                                tr!("editor-quote-gone", "source" => source)
-                            } else {
-                                source
-                            }),
+                            .horizontal()
+                            .cross_align(Alignment::Center)
+                            .spacing(px(6.))
+                            .on_press(move |event: Event<PressEventData>| {
+                                event.stop_propagation();
+                                footer_open();
+                            })
+                            .child(
+                                SvgViewer::new(chip.icon)
+                                    .color(if gone { p.t3 } else { tint })
+                                    .width(Size::px(px(13.)))
+                                    .height(Size::px(px(13.))),
+                            )
+                            .child(
+                                label()
+                                    .color(p.t2)
+                                    .font_size(px(13.))
+                                    .max_lines(1)
+                                    .text_overflow(TextOverflow::Ellipsis)
+                                    .text(if gone {
+                                        tr!("editor-quote-gone", "source" => source)
+                                    } else {
+                                        source
+                                    }),
+                            )
+                            .child(
+                                SvgViewer::new(freya::icons::lucide::arrow_up_right())
+                                    .color(p.t3)
+                                    .width(Size::px(px(12.)))
+                                    .height(Size::px(px(12.))),
+                            ),
                     )
-                    .maybe_child(recolor)
-                    .child(
-                        SvgViewer::new(freya::icons::lucide::refresh_cw())
-                            .color(p.t3)
-                            .width(Size::px(px(12.)))
-                            .height(Size::px(px(12.))),
-                    ),
+                    .maybe_child(menu),
             )
     }
 }
@@ -189,13 +255,73 @@ impl Component for QuoteBody {
     }
 }
 
-/// Swatches for the quote's text colour; "default" follows its text again.
-fn open_colors(anchor: Area, controller: EditorController, block: BlockId, current: Option<Rgba>) {
-    let theme = super::theme(&palette());
-    let body = color_palette(&theme, current, move |color| {
-        let hex = color.map(Rgba::to_hex);
-        controller.set_transclusion_attr(block, TRANSCLUSION_COLOR, hex.as_deref());
-        notin_ui_kit::ModalController::get().close();
-    });
-    Popover::new(anchor, body).width(170.0).open();
+/// The parts a quote's kind lets the reader show or hide, and its text
+/// colour. Opened from the quote's menu button.
+#[derive(Clone, PartialEq)]
+struct QuoteMenu {
+    controller: EditorController,
+    block: BlockId,
+    options: Vec<QuoteOption>,
+    settings: Settings,
+}
+
+impl QuoteMenu {
+    fn open(self, anchor: Area) {
+        Popover::new(anchor, self)
+            .width(280.0)
+            .sheet_title(tr!("editor-quote-options"))
+            .open();
+    }
+}
+
+impl Component for QuoteMenu {
+    #[sismo::function("editor::quote_menu")]
+    fn render(&self) -> impl IntoElement {
+        let parts = use_state(|| self.settings.parts.clone());
+        let (controller, block) = (self.controller, self.block);
+        let rows: Vec<Element> = self
+            .options
+            .iter()
+            .map(|option| {
+                let option = option.clone();
+                let on = parts.read().shows(&option);
+                let mut parts = parts;
+                ListRow::new(option.label.clone())
+                    .dense(true)
+                    .trailing(Trailing::Switch {
+                        on,
+                        on_toggle: EventHandler::new(move |show: bool| {
+                            let mut next = parts.peek().clone();
+                            next.set(&option, show);
+                            let (hidden, shown) = next.to_lists();
+                            controller.set_transclusion_attr(block, QUOTE_HIDE, hidden.as_deref());
+                            controller.set_transclusion_attr(block, QUOTE_SHOW, shown.as_deref());
+                            parts.set(next);
+                        }),
+                    })
+                    .into_element()
+            })
+            .collect();
+        let theme = super::theme(&palette());
+        let colors = color_palette(&theme, self.settings.color, move |color: Option<Rgba>| {
+            let hex = color.map(Rgba::to_hex);
+            controller.set_transclusion_attr(block, TRANSCLUSION_COLOR, hex.as_deref());
+            notin_ui_kit::ModalController::get().close();
+        });
+        rect()
+            .width(Size::fill())
+            .padding(8.)
+            .spacing(8.)
+            .maybe_child(
+                (!rows.is_empty())
+                    .then(|| notin_ui_kit::Group::default().children(rows).into_element()),
+            )
+            .child(
+                label()
+                    .font_size(12.)
+                    .color(palette().t2)
+                    .text(tr!("editor-quote-color")),
+            )
+            .child(colors)
+    }
 }

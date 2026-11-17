@@ -6,6 +6,7 @@ editor-quote-live = { $source } · live block
 editor-quote-copy = { $source } · fixed copy
 editor-quote-gone = { $source } · no longer exists
 editor-quote-color = Text color
+editor-quote-options = Quote options
 # $source: where the pictures come from, e.g. "PDF document".
 editor-snapshot-copy = { $source } · pictures, fixed copy
 editor-snapshot-gone = That document no longer exists

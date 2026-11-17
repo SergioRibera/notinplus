@@ -7,7 +7,7 @@ use freya_markdown_editor::markdown::Dialect;
 use notin_i18n::tr;
 use notin_plugin::bookmark::SourceRef;
 use notin_plugin::doc::DocMeta;
-use notin_plugin::kind::{KindColor, Quote, SearchQuery};
+use notin_plugin::kind::{KindColor, Quote, QuoteOption, QuoteParts, SearchQuery};
 use notin_ui_kit::theme::Palette;
 use notin_ui_kit::{Toast, ToastTone, Toasts};
 
@@ -231,11 +231,35 @@ pub fn suggestions(query: &str, data: Option<&LibraryData>) -> Vec<Suggestion> {
     out
 }
 
-/// What `target` holds, quoted by its kind. `None` when the kind cannot
-/// quote or the place is gone.
+/// What `target` holds, quoted by its kind with every part shown by default.
+/// `None` when the kind cannot quote or the place is gone.
+#[must_use]
+pub fn quote(target: &SourceRef, data: Option<&LibraryData>) -> Option<Quote> {
+    quote_with(target, data, &QuoteParts::default())
+}
+
+/// The parts of a quote of `target` its reader may show or hide (see
+/// [`notin_plugin::DocumentKind::quote_options`]); empty when its kind has
+/// none or cannot quote.
+#[must_use]
+pub fn quote_options(target: &SourceRef) -> Vec<QuoteOption> {
+    let SourceRef::Plugin { plugin_id, .. } = target else {
+        return Vec::new();
+    };
+    crate::plugins::kind(plugin_id)
+        .filter(|kind| kind.quotes())
+        .map(|kind| kind.quote_options())
+        .unwrap_or_default()
+}
+
+/// [`quote`] showing only `parts`.
 #[must_use]
 #[sismo::function("references::quote")]
-pub fn quote(target: &SourceRef, data: Option<&LibraryData>) -> Option<Quote> {
+pub fn quote_with(
+    target: &SourceRef,
+    data: Option<&LibraryData>,
+    parts: &QuoteParts,
+) -> Option<Quote> {
     let SourceRef::Plugin {
         plugin_id,
         item,
@@ -258,7 +282,7 @@ pub fn quote(target: &SourceRef, data: Option<&LibraryData>) -> Option<Quote> {
             d.background.into()
         }),
     };
-    kind.quote(meta, anchor)
+    kind.quote_with(meta, anchor, parts)
 }
 
 /// Markdown of `quote` as text of its own, to edit freely: the source's

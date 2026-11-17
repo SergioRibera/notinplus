@@ -14,8 +14,8 @@ use crate::create::{
 use crate::doc::{DocId, DocMeta};
 use crate::kind::{
     ActionEffect, ChipView, DocumentKind, ExportError, ExportFile, ExportValues, Hit, IndexReport,
-    KindAction, KindChoice, KindInfo, Mark, OutlineNode, Quote, SearchQuery, SelectionSupport,
-    Snapshot,
+    KindAction, KindChoice, KindInfo, Mark, OutlineNode, Quote, QuoteOption, QuoteParts,
+    SearchQuery, SelectionSupport, Snapshot,
 };
 use crate::payload::Payload;
 
@@ -93,6 +93,8 @@ pub trait ErasedKind: Send + Sync {
     fn cited(&self, doc: DocId, anchor: &[u8]);
     fn quotes(&self) -> bool;
     fn quote(&self, doc: DocMeta<'_>, anchor: &[u8]) -> Option<Quote>;
+    fn quote_options(&self) -> Vec<QuoteOption>;
+    fn quote_with(&self, doc: DocMeta<'_>, anchor: &[u8], parts: &QuoteParts) -> Option<Quote>;
     fn quotes_live(&self) -> bool;
     fn snapshots(&self) -> bool;
     fn snapshot(
@@ -339,6 +341,16 @@ impl<K: DocumentKind> ErasedKind for KindAdapter<K> {
     fn quote(&self, doc: DocMeta<'_>, anchor: &[u8]) -> Option<Quote> {
         let anchor = K::Anchor::from_bytes(anchor).ok()?;
         self.0.quote(doc, &anchor)
+    }
+
+    fn quote_options(&self) -> Vec<QuoteOption> {
+        self.0.quote_options()
+    }
+
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::kind_quote_with"))]
+    fn quote_with(&self, doc: DocMeta<'_>, anchor: &[u8], parts: &QuoteParts) -> Option<Quote> {
+        let anchor = K::Anchor::from_bytes(anchor).ok()?;
+        self.0.quote_with(doc, &anchor, parts)
     }
 
     fn quotes_live(&self) -> bool {

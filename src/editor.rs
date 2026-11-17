@@ -313,6 +313,8 @@ impl Component for Chip {
         }
         let target = self.target.clone();
         rect()
+            // It opened on pointer down; a card it sits in must not open too.
+            .on_press(|event: Event<PressEventData>| event.stop_propagation())
             .on_pointer_down(move |event: Event<PointerEventData>| {
                 sismo::scope!("editor::chip_open");
                 event.stop_propagation();

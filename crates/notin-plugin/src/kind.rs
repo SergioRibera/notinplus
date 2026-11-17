@@ -236,6 +236,117 @@ pub struct Quote {
     pub source: String,
 }
 
+/// A part of this kind's quotes the reader may show or hide (a
+/// pronunciation, a grammar line, the verse in another translation).
+///
+/// The host lists them in the menu of every live quote of the kind and
+/// keeps the reader's choice on the quote itself; [`DocumentKind::quote_with`]
+/// receives it as [`QuoteParts`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuoteOption {
+    /// Stable id, kept in documents: lowercase ASCII letters, digits and
+    /// `-` only (others are refused by [`QuoteOption::new`]).
+    pub id: Cow<'static, str>,
+    /// What the menu says, in the reader's language.
+    pub label: Cow<'static, str>,
+    /// Shown until the reader hides it.
+    pub default: bool,
+}
+
+impl QuoteOption {
+    /// An option shown by default. `None` when `id` has other characters
+    /// than lowercase ASCII letters, digits and `-`.
+    #[must_use]
+    pub fn new(
+        id: impl Into<Cow<'static, str>>,
+        label: impl Into<Cow<'static, str>>,
+    ) -> Option<Self> {
+        let id = id.into();
+        let valid = !id.is_empty()
+            && id
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        valid.then(|| Self {
+            id,
+            label: label.into(),
+            default: true,
+        })
+    }
+
+    /// Hidden until the reader shows it.
+    #[must_use]
+    pub const fn hidden_by_default(mut self) -> Self {
+        self.default = false;
+        self
+    }
+}
+
+/// Which [`QuoteOption`]s one quote shows: the reader's changes over each
+/// option's default.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QuoteParts {
+    /// Option ids the reader hid although they show by default.
+    hidden: Vec<String>,
+    /// Option ids the reader showed although they hide by default.
+    shown: Vec<String>,
+}
+
+impl QuoteParts {
+    /// Parts kept as two comma separated id lists, as a document stores
+    /// them. Empty items are skipped.
+    #[must_use]
+    pub fn from_lists(hidden: Option<&str>, shown: Option<&str>) -> Self {
+        let list = |ids: Option<&str>| {
+            ids.unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+                .collect()
+        };
+        Self {
+            hidden: list(hidden),
+            shown: list(shown),
+        }
+    }
+
+    /// The two lists of [`Self::from_lists`], `None` when empty.
+    #[must_use]
+    pub fn to_lists(&self) -> (Option<String>, Option<String>) {
+        let join = |ids: &[String]| (!ids.is_empty()).then(|| ids.join(","));
+        (join(&self.hidden), join(&self.shown))
+    }
+
+    /// Whether the quote shows `option`.
+    #[must_use]
+    pub fn shows(&self, option: &QuoteOption) -> bool {
+        self.shows_id(&option.id, option.default)
+    }
+
+    /// Whether the quote shows the option `id`, shown by default when
+    /// `default`.
+    #[must_use]
+    pub fn shows_id(&self, id: &str, default: bool) -> bool {
+        if default {
+            !self.hidden.iter().any(|h| h == id)
+        } else {
+            self.shown.iter().any(|s| s == id)
+        }
+    }
+
+    /// Show or hide `option`.
+    pub fn set(&mut self, option: &QuoteOption, show: bool) {
+        let id = option.id.as_ref();
+        self.hidden.retain(|h| h != id);
+        self.shown.retain(|s| s != id);
+        match (option.default, show) {
+            (true, false) => self.hidden.push(id.to_owned()),
+            (false, true) => self.shown.push(id.to_owned()),
+            (true, true) | (false, false) => {}
+        }
+    }
+}
+
 /// A place inside a document rendered as a picture, to be put in another
 /// document as it looks now (a PDF page).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -705,6 +816,25 @@ pub trait DocumentKind: Send + Sync + 'static {
         None
     }
 
+    /// Parts of this kind's quotes the reader may show or hide; empty
+    /// (the default) when its quotes have none. The host shows them in
+    /// each live quote's menu, next to its text colour.
+    fn quote_options(&self) -> Vec<QuoteOption> {
+        Vec::new()
+    }
+
+    /// [`Self::quote`] showing only the parts `parts` asks for (see
+    /// [`Self::quote_options`]). Kinds without options keep the default,
+    /// which ignores `parts`.
+    fn quote_with(
+        &self,
+        doc: DocMeta<'_>,
+        anchor: &Self::Anchor,
+        _parts: &QuoteParts,
+    ) -> Option<Quote> {
+        self.quote(doc, anchor)
+    }
+
     /// Whether a quote of this kind may keep following its source. Kinds
     /// whose content never changes once written (a PDF file) answer
     /// `false`, and their quotes are always copied.
@@ -736,5 +866,57 @@ pub trait DocumentKind: Send + Sync + 'static {
     /// place findable when the document changes (a heading renamed).
     fn cited(&self, doc: DocId, anchor: &Self::Anchor) {
         let _ = (doc, anchor);
+    }
+}
+
+#[cfg(test)]
+mod quote_parts {
+    use super::{QuoteOption, QuoteParts};
+
+    fn options() -> (QuoteOption, QuoteOption) {
+        let shown = QuoteOption::new("pronunciation", "Pronunciation").expect("valid id");
+        let hidden = QuoteOption::new("senses", "Senses")
+            .expect("valid id")
+            .hidden_by_default();
+        (shown, hidden)
+    }
+
+    #[test]
+    fn defaults_hold_until_the_reader_changes_them() {
+        let (shown, hidden) = options();
+        let mut parts = QuoteParts::default();
+        assert!(parts.shows(&shown));
+        assert!(!parts.shows(&hidden));
+        parts.set(&shown, false);
+        parts.set(&hidden, true);
+        assert!(!parts.shows(&shown));
+        assert!(parts.shows(&hidden));
+        assert_eq!(
+            parts.to_lists(),
+            (Some("pronunciation".into()), Some("senses".into()))
+        );
+        parts.set(&shown, true);
+        parts.set(&hidden, false);
+        assert_eq!(parts, QuoteParts::default());
+        assert_eq!(parts.to_lists(), (None, None));
+    }
+
+    #[test]
+    fn stored_lists_read_back_and_skip_blanks() {
+        let (shown, hidden) = options();
+        let parts = QuoteParts::from_lists(Some(" pronunciation,,"), Some("senses"));
+        assert!(!parts.shows(&shown));
+        assert!(parts.shows(&hidden));
+        assert!(
+            parts.shows_id("unknown", true),
+            "ids nobody stored keep their default"
+        );
+    }
+
+    #[test]
+    fn ids_outside_the_alphabet_are_refused() {
+        assert!(QuoteOption::new("Bad Id", "x").is_none());
+        assert!(QuoteOption::new("", "x").is_none());
+        assert!(QuoteOption::new("ok-2", "x").is_some());
     }
 }
