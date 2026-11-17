@@ -316,4 +316,29 @@ pub trait TextBody: Send + Sync {
     fn set(&self, text: &str) -> bool;
     /// Fires when text arrives from elsewhere.
     fn changes(&self) -> flume::Receiver<()>;
+    /// Whether the body keeps the undo history of this device's edits
+    /// itself. An editor of a body merged with others should undo through
+    /// [`Self::undo`]: going back to an earlier whole text would also take
+    /// out what the others typed since.
+    fn keeps_history(&self) -> bool {
+        false
+    }
+    /// Undo the last edit made on this device, leaving what others typed;
+    /// [`Self::text`] then reads the result. `false` when there is none,
+    /// or when the body keeps no history.
+    fn undo(&self) -> bool {
+        false
+    }
+    /// Make again the last edit [`Self::undo`] took back.
+    fn redo(&self) -> bool {
+        false
+    }
+    /// Whether [`Self::undo`] has an edit to take back.
+    fn can_undo(&self) -> bool {
+        false
+    }
+    /// Whether [`Self::redo`] has an edit to make again.
+    fn can_redo(&self) -> bool {
+        false
+    }
 }

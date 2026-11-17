@@ -36,6 +36,7 @@ impl SharedBody {
     pub fn open(item: ItemId) -> Arc<Self> {
         if let Some(doc) = open_docs::get(item) {
             sismo::instant!("body::open_live_copy");
+            open_docs::lock(&doc).track_body_undo();
             return Arc::new(Self {
                 item,
                 doc,
@@ -47,12 +48,13 @@ impl SharedBody {
             sismo::scope!("body::read_bytes");
             bodies::read_doc_bytes(item)
         };
-        let doc = {
+        let mut doc = {
             sismo::scope!("body::from_snapshot");
             bytes
                 .and_then(|bytes| Doc::from_snapshot(&bytes).ok())
                 .unwrap_or_default()
         };
+        doc.track_body_undo();
         let doc = Arc::new(Mutex::new(doc));
         open_docs::register(item, Arc::clone(&doc));
         Arc::new(Self {
@@ -67,6 +69,19 @@ impl SharedBody {
         self.seen
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Undo or redo through `step`; on a change the reader now sees the
+    /// result, and the others get it like any edit.
+    fn step(&self, step: fn(&mut Doc) -> bool) -> bool {
+        let mut doc = open_docs::lock(&self.doc);
+        if !step(&mut doc) {
+            return false;
+        }
+        *self.seen() = Some(doc.body_view());
+        drop(doc);
+        self.changed_here();
+        true
     }
 
     /// Something changed on this device: the others see it now, the disk
@@ -152,6 +167,28 @@ impl TextBody for SharedBody {
 
     fn changes(&self) -> flume::Receiver<()> {
         open_docs::watch(self.item)
+    }
+
+    fn keeps_history(&self) -> bool {
+        true
+    }
+
+    #[sismo::function("body::undo")]
+    fn undo(&self) -> bool {
+        self.step(Doc::undo_body)
+    }
+
+    #[sismo::function("body::redo")]
+    fn redo(&self) -> bool {
+        self.step(Doc::redo_body)
+    }
+
+    fn can_undo(&self) -> bool {
+        open_docs::lock(&self.doc).can_undo_body()
+    }
+
+    fn can_redo(&self) -> bool {
+        open_docs::lock(&self.doc).can_redo_body()
     }
 }
 
