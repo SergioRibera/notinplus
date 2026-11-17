@@ -117,6 +117,14 @@ impl Component for NotePage {
             let body = Arc::clone(&body);
             move || follow_remote(body, markdown)
         });
+        use_hook({
+            let body = Arc::clone(&body);
+            move || {
+                if body.keeps_history() {
+                    controller.set_outer_history(Some(Rc::new(BodyHistory { body, markdown })));
+                }
+            }
+        });
         let presence = use_hook({
             let host = Arc::clone(&ctx.host);
             move || {
@@ -278,6 +286,43 @@ fn follow_remote(body: Arc<dyn TextBody>, mut markdown: State<String>) {
             }
         }
     });
+}
+
+/// Undo and redo of the note through its body, which takes back only
+/// what was typed on this device and leaves what others typed.
+struct BodyHistory {
+    body: Arc<dyn TextBody>,
+    markdown: State<String>,
+}
+
+impl BodyHistory {
+    /// Typing not written to the body yet goes in first, so the step
+    /// taken back is the latest one.
+    fn flush(&self) {
+        self.body.set(&self.markdown.peek());
+    }
+}
+
+impl OuterHistory for BodyHistory {
+    #[cfg_attr(feature = "sismo", sismo::function("notes::undo"))]
+    fn undo(&self) -> Option<String> {
+        self.flush();
+        self.body.undo().then(|| self.body.text())
+    }
+
+    #[cfg_attr(feature = "sismo", sismo::function("notes::redo"))]
+    fn redo(&self) -> Option<String> {
+        self.flush();
+        self.body.redo().then(|| self.body.text())
+    }
+
+    fn can_undo(&self) -> bool {
+        self.body.can_undo()
+    }
+
+    fn can_redo(&self) -> bool {
+        self.body.can_redo()
+    }
 }
 
 /// Keep `peers` up to date with whoever else has the note open, and
