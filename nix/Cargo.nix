@@ -8566,6 +8566,10 @@ rec {
             packageId = "freya-engine";
           }
           {
+            name = "log";
+            packageId = "log";
+          }
+          {
             name = "notin-i18n";
             packageId = "notin-i18n";
           }
