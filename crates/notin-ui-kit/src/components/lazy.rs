@@ -1,5 +1,8 @@
 //! Content built only once it is about to scroll into view.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use freya::prelude::*;
 
 /// Pixels past the viewport within which a [`Lazy`] mounts its child.
@@ -7,6 +10,72 @@ pub const OVERSCAN: f32 = 400.0;
 
 /// Height a [`Lazy`] holds before its child has ever been measured.
 const HEIGHT_HINT: f32 = 48.0;
+
+/// Keeps what a scroll view shows where it is while content above the
+/// view changes height.
+///
+/// Text typed there by someone else, a [`Lazy`] mounting with its real
+/// height: provided with [`use_scroll_anchor`]
+/// around the scroll view; every [`Lazy`] below it then lets a change of
+/// height above the view land in the same frame as the scroll that makes
+/// up for it, so nothing in view moves.
+#[derive(Clone)]
+pub struct ScrollAnchor {
+    scroll: ScrollController,
+    /// Window position of the top edge of the view.
+    view_top: Rc<Cell<f32>>,
+    /// Fraction of a pixel not scrolled yet, so rounding never drifts.
+    carry: Rc<Cell<f32>>,
+}
+
+impl std::fmt::Debug for ScrollAnchor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScrollAnchor")
+            .field("view_top", &self.view_top.get())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ScrollAnchor {
+    /// The scroll view was laid out at `area`, in window coordinates.
+    pub fn view(&self, area: Area) {
+        self.view_top.set(area.min_y());
+    }
+
+    /// Whether content whose top edge is at `top` (window coordinates)
+    /// starts above the view.
+    #[must_use]
+    pub fn is_above(&self, top: f32) -> bool {
+        top < self.view_top.get() - 0.5
+    }
+
+    /// Content whose top edge is at `top` grew by `delta` (shrank when
+    /// negative): when it starts above the view, scroll by as much.
+    pub fn resized(&self, top: f32, delta: f32) {
+        if delta.abs() < f32::EPSILON || !self.is_above(top) {
+            return;
+        }
+        let pending = self.carry.get() + delta;
+        let whole = pending.round();
+        self.carry.set(pending - whole);
+        let mut scroll = self.scroll;
+        let (_, y): (i32, i32) = scroll.into();
+        #[allow(clippy::cast_possible_truncation, reason = "pixel offsets")]
+        scroll.scroll_to_y(y - whole as i32);
+    }
+}
+
+/// A [`ScrollAnchor`] for the scroll view `scroll` drives, provided to
+/// everything below. Report the view with [`ScrollAnchor::view`] from the
+/// scroll view's `on_sized`.
+#[must_use]
+pub fn use_scroll_anchor(scroll: ScrollController) -> ScrollAnchor {
+    use_provide_context(|| ScrollAnchor {
+        scroll,
+        view_top: Rc::new(Cell::new(f32::NEG_INFINITY)),
+        carry: Rc::default(),
+    })
+}
 
 /// A child mounted only when it is about to be visible.
 ///
@@ -99,18 +168,48 @@ impl Component for Lazy {
     fn render(&self) -> impl IntoElement {
         let mut near = use_state(|| false);
         let mut measured = use_state(|| None::<f32>);
+        // Window position of the top edge, from the latest layout.
+        let top = use_hook(|| Rc::new(Cell::new(f32::INFINITY)));
+        let anchor = try_consume_context::<ScrollAnchor>().filter(|_| !self.pinned);
         let near_now = *near.read();
         let mounted = self.pinned || near_now;
         let height = measured.read().unwrap_or(self.height_hint);
+        let hint = self.height_hint;
         let overscan = self.overscan;
         let recycle = self.recycle;
+        // Above the view the child keeps the height it had and grows
+        // upwards out of sight, until its new height lands together with
+        // the scroll that keeps the view where it was.
+        let mut above = use_state(|| false);
+        let held = mounted && anchor.is_some() && *above.read();
         // Once seen (and so mounted for good) the sensor and its
         // listeners go. A pinned child keeps sensing: when it is no
         // longer pinned it stays only if it was seen meanwhile.
         let sensing = !near_now || recycle;
+        let child = rect()
+            .width(Size::fill())
+            .on_sized({
+                let (anchor, top) = (anchor.clone(), Rc::clone(&top));
+                move |event: Event<SizedEventData>| {
+                    let now = event.area.height();
+                    let before = measured.peek().unwrap_or(hint);
+                    if let Some(anchor) = &anchor {
+                        anchor.resized(top.get(), now - before);
+                    }
+                    measured.set_if_modified(Some(now));
+                }
+            })
+            .child(self.child.clone());
         rect()
             .width(Size::fill())
             .maybe(!mounted, |strut| strut.height(Size::px(height)))
+            .map(anchor, |element, anchor| {
+                // Renders again only when the edge crosses the top of the view.
+                element.on_sized(move |event: Event<SizedEventData>| {
+                    top.set(event.area.min_y());
+                    above.set_if_modified(anchor.is_above(event.area.min_y()));
+                })
+            })
             .maybe(sensing, |element| {
                 element.child(
                     rect()
@@ -124,13 +223,16 @@ impl Component for Lazy {
                 )
             })
             .maybe(mounted, |element| {
+                // Always the same box, so holding never rebuilds the child.
                 element.child(
                     rect()
                         .width(Size::fill())
-                        .on_sized(move |event: Event<SizedEventData>| {
-                            measured.set_if_modified(Some(event.area.height()));
+                        .maybe(held, |held| {
+                            held.height(Size::px(height))
+                                .overflow(Overflow::Clip)
+                                .main_align(Alignment::End)
                         })
-                        .child(self.child.clone()),
+                        .child(child),
                 )
             })
     }

@@ -96,6 +96,7 @@ impl Component for NotePage {
         let scroll = use_scroll_controller(ScrollConfig::default);
         let viewport_area = try_consume_context::<notin_ui_kit::ViewportArea>();
         let (mut viewport, content_top) = use_follow_typing(controller, scroll);
+        let scroll_anchor = notin_ui_kit::use_scroll_anchor(scroll);
         use_side_effect({
             let (body, store) = (Arc::clone(&body), ctx.store.clone());
             move || {
@@ -215,6 +216,7 @@ impl Component for NotePage {
                     .width(Size::fill())
                     .height(Size::flex(1.))
                     .on_sized(move |event: Event<SizedEventData>| {
+                        scroll_anchor.view(event.area);
                         viewport.set_if_modified(Some(event.area));
                     })
                     .child(notin_ui_kit::ScrollContent::new(

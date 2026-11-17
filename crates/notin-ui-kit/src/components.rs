@@ -48,7 +48,7 @@ pub use icon::Icon;
 pub use icon_button::IconButton;
 pub use inline_edit::InlineEdit;
 pub use kind_badge::KindBadge;
-pub use lazy::{Lazy, OVERSCAN};
+pub use lazy::{Lazy, OVERSCAN, ScrollAnchor, use_scroll_anchor};
 pub use list_row::{Leading, ListRow, Trailing};
 pub use press::{LONG_PRESS, PressGesture, is_mouse, press_anchor, press_point, use_press_gesture};
 pub use ref_chip::RefChip;
