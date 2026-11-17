@@ -67,13 +67,21 @@ impl Plugin for BiblePlugin {
 
     #[cfg_attr(feature = "sismo", sismo::function("bible::plugin_fonts"))]
     fn fonts(&self) -> Vec<Font> {
-        crate::fonts::FACES
-            .into_iter()
-            .map(|bytes| Font {
-                family: crate::fonts::FAMILY,
-                bytes,
-            })
-            .collect()
+        let lora = crate::fonts::FACES.into_iter().map(|bytes| Font {
+            family: crate::fonts::FAMILY,
+            bytes,
+        });
+        let originals = [
+            Font {
+                family: crate::fonts::HEBREW_FAMILY,
+                bytes: crate::fonts::HEBREW,
+            },
+            Font {
+                family: crate::fonts::GREEK_FAMILY,
+                bytes: crate::fonts::GREEK,
+            },
+        ];
+        lora.chain(originals).collect()
     }
 }
 
