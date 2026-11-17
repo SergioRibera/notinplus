@@ -17,6 +17,7 @@ use crate::library::{
 use crate::plugins::builtin::{canvas, pdf};
 
 mod dialogs;
+mod quotes;
 mod readme;
 
 const DAY: u64 = 24 * 60 * 60 * 1000;
@@ -212,6 +213,14 @@ fn shell_with(
             for face in notin_bible::fonts::FACES {
                 Platform::get().load_font(notin_bible::fonts::FAMILY, Bytes::from_static(face));
             }
+            Platform::get().load_font(
+                notin_bible::fonts::HEBREW_FAMILY,
+                Bytes::from_static(notin_bible::fonts::HEBREW),
+            );
+            Platform::get().load_font(
+                notin_bible::fonts::GREEK_FAMILY,
+                Bytes::from_static(notin_bible::fonts::GREEK),
+            );
         });
         crate::update::use_preview_updates(PREVIEW_RELEASE.with(|r| r.borrow().clone()));
         crate::state::use_fixed_library(Arc::new(library()));

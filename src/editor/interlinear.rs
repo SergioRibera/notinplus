@@ -2,9 +2,9 @@
 //! the word over how it reads and what it means, columns flowing in lines
 //! like text. Right to left text puts its first word on the right.
 //!
-//! Left to right uses Freya's wrapping. Right to left needs the lines to
-//! fill from the right, which wrapping does not do: the columns are
-//! measured on the first frame and packed into lines here.
+//! The columns are measured on the first frame, in one row at their own
+//! widths, and packed into lines here: Freya wrapping would squeeze the
+//! last column of a line, and cannot fill lines from the right.
 
 use freya::prelude::*;
 use freya_markdown_editor::prelude::*;
@@ -17,12 +17,15 @@ const COLUMN_GAP: f32 = 16.0;
 const LINE_GAP: f32 = 12.0;
 /// Size of the word against the body text.
 const WORD_SCALE: f32 = 1.3;
+/// Width of the row the columns are measured in: more than any line of
+/// words, so each column takes its own width.
+const MEASURING_WIDTH: f32 = 100_000.0;
 
 #[derive(Clone, PartialEq)]
-pub(super) struct InterlinearView {
-    pub(super) interlinear: Interlinear,
+pub(crate) struct InterlinearView {
+    pub(crate) interlinear: Interlinear,
     /// Theme of the quote, with its text colours.
-    pub(super) theme: EditorTheme,
+    pub(crate) theme: EditorTheme,
 }
 
 impl Component for InterlinearView {
@@ -37,41 +40,70 @@ impl Component for InterlinearView {
         }
         let gap = self.theme.px(COLUMN_GAP);
         let line_gap = self.theme.px(LINE_GAP);
-        let column = |index: usize, word: &GlossedWord| {
+        // Read, not peeked: the measures landing must lay the lines out.
+        let room_now = *room.read();
+        let measured: Option<Vec<f32>> = {
+            let widths = widths.read();
+            (room_now > 0.0 && widths.iter().all(|w| *w > 0.0)).then(|| widths.clone())
+        };
+        let column = |index: usize, word: &GlossedWord, width: Option<f32>| {
             WordColumn {
                 word: word.clone(),
                 theme: self.theme.clone(),
                 font: self.interlinear.font_family.clone(),
                 rtl,
             }
-            .into_element_with_size(index, widths)
+            .into_element_with_size(index, widths, width)
         };
-        let measured = *room.peek() > 0.0 && widths.peek().iter().all(|w| *w > 0.0);
-        let body = if rtl && measured {
-            let lines = pack(&widths.peek(), *room.peek(), gap);
-            rect()
+        let body = match measured {
+            Some(sizes) => {
+                let lines = pack(&sizes, room_now, gap);
+                rect()
+                    .width(Size::fill())
+                    .spacing(line_gap)
+                    .children(lines.into_iter().map(|line| {
+                        let order: Vec<usize> = if rtl {
+                            line.into_iter().rev().collect()
+                        } else {
+                            line
+                        };
+                        rect()
+                            .width(Size::fill())
+                            .horizontal()
+                            .main_align(if rtl {
+                                Alignment::End
+                            } else {
+                                Alignment::Start
+                            })
+                            .spacing(gap)
+                            .children(
+                                order
+                                    .into_iter()
+                                    .map(|i| column(i, &words[i], Some(sizes[i].min(room_now)))),
+                            )
+                            .into_element()
+                    }))
+                    .into_element()
+            }
+            // First frame: every column at its own width in one row, to
+            // measure them; the next frame lays the lines out.
+            None => rect()
                 .width(Size::fill())
-                .spacing(line_gap)
-                .children(lines.into_iter().map(|line| {
+                .overflow(Overflow::Clip)
+                .child(
+                    // Wide enough that no column is squeezed while measured.
                     rect()
-                        .width(Size::fill())
+                        .width(Size::px(MEASURING_WIDTH))
                         .horizontal()
-                        .main_align(Alignment::End)
                         .spacing(gap)
-                        .children(line.into_iter().rev().map(|i| column(i, &words[i])))
-                        .into_element()
-                }))
-                .into_element()
-        } else {
-            // Left to right, or the first frame of right to left (measured
-            // in reading order, laid out properly once sizes are known).
-            rect()
-                .width(Size::fill())
-                .horizontal()
-                .content(Content::wrap_spacing(line_gap))
-                .spacing(gap)
-                .children(words.iter().enumerate().map(|(i, word)| column(i, word)))
-                .into_element()
+                        .children(
+                            words
+                                .iter()
+                                .enumerate()
+                                .map(|(i, word)| column(i, word, None)),
+                        ),
+                )
+                .into_element(),
         };
         rect()
             .width(Size::fill())
@@ -112,20 +144,29 @@ struct WordColumn {
 }
 
 impl WordColumn {
-    /// The column, reporting its width into slot `index` of `widths`.
-    fn into_element_with_size(self, index: usize, mut widths: State<Vec<f32>>) -> Element {
+    /// The column, `width` wide once measured; until then at its own width,
+    /// reported into slot `index` of `widths`.
+    fn into_element_with_size(
+        self,
+        index: usize,
+        mut widths: State<Vec<f32>>,
+        width: Option<f32>,
+    ) -> Element {
         let link = self.word.link.clone();
         rect()
             .key(index)
-            .on_sized(move |event: Event<SizedEventData>| {
-                let width = event.area.width();
-                if widths
-                    .peek()
-                    .get(index)
-                    .is_some_and(|w| (w - width).abs() > 0.5)
-                {
-                    widths.write()[index] = width;
-                }
+            .map(width, |r, width| r.width(Size::px(width)))
+            .maybe(width.is_none(), |r| {
+                r.on_sized(move |event: Event<SizedEventData>| {
+                    let width = event.area.width();
+                    if widths
+                        .peek()
+                        .get(index)
+                        .is_some_and(|w| (w - width).abs() > 0.5)
+                    {
+                        widths.write()[index] = width;
+                    }
+                })
             })
             .maybe(link.is_some(), |r| r.cursor(CursorIcon::Pointer))
             .map(link, |r, link| {
@@ -147,15 +188,9 @@ impl Component for WordColumn {
     fn render(&self) -> impl IntoElement {
         let theme = &self.theme;
         let colors = &theme.colors;
-        let align = if self.rtl {
-            TextAlign::Right
-        } else {
-            TextAlign::Left
-        };
         let mut word = label()
             .font_size(theme.body_size * WORD_SCALE)
             .color(colors.text)
-            .text_align(align)
             .text(self.word.text.clone());
         if let Some(font) = &self.font {
             word = word.font_family(font.clone());
