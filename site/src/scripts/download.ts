@@ -204,6 +204,9 @@ export function start() {
       if (!release) {
         const note = document.querySelector<HTMLElement>('[data-unavailable]');
         if (note) note.hidden = false;
+        // Nothing to wait for any more: drop the "looking for" line.
+        const line = document.querySelector<HTMLElement>('[data-version-line]');
+        if (line) line.hidden = true;
       }
     });
 }
