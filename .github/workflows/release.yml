@@ -447,3 +447,45 @@ jobs:
           body_path: NOTES.md
           fail_on_unmatched_files: true
           files: dist/*
+
+  # Rebuilds sergioribera.rs/notinplus with the release just published
+  # (files, sizes, version) and the formats in nix/targets.nix. Skipped
+  # until the CLOUDFLARE_API_TOKEN secret exists.
+  site:
+    name: Site
+    needs: [plan, publish]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - uses: ./.github/actions/setup-nix
+        if: env.CLOUDFLARE_API_TOKEN != ''
+
+      - uses: pnpm/action-setup@v4
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
+
+      - name: Build and deploy
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run deploy
