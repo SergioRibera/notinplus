@@ -18,9 +18,6 @@ concurrency:
   group: release-${{ github.ref }}-${{ inputs.tag }}
   cancel-in-progress: false
 
-env:
-  ABIS: arm64-v8a,x86_64
-
 jobs:
   # Resolves what is being built and fans the desktop matrix out of
   # nix/targets.nix (`nix run .#matrix`), so the workflow never lists
@@ -234,7 +231,7 @@ jobs:
         with:
           attic-token: ${{ secrets.ATTIC_TOKEN }}
           task: ":app:assembleRelease"
-          abis: ${{ env.ABIS }}
+          abis: ${{ fromJSON(needs.plan.outputs.matrix).android.abis }}
           keystore-base64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           keystore-password: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           key-alias: ${{ secrets.ANDROID_KEY_ALIAS }}

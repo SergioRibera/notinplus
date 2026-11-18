@@ -22,7 +22,8 @@ let
   # Matches `[min_versions] android` in istmo.toml.
   minSdk = 26;
 
-  abis = {
+  # Toolchain per ABI; nix/targets.nix picks which ones ship.
+  toolchains = {
     arm64-v8a = {
       target = "aarch64-linux-android";
       arch = "aarch64";
@@ -38,6 +39,7 @@ let
       skiaHash = "sha256-3/dViGgFQBdLGmwvxb895A9rrQvPgPgBZjalu8OSBHU=";
     };
   };
+  abis = lib.getAttrs (import ./targets.nix).android.abis toolchains;
 
   androidComposition = pkgs.androidenv.composeAndroidPackages {
     platformVersions = [

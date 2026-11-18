@@ -53,6 +53,15 @@
     };
   };
 
+  # Android APKs: one per ABI plus a universal one. The ABI names must
+  # have a toolchain entry in nix/android.nix.
+  android = {
+    abis = [
+      "arm64-v8a"
+      "x86_64"
+    ];
+  };
+
   # notin-relay, Linux only. `dockerArch` is the OCI platform the image
   # is pushed under; the per-arch images are joined into one manifest.
   server = {

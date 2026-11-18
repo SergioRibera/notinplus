@@ -220,6 +220,7 @@
             }) targets.server;
             nix = map (t: { inherit (t) system runner; }) (builtins.filter (t: t.kind == "nix") entries);
             cross = map (t: { inherit (t) system runner; }) (builtins.filter (t: t.kind == "cross") entries);
+            android.abis = lib.concatStringsSep "," targets.android.abis;
           };
       in
       {
