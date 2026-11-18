@@ -35,6 +35,12 @@ jobs:
           git diff --exit-code -- nix/Cargo.nix nix/crate-hashes.json \
             || { echo "::error::nix/Cargo.nix is stale: run \`just cargo-nix\`"; exit 1; }
 
+      - name: site/src/data/targets.json matches nix/targets.nix
+        run: |
+          nix eval --json --file nix/targets.nix | jq . > site/src/data/targets.json
+          git diff --exit-code -- site/src/data/targets.json \
+            || { echo "::error::site/src/data/targets.json is stale: run \`node site/scripts/data.mjs\`"; exit 1; }
+
       - name: Build app
         run: nix build -L .#notinplus -o result-app
 

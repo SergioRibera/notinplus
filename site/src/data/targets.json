@@ -1,0 +1,70 @@
+{
+  "android": {
+    "abis": [
+      "arm64-v8a",
+      "x86_64"
+    ]
+  },
+  "desktop": {
+    "aarch64-darwin": {
+      "formats": [
+        "app",
+        "dmg",
+        "pkg",
+        "tar.gz"
+      ],
+      "kind": "nix",
+      "runner": "macos-latest"
+    },
+    "aarch64-linux": {
+      "formats": [
+        "appimage",
+        "deb",
+        "rpm",
+        "tar.gz"
+      ],
+      "kind": "nix",
+      "runner": "ubuntu-24.04-arm"
+    },
+    "x86_64-linux": {
+      "formats": [
+        "appimage",
+        "deb",
+        "rpm",
+        "tar.gz",
+        "flatpak"
+      ],
+      "kind": "nix",
+      "runner": "ubuntu-latest"
+    },
+    "x86_64-windows": {
+      "formats": [
+        "nsis",
+        "msi",
+        "zip"
+      ],
+      "kind": "cross",
+      "runner": "ubuntu-latest"
+    }
+  },
+  "server": {
+    "aarch64-linux": {
+      "dockerArch": "arm64",
+      "formats": [
+        "deb",
+        "rpm",
+        "tar.gz"
+      ],
+      "runner": "ubuntu-24.04-arm"
+    },
+    "x86_64-linux": {
+      "dockerArch": "amd64",
+      "formats": [
+        "deb",
+        "rpm",
+        "tar.gz"
+      ],
+      "runner": "ubuntu-latest"
+    }
+  }
+}

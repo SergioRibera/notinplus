@@ -15,10 +15,18 @@ const REPO = 'SergioRibera/notinplus';
 const out = (name) => fileURLToPath(new URL(`../src/data/${name}`, import.meta.url));
 const targetsFile = fileURLToPath(new URL('../../nix/targets.nix', import.meta.url));
 
-const targets = execFileSync('nix', ['eval', '--json', '--file', targetsFile], {
-  encoding: 'utf8',
-});
-writeFileSync(out('targets.json'), targets);
+// targets.json is committed: hosts without Nix (Cloudflare's builder)
+// build from it, and CI fails when it drifts from nix/targets.nix.
+try {
+  const targets = execFileSync('nix', ['eval', '--json', '--file', targetsFile], {
+    encoding: 'utf8',
+  });
+  // Same layout as `jq .`, which the CI check compares against.
+  writeFileSync(out('targets.json'), `${JSON.stringify(JSON.parse(targets), null, 2)}\n`);
+} catch (err) {
+  if (err.code !== 'ENOENT') throw err;
+  console.warn('nix not found, using the committed src/data/targets.json');
+}
 
 let release = null;
 try {
@@ -41,4 +49,4 @@ try {
   console.warn(`release data unavailable, the page will fetch it in the browser: ${err.message}`);
 }
 writeFileSync(out('release.json'), JSON.stringify(release, null, 2));
-console.log(`targets.json written; release ${release ? release.tag : 'missing'}`);
+console.log(`release data: ${release ? release.tag : 'missing'}`);

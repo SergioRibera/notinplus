@@ -7,9 +7,11 @@ same setup as the istmo docs.
 ## Where the data comes from
 
 - **What is offered**: `nix/targets.nix`, the matrix the release workflow
-  builds. `scripts/data.mjs` evaluates it with `nix eval` before every
-  build, so adding or removing a format or an Android ABI there changes
-  the download section.
+  builds. `scripts/data.mjs` evaluates it with `nix eval` into
+  `src/data/targets.json`, which is committed: hosts without Nix (the
+  Cloudflare builder) build from it, and CI fails when it no longer
+  matches `nix/targets.nix`. Adding or removing a format or an Android ABI
+  there changes the download section.
 - **Files, sizes, version and date**: the newest GitHub release with a
   `latest.json` (every release is a pre-release, so `releases/latest` is
   not used). Fetched at build time; in the browser the page asks GitHub
@@ -32,7 +34,8 @@ pnpm build      # dist/notinplus
 pnpm run deploy # build + wrangler deploy (needs Cloudflare credentials)
 ```
 
-`nix` must be on the PATH (the build evaluates `nix/targets.nix`).
+With `nix` on the PATH the build refreshes `src/data/targets.json`;
+without it the committed copy is used.
 
 ## Releases
 
