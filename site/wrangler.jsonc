@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "notinplus",
+  "compatibility_date": "2025-01-01",
+  // `notinplus*` (not `notinplus/*`) so the bare `/notinplus` reaches the
+  // site too; the asset handler redirects it to `/notinplus/`. Everything
+  // else on the zone stays with the site that owns it.
+  "routes": [
+    { "pattern": "sergioribera.rs/notinplus*", "zone_name": "sergioribera.rs" }
+  ],
+  "workers_dev": false,
+  "assets": {
+    "directory": "./dist",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}

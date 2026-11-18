@@ -1,0 +1,40 @@
+---
+import { Image } from 'astro:assets';
+import home from '../assets/shots/home.png';
+import homePhone from '../assets/shots/home-phone.png';
+import type { Lang } from '../i18n';
+import { strings } from '../i18n';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = strings[lang].library;
+---
+
+<section class="wrap section library" aria-labelledby="library-title">
+  <div class="library-text">
+    <h2 id="library-title">{t.title}</h2>
+    <p class="intro">{t.intro}</p>
+    <dl class="terms grid">
+      {
+        t.terms.map(([term, desc]) => (
+          <div>
+            <dt>{term}</dt>
+            <dd class="muted">{desc}</dd>
+          </div>
+        ))
+      }
+    </dl>
+    <a class="link" href="#relay">{t.relay}</a>
+  </div>
+  <figure class="library-media">
+    <div class="library-wide bleed-right">
+      <Image src={home} alt={t.alt} widths={[640, 1280]} sizes="(max-width: 900px) 92vw, 620px" />
+    </div>
+    <div class="library-phone device">
+      <Image src={homePhone} alt={t.phoneAlt} widths={[200, 400]} sizes="190px" />
+    </div>
+  </figure>
+</section>

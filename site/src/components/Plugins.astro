@@ -1,0 +1,101 @@
+---
+import { Image } from 'astro:assets';
+import pdf from '../assets/shots/pdf.png';
+import pdfPhone from '../assets/shots/pdf-phone.png';
+import bible from '../assets/shots/bible.png';
+import biblePhone from '../assets/shots/bible-phone.png';
+import type { Lang } from '../i18n';
+import { strings } from '../i18n';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = strings[lang];
+const p = t.plugins;
+// Colours of each kind in the app's Settings, Plugins list.
+const rows = [
+  { name: p.rows.canvas, color: '#7B8CFF', plugin: false },
+  { name: p.rows.notes, color: '#5FB38A', plugin: false },
+  { name: p.rows.pdf, color: '#E0614A', plugin: true },
+  { name: p.rows.bible, color: '#E0A845', plugin: true },
+];
+const blocks = [
+  { ...p.pdf, img: pdf, phone: pdfPhone },
+  { ...p.bible, img: bible, phone: biblePhone },
+];
+---
+
+<section class="wrap section plugins" aria-labelledby="plugins-title">
+  <div class="plugins-head">
+    <div>
+      <h2 id="plugins-title">{p.title}</h2>
+      <p class="intro">{p.intro}</p>
+    </div>
+    <!-- A picture of Settings, Plugins: what is the app and what can be
+         turned off. It shows state, it does not change it. -->
+    <div class="switches" role="group" aria-label={p.panel}>
+      <p class="switches-title">{p.panel}</p>
+      <ul>
+        {
+          rows.map((row) => (
+            <li>
+              <span class="kind-icon" style={`--kind: ${row.color}`} aria-hidden="true" />
+              <span class="switch-text">
+                <strong>{row.name}</strong>
+                <span class="small muted">
+                  <span class="wide-only">{row.plugin ? p.installed : p.builtIn}</span>
+                  <span class="narrow-only">{row.plugin ? p.installed : p.builtInShort}</span>
+                </span>
+              </span>
+              {row.plugin ? (
+                <span class="switch" role="img" aria-label={p.on} />
+              ) : (
+                <span class="small faint">{p.alwaysOn}</span>
+              )}
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </div>
+
+  <div class="plugin-rows">
+    {
+      blocks.map((b, i) => (
+        <div class:list={['plugin-row', { flip: i % 2 === 1 }]}>
+          <div class="shot">
+            <Image src={b.img} alt={b.alt} widths={[640, 1280]} sizes="640px" />
+          </div>
+          <div class="plugin-text">
+            <h3>{b.name}</h3>
+            <p class="line muted">{b.line}</p>
+            <dl class="terms">
+              {b.terms.map(([term, desc]) => (
+                <div>
+                  <dt>{term}</dt>
+                  <dd class="muted">{desc}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </div>
+      ))
+    }
+  </div>
+
+  <div class="plugin-phones">
+    {
+      blocks.map((b) => (
+        <div class="plugin-phone">
+          <div class="shot">
+            <Image src={b.phone} alt={b.alt} widths={[200, 400]} sizes="45vw" />
+          </div>
+          <h3>{b.name}</h3>
+          <p class="small muted">{b.line}</p>
+        </div>
+      ))
+    }
+  </div>
+</section>

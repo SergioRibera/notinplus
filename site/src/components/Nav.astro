@@ -1,0 +1,80 @@
+---
+import logo from '../assets/brand/notinplus-horizontal.svg';
+import logoDark from '../assets/brand/notinplus-horizontal-reversed.svg';
+import type { Lang } from '../i18n';
+import { strings } from '../i18n';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = strings[lang];
+const base = import.meta.env.BASE_URL;
+const home = lang === 'en' ? base : `${base}es/`;
+const languages = [
+  { code: 'en', name: 'English', href: base },
+  { code: 'es', name: 'Español', href: `${base}es/` },
+] as const;
+const current = languages.find((l) => l.code === lang)!;
+---
+
+<header class="wrap nav">
+  <a class="nav-logo" href={home}>
+    <img class="on-light" src={logo.src} width="147" height="32" alt="NotIn Plus" />
+    <img class="on-dark" src={logoDark.src} width="147" height="32" alt="NotIn Plus" />
+  </a>
+  <nav class="nav-links" aria-label="NotIn Plus">
+    <a href="#features">{t.nav.features}</a>
+    <a href="#download">{t.nav.download}</a>
+    <a href="#relay">{t.nav.relay}</a>
+    <a href="https://github.com/SergioRibera/notinplus">{t.nav.github}</a>
+  </nav>
+  <details class="lang">
+    <summary aria-label={`${t.nav.language}: ${current.name}`}>
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9M12 3c-2.5 2.7-3.8 5.7-3.8 9s1.3 6.3 3.8 9" />
+      </svg>
+      <span>{current.name}</span>
+      <svg class="chev" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+    </summary>
+    <ul class="lang-menu">
+      {
+        languages.map((l) => (
+          <li>
+            <a href={l.href} hreflang={l.code} lang={l.code} data-lang={l.code} aria-current={l.code === lang ? 'true' : undefined}>
+              {l.name}
+              {l.code === lang && (
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 12l5 5 9-10" /></svg>
+              )}
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+  </details>
+</header>
+
+<script>
+  // Remember an explicit language pick so the redirect on the English
+  // page never overrides it.
+  for (const link of document.querySelectorAll<HTMLAnchorElement>('[data-lang]')) {
+    link.addEventListener('click', () => {
+      try {
+        localStorage.setItem('notinplus-lang', link.dataset.lang ?? 'en');
+      } catch {}
+    });
+  }
+  // Close the menu on Escape or outside clicks, like a native menu.
+  const menu = document.querySelector<HTMLDetailsElement>('details.lang');
+  document.addEventListener('click', (e) => {
+    if (menu?.open && !menu.contains(e.target as Node)) menu.open = false;
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && menu?.open) {
+      menu.open = false;
+      menu.querySelector('summary')?.focus();
+    }
+  });
+</script>

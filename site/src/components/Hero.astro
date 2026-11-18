@@ -1,0 +1,43 @@
+---
+import { Image } from 'astro:assets';
+import desk from '../assets/shots/desk.png';
+import sketchPhone from '../assets/shots/sketch-phone.png';
+import type { Lang } from '../i18n';
+import { strings } from '../i18n';
+import DownloadIcon from './DownloadIcon.astro';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = strings[lang];
+---
+
+<section class="wrap hero">
+  <div class="hero-text">
+    <h1>{t.hero.title}</h1>
+    <p class="lead">{t.hero.lead}</p>
+    <div class="hero-cta" id="hero-cta">
+      <!-- Without the script (or before it runs) this jumps to the full
+           list; the script turns it into the file for this device. -->
+      <a class="button primary" id="hero-download" href="#download">
+        <DownloadIcon />
+        <span data-hero-label>{t.hero.ctaGeneric}</span>
+      </a>
+      <p class="small muted" data-hero-meta></p>
+      <p class="small" data-hero-ios hidden>{t.hero.ios}</p>
+      <a class="link" href="#download">{t.hero.others}</a>
+    </div>
+    <p class="small muted alpha">{t.hero.alpha}</p>
+  </div>
+  <figure class="hero-media">
+    <div class="hero-desk bleed-right">
+      <Image src={desk} alt={t.hero.deskAlt} widths={[720, 1080, 1440]} sizes="(max-width: 900px) 92vw, 760px" loading="eager" fetchpriority="high" />
+    </div>
+    <div class="hero-phone device">
+      <Image src={sketchPhone} alt={t.hero.phoneAlt} widths={[220, 440]} sizes="(max-width: 900px) 30vw, 210px" loading="eager" />
+    </div>
+    <figcaption class="small muted">{t.hero.caption}</figcaption>
+  </figure>
+</section>

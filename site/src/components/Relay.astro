@@ -1,0 +1,74 @@
+---
+import targetsJson from '../data/targets.json';
+import releaseJson from '../data/release.json';
+import type { Lang } from '../i18n';
+import { strings } from '../i18n';
+import { filesOf, formatSize, relaySlots, slotKey, type Release, type Targets } from '../lib/release';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = strings[lang];
+const r = t.relay;
+const release = releaseJson as unknown as Release | null;
+const { files } = filesOf(release);
+const slots = relaySlots(targetsJson as unknown as Targets);
+const kinds = [...new Set(slots.map((s) => s.kind))] as Array<keyof typeof r.packages>;
+const fallback = release?.url ?? 'https://github.com/SergioRibera/notinplus/releases';
+const image = `ghcr.io/sergioribera/notin-relay:${release?.version ?? '<version>'}`;
+---
+
+<section class="relay" id="relay" aria-labelledby="relay-title">
+  <div class="wrap">
+    <p class="program"><code>{r.program}</code></p>
+    <h2 id="relay-title">{r.title}</h2>
+    <p class="intro">{r.intro}</p>
+    <dl class="terms columns">
+      {
+        r.terms.map(([term, desc]) => (
+          <div>
+            <dt>{term}</dt>
+            <dd>{desc}</dd>
+          </div>
+        ))
+      }
+    </dl>
+
+    <h3>{r.install}</h3>
+    <div class="relay-card container">
+      <div>
+        <p class="card-title">{r.container}</p>
+        <p class="small soft">{r.containerText}</p>
+      </div>
+      <pre class="code"><code>docker run -p 7720:7720/udp -v relay:/data \
+  {image} \
+  --port 7720 --data /data --advertise relay.example.com</code></pre>
+    </div>
+    <div class="relay-packages">
+      {
+        kinds.map((kind) => (
+          <div class="relay-card">
+            <p class="card-title">{r.packages[kind][0]}</p>
+            <p class="small soft">{r.packages[kind][1]}</p>
+            <p class="arch-links">
+              {slots
+                .filter((s) => s.kind === kind)
+                .map((s) => {
+                  const f = files.get(slotKey(s));
+                  return (
+                    <a class="link" href={f?.url ?? fallback} data-slot={slotKey(s)}>
+                      {t.arch[s.arch]}
+                      <span class="small soft" data-size={slotKey(s)}>{f ? formatSize(f.size) : ''}</span>
+                    </a>
+                  );
+                })}
+            </p>
+          </div>
+        ))
+      }
+    </div>
+    <p class="small soft">{r.invite}</p>
+  </div>
+</section>

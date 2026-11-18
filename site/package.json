@@ -1,0 +1,24 @@
+{
+  "name": "notinplus-site",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "data": "node scripts/data.mjs",
+    "dev": "node scripts/data.mjs && astro dev",
+    "build": "node scripts/data.mjs && astro check && astro build && : > dist/.assetsignore",
+    "deploy": "pnpm run build && wrangler deploy",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.4",
+    "@fontsource-variable/noto-sans": "^5.1.1",
+    "astro": "^5.1.1",
+    "sharp": "^0.33.5",
+    "typescript": "^5.7.2"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

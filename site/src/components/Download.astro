@@ -1,0 +1,180 @@
+---
+import targetsJson from '../data/targets.json';
+import releaseJson from '../data/release.json';
+import type { Lang } from '../i18n';
+import { fill, strings } from '../i18n';
+import DownloadIcon from './DownloadIcon.astro';
+import {
+  PLATFORMS,
+  RECOMMENDED,
+  appSlots,
+  archsOf,
+  filesOf,
+  formatSize,
+  slotKey,
+  type Release,
+  type Slot,
+  type Targets,
+} from '../lib/release';
+import { describe } from '../lib/describe';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = strings[lang];
+const d = t.download;
+const targets = targetsJson as unknown as Targets;
+const release = releaseJson as unknown as Release | null;
+const slots = appSlots(targets);
+const { files, sums } = filesOf(release);
+const releases = 'https://github.com/SergioRibera/notinplus/releases';
+const fallback = release?.url ?? releases;
+
+const date = (iso: string) => new Intl.DateTimeFormat(lang, { dateStyle: 'long' }).format(new Date(iso));
+const versionLine = release
+  ? fill(d.version, { version: release.version, date: date(release.publishedAt) })
+  : d.loading;
+const href = (s: Slot) => files.get(slotKey(s))?.url ?? fallback;
+const size = (s: Slot) => {
+  const f = files.get(slotKey(s));
+  return f ? formatSize(f.size) : '';
+};
+const label = (s: Slot) => describe(lang, s);
+
+// One view per architecture a platform ships (Linux has two).
+const views = PLATFORMS.map((platform) => {
+  const all = slots[platform];
+  const archs = platform === 'android' ? ['aarch64' as const] : archsOf(all);
+  return {
+    platform,
+    archs,
+    views: archs.map((arch) => {
+      const inArch = platform === 'android' ? all : all.filter((s) => s.arch === arch);
+      const rec =
+        inArch.find((s) => s.kind === RECOMMENDED[platform].kind && (platform !== 'android' || s.arch === RECOMMENDED.android.arch)) ??
+        inArch[0];
+      return { arch, rec, others: inArch.filter((s) => s !== rec) };
+    }),
+  };
+});
+const tabs = [...PLATFORMS, 'ios'] as const;
+const clientData = { lang, targets, release };
+---
+
+<section class="download" id="download" aria-labelledby="download-title">
+  <div class="wrap">
+    <h2 id="download-title">{d.title}</h2>
+    <p class="muted version-line">
+      <span data-version-line>{versionLine}</span>
+      <a class="link" data-release-link href={fallback}>{d.notes}</a>
+    </p>
+
+    <div class="platform-tabs" role="tablist" aria-label={d.platform}>
+      {
+        tabs.map((p, i) => (
+          <button role="tab" type="button" id={`tab-${p}`} aria-controls={`panel-${p}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1} data-platform={p}>
+            <span>{d.platforms[p]}</span>
+            <span class="detected-hint" hidden>{d.detected}</span>
+          </button>
+        ))
+      }
+    </div>
+    <label class="platform-select">
+      <span class="small muted">{d.platform}</span>
+      <select data-platform-select>
+        {tabs.map((p) => <option value={p}>{d.platforms[p]}</option>)}
+      </select>
+      <svg class="chev" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+    </label>
+
+    {
+      views.map(({ platform, archs, views: list }, i) => (
+        <div class="panel" role="tabpanel" id={`panel-${platform}`} aria-labelledby={`tab-${platform}`} data-panel={platform} data-active={i === 0 ? '' : undefined}>
+          <h3 class="panel-title">{d.platforms[platform]}</h3>
+          {list.map(({ arch, rec, others }, j) => (
+            <div class="arch-view" data-arch={arch} data-active={j === 0 ? '' : undefined}>
+              <div class="rec">
+                <p class="small muted">{platform === 'android' ? d.recommendedPhone : d.recommended}</p>
+                <p class="rec-format">{label(rec).name}</p>
+                <p class="muted">{label(rec).text}</p>
+                {archs.length > 1 && (
+                  <fieldset class="arch-switch">
+                    <legend class="small muted">{d.architecture}</legend>
+                    {archs.map((a) => (
+                      <label>
+                        <input type="radio" name={`arch-${platform}-${arch}`} value={a} checked={a === arch} data-arch-pick={platform} />
+                        <span>{t.arch[a]}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                )}
+                <div class="rec-action">
+                  <a class="button primary" href={href(rec)} data-slot={slotKey(rec)}>
+                    <DownloadIcon />
+                    <span>{fill(d.getFormat, { format: label(rec).short })}</span>
+                  </a>
+                  <span class="muted" data-size={slotKey(rec)}>{size(rec)}</span>
+                </div>
+              </div>
+              <div class="others">
+                <p class="small muted">{fill(d.others, { platform: platform === 'linux' ? `${d.platforms.linux}, ${t.arch[arch]}` : d.platforms[platform] })}</p>
+                <ul>
+                  {others.map((s) => (
+                    <li>
+                      <span class="other-name">{label(s).name}</span>
+                      <span class="other-for muted">{label(s).text}</span>
+                      <span class="other-size small muted" data-size={slotKey(s)}>{size(s)}</span>
+                      <a class="link" href={href(s)} data-slot={slotKey(s)} aria-label={fill(d.getFormat, { format: label(s).name })}>
+                        {d.get}
+                      </a>
+                    </li>
+                  ))}
+                  {platform === 'linux' && (
+                    <li>
+                      <span class="other-name">{d.nix}</span>
+                      <code class="other-for">nix run github:SergioRibera/notinplus</code>
+                    </li>
+                  )}
+                </ul>
+              </div>
+            </div>
+          ))}
+        </div>
+      ))
+    }
+
+    <div class="panel ios" role="tabpanel" id="panel-ios" aria-labelledby="tab-ios" data-panel="ios">
+      <div class="rec">
+        <h3 class="rec-format">{d.ios.title}</h3>
+        <p class="muted">{d.ios.body}</p>
+        <p class="small muted">{d.ios.caveat}</p>
+        <a class="link" href="https://github.com/SergioRibera/notinplus#build-from-source">{d.ios.link}</a>
+      </div>
+      <div class="others">
+        <p class="small muted">{d.ios.need}</p>
+        <p>{d.ios.needBody}</p>
+        <pre class="code"><code>git clone https://github.com/SergioRibera/notinplus
+cd notinplus/ios && xcodegen generate
+open NotinplusApp.xcodeproj</code></pre>
+        <p class="small muted">{d.ios.steps}</p>
+      </div>
+    </div>
+
+    <p class="small muted download-foot">
+      <a class="link" data-sums href={sums ?? fallback}>{d.verify}</a>
+      <a class="link" href={releases}>{d.all}</a>
+      <span>{d.macNote}</span>
+    </p>
+    <p class="small muted" data-unavailable hidden>
+      {d.unavailable} <a class="link" href={releases}>{d.openGithub}</a>
+    </p>
+  </div>
+</section>
+
+<script type="application/json" id="download-data" set:html={JSON.stringify(clientData)} />
+<script>
+  import { start } from '../scripts/download';
+  start();
+</script>

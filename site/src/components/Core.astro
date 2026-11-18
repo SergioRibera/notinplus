@@ -1,0 +1,179 @@
+---
+import { Image } from 'astro:assets';
+import sketchTablet from '../assets/shots/sketch-tablet.png';
+import note from '../assets/shots/note.png';
+import desk from '../assets/shots/desk.png';
+import sketchPhone from '../assets/shots/sketch-phone.png';
+import notePhone from '../assets/shots/note-phone.png';
+import type { Lang } from '../i18n';
+import { strings } from '../i18n';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = strings[lang];
+// Stage image and where its crop sits, per feature.
+const wide = [
+  { src: sketchTablet, position: 'left top' },
+  { src: note, position: 'center 40%' },
+  { src: desk, position: 'left top' },
+];
+const phone = [
+  { src: sketchPhone, position: 'center 20%' },
+  { src: notePhone, position: 'center 35%' },
+  { src: desk, position: 'left top' },
+];
+---
+
+<section class="wrap section core" id="features" aria-labelledby="core-title">
+  <h2 id="core-title">{t.core.title}</h2>
+  <p class="intro">{t.core.intro}</p>
+
+  <div class="tour" data-tour>
+    <div class="tour-list" role="tablist" aria-orientation="vertical" aria-labelledby="core-title">
+      {
+        t.core.items.map((item, i) => (
+          <button
+            class="tour-item"
+            role="tab"
+            type="button"
+            id={`tour-tab-${i}`}
+            aria-controls={`tour-panel-${i}`}
+            aria-selected={i === 0 ? 'true' : 'false'}
+            tabindex={i === 0 ? 0 : -1}
+          >
+            <span class="tour-title">{item.title}</span>
+            <span class="tour-text">{item.text}</span>
+            <span class="tour-progress" aria-hidden="true"><span></span></span>
+          </button>
+        ))
+      }
+      <p class="small muted tour-extra">{t.core.extra}</p>
+    </div>
+    <div class="tour-stage">
+      {
+        t.core.items.map((item, i) => (
+          <div class="tour-panel" role="tabpanel" id={`tour-panel-${i}`} aria-labelledby={`tour-tab-${i}`} data-active={i === 0 ? '' : undefined}>
+            <Image src={wide[i].src} alt={item.alt} widths={[680, 1360]} sizes="680px" style={`object-position: ${wide[i].position}`} />
+          </div>
+        ))
+      }
+    </div>
+  </div>
+
+  <div class="carousel" data-carousel>
+    <ul class="carousel-track">
+      {
+        t.core.items.map((item, i) => (
+          <li class="card" id={`card-${i}`}>
+            <Image src={phone[i].src} alt={item.alt} widths={[300, 600]} sizes="272px" style={`object-position: ${phone[i].position}`} />
+            <h3>{item.title}</h3>
+            <p class="small muted">{item.short}</p>
+          </li>
+        ))
+      }
+    </ul>
+    <div class="dots" aria-hidden="true">
+      {t.core.items.map((_, i) => <button type="button" tabindex="-1" data-dot={i} class={i === 0 ? 'on' : ''} />)}
+    </div>
+    <p class="small muted">{t.core.swipe} {t.core.extra}</p>
+  </div>
+</section>
+
+<script>
+  const AUTOPLAY_MS = 7000;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+
+  for (const tour of document.querySelectorAll<HTMLElement>('[data-tour]')) {
+    const tabs = [...tour.querySelectorAll<HTMLButtonElement>('[role=tab]')];
+    const panels = [...tour.querySelectorAll<HTMLElement>('[role=tabpanel]')];
+    let current = 0;
+    let shown = 1;
+    let timer: number | undefined;
+    let paused = false;
+
+    const select = (i: number, focus = false) => {
+      current = i;
+      tabs.forEach((tab, j) => {
+        tab.setAttribute('aria-selected', String(j === i));
+        tab.tabIndex = j === i ? 0 : -1;
+      });
+      panels.forEach((panel, j) => panel.toggleAttribute('data-active', j === i));
+      if (focus) tabs[i].focus();
+      restart();
+    };
+
+    // Advances one round, then stays; never with reduced motion.
+    const restart = () => {
+      window.clearTimeout(timer);
+      tour.style.setProperty('--tour-ms', `${AUTOPLAY_MS}ms`);
+      tour.classList.remove('playing');
+      if (reduce.matches || paused || shown >= tabs.length) return;
+      void tour.offsetWidth;
+      tour.classList.add('playing');
+      timer = window.setTimeout(() => {
+        shown += 1;
+        select((current + 1) % tabs.length);
+      }, AUTOPLAY_MS);
+    };
+
+    const pause = () => {
+      paused = true;
+      window.clearTimeout(timer);
+      tour.classList.remove('playing');
+    };
+    const resume = () => {
+      if (tour.matches(':hover') || tour.contains(document.activeElement)) return;
+      paused = false;
+      restart();
+    };
+
+    tabs.forEach((tab, i) => {
+      tab.addEventListener('click', () => {
+        shown = tabs.length;
+        select(i);
+      });
+      tab.addEventListener('keydown', (e) => {
+        const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
+        if (step === undefined) return;
+        e.preventDefault();
+        shown = tabs.length;
+        select((i + step + tabs.length) % tabs.length, true);
+      });
+    });
+    tour.addEventListener('pointerenter', pause);
+    tour.addEventListener('pointerleave', resume);
+    tour.addEventListener('focusin', pause);
+    tour.addEventListener('focusout', () => setTimeout(resume));
+
+    // Start only once the section is on screen.
+    new IntersectionObserver((entries, observer) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        restart();
+        observer.disconnect();
+      }
+    }, { threshold: 0.4 }).observe(tour);
+  }
+
+  for (const carousel of document.querySelectorAll<HTMLElement>('[data-carousel]')) {
+    const track = carousel.querySelector<HTMLElement>('.carousel-track')!;
+    const cards = [...track.children] as HTMLElement[];
+    const dots = [...carousel.querySelectorAll<HTMLButtonElement>('[data-dot]')];
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const i = cards.indexOf(entry.target as HTMLElement);
+          dots.forEach((dot, j) => dot.classList.toggle('on', j === i));
+        }
+      },
+      { root: track, threshold: 0.6 },
+    );
+    cards.forEach((card) => observer.observe(card));
+    dots.forEach((dot, i) =>
+      dot.addEventListener('click', () => track.scrollTo({ left: cards[i].offsetLeft - track.offsetLeft, behavior: reduce.matches ? 'auto' : 'smooth' })),
+    );
+  }
+</script>

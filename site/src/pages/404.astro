@@ -1,0 +1,11 @@
+---
+import Base from '../layouts/Base.astro';
+const base = import.meta.env.BASE_URL;
+---
+
+<Base lang="en">
+  <main class="wrap section not-found">
+    <h1>Page not found</h1>
+    <p class="intro">This page is not here. <a class="link" href={base}>Go to NotIn Plus</a>.</p>
+  </main>
+</Base>

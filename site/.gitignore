@@ -1,0 +1,7 @@
+node_modules/
+.astro/
+.wrangler/
+dist/
+# Written by scripts/data.mjs on every build.
+src/data/targets.json
+src/data/release.json

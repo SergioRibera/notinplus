@@ -1,0 +1,54 @@
+---
+import logo from '../assets/brand/notinplus-horizontal.svg';
+import logoDark from '../assets/brand/notinplus-horizontal-reversed.svg';
+import Base from '../layouts/Base.astro';
+import type { Lang } from '../i18n';
+import { strings } from '../i18n';
+import Nav from './Nav.astro';
+import Hero from './Hero.astro';
+import Core from './Core.astro';
+import Plugins from './Plugins.astro';
+import Library from './Library.astro';
+import Download from './Download.astro';
+import Relay from './Relay.astro';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = strings[lang];
+const repo = 'https://github.com/SergioRibera/notinplus';
+---
+
+<Base lang={lang}>
+  {
+    lang === 'en' && (
+      <script is:inline define:vars={{ es: `${import.meta.env.BASE_URL}es/` }}>
+        // Spanish browsers land on /es/ unless the visitor picked English.
+        try {
+          const picked = localStorage.getItem('notinplus-lang');
+          if (!picked && /^es\b/i.test(navigator.language || '')) location.replace(es);
+        } catch {}
+      </script>
+    )
+  }
+  <Nav lang={lang} />
+  <main>
+    <Hero lang={lang} />
+    <Core lang={lang} />
+    <Plugins lang={lang} />
+    <Library lang={lang} />
+    <Download lang={lang} />
+    <Relay lang={lang} />
+  </main>
+  <footer class="wrap footer">
+    <img class="on-light" src={logo.src} width="110" height="24" alt="NotIn Plus" />
+    <img class="on-dark" src={logoDark.src} width="110" height="24" alt="NotIn Plus" />
+    <p class="small muted">{t.footer.license}</p>
+    <nav class="footer-links small">
+      <a href={repo}>{t.footer.source}</a>
+      <a href={`${repo}/releases`}>{t.footer.releases}</a>
+    </nav>
+  </footer>
+</Base>
