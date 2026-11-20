@@ -187,8 +187,15 @@ impl Board {
         let Some(preset) = self.doc.preset(stroke.brush) else {
             return false;
         };
-        writes(preset.kind)
-            && Bounds::of(&raw(stroke)).is_some_and(|b| is_writing(b, Some(self.x_height_hint())))
+        if !writes(preset.kind) {
+            return false;
+        }
+        let known = self.known_x_height();
+        let writing = Bounds::of(&raw(stroke)).is_some_and(|b| is_writing(b, known));
+        if !writing {
+            tracing::debug!(target: "beautify", stroke = ?stroke.id, x_height = ?known, "too big for writing");
+        }
+        writing
     }
 
     fn word_bounds(&self) -> Option<Bounds> {
@@ -200,9 +207,15 @@ impl Board {
             .reduce(Bounds::union)
     }
 
-    /// Best guess of the writing size: the line's, the writer's, or the
-    /// open word's own.
+    /// Best guess of the writing size.
     fn x_height_hint(&self) -> f32 {
+        self.known_x_height().unwrap_or(FALLBACK_X_HEIGHT)
+    }
+
+    /// Writing size measured so far: the line's, the writer's, or the
+    /// open word's own. Without one, any ink up to a generous height
+    /// counts as writing.
+    fn known_x_height(&self) -> Option<f32> {
         self.beautify
             .row
             .as_ref()
@@ -219,7 +232,6 @@ impl Board {
                 let refs: Vec<&[Pt]> = strokes.iter().map(Vec::as_slice).collect();
                 WordMetrics::measure(&refs).map(|m| m.x_height)
             })
-            .unwrap_or(FALLBACK_X_HEIGHT)
     }
 
     /// Correct the open word onto its line.
@@ -240,6 +252,7 @@ impl Board {
         }
         let refs: Vec<&[Pt]> = strokes.iter().map(Vec::as_slice).collect();
         let Some(measured) = WordMetrics::measure(&refs) else {
+            tracing::debug!(target: "beautify", strokes = ids.len(), "word not measurable");
             return;
         };
         let (target, ruled, continues) = self.word_target(&measured);
@@ -259,8 +272,18 @@ impl Board {
                 .flatten()
         });
         let Some(placed) = placed else {
+            tracing::debug!(target: "beautify", strokes = ids.len(), ?target, "no safe correction");
             return;
         };
+        tracing::debug!(
+            target: "beautify",
+            strokes = ids.len(),
+            x_height = measured.x_height,
+            ruled,
+            continues,
+            fix = ?placed.fix.affine,
+            "word corrected"
+        );
         let level_slant = measured.slant - measured.baseline.angle();
         self.beautify.profile.record(level_slant, measured.x_height);
         let row = match self.beautify.row.take() {
@@ -418,8 +441,12 @@ mod tests {
     use crate::canvas::Board;
 
     /// Write a small `n` with its left foot at `(x, y)`, tilted by `tilt`.
-    fn letter_n(board: &mut Board, (x, y): (f32, f32), tilt: f32) {
-        let h = 14.0;
+    fn letter_n(board: &mut Board, at: (f32, f32), tilt: f32) {
+        letter_n_sized(board, at, tilt, 14.0);
+    }
+
+    /// Write an `n` `h` tall.
+    fn letter_n_sized(board: &mut Board, (x, y): (f32, f32), tilt: f32, h: f32) {
         let mut pts = Vec::new();
         for i in 0..=8u8 {
             pts.push((x, (f32::from(i) / 8.0).mul_add(-h, y)));
@@ -477,6 +504,15 @@ mod tests {
         assert!(board.undo());
         assert_eq!(board.doc().stroke_count(), 1);
         assert!(board.doc().strokes().all(|s| s.fix.is_none()));
+    }
+
+    #[test]
+    fn large_writing_is_beautified_before_its_size_is_known() {
+        let mut board = pen_board();
+        letter_n_sized(&mut board, (100.0, 300.0), 0.1, 70.0);
+        letter_n_sized(&mut board, (170.0, 307.0), 0.1, 70.0);
+        board.flush_word(board.beautify.generation);
+        assert!(board.doc().strokes().all(|s| s.fix.is_some()));
     }
 
     #[test]

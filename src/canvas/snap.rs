@@ -164,8 +164,10 @@ impl Board {
         };
         let ink = raw(active);
         let Some(geom) = fit_shape(&ink, false) else {
+            tracing::debug!(target: "beautify", points = ink.len(), "pen rested, no figure");
             return;
         };
+        tracing::debug!(target: "beautify", points = ink.len(), ?geom, "pen rested, figure");
         let radius = END_SNAP / self.viewport.scale.max(f32::EPSILON);
         let geom = snap_ends(geom, &self.figure_anchors(), radius);
         let with_pressure: Vec<(Pt, u8)> = active

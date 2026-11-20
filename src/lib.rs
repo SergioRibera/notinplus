@@ -140,7 +140,11 @@ fn mobile_main() {
         use tracing_subscriber::Layer as _;
         diagnostics::init_logging(Some(
             paranoid_android::layer("notinplus")
-                .with_filter(tracing_subscriber::filter::LevelFilter::INFO)
+                .with_filter(
+                    tracing_subscriber::filter::Targets::new()
+                        .with_default(tracing::Level::INFO)
+                        .with_target("beautify", tracing::Level::DEBUG),
+                )
                 .boxed(),
         ));
     }

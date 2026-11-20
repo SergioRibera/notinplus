@@ -16,7 +16,7 @@ use crate::persist::Persisted;
 
 /// Logs kept by the recorder: framework dumps are left out, and network
 /// chatter too so streaming does not record itself.
-const FILTER: &str = "info,freya_core=off,freya_winit::renderer=off,torin=off,ragnarok=off,zbus=warn,tracing=warn,zudp=warn,sismo=warn";
+const FILTER: &str = "info,beautify=debug,freya_core=off,freya_winit::renderer=off,torin=off,ragnarok=off,zbus=warn,tracing=warn,zudp=warn,sismo=warn";
 
 /// Workspace crates whose names would otherwise read as Freya (`freya*`)
 /// or a third party, counted as the app in the viewer.
