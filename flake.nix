@@ -82,13 +82,17 @@
             exported = t.exported or false;
             conformsTo = t.conforms_to or [ "public.data" ];
           }) ((builtins.fromTOML (builtins.readFile ./istmo.toml)).app.document_type or [ ]);
+          # `notein://` links (MSI/NSIS `HKCR\notein`, `x-scheme-handler/notein`,
+          # `CFBundleURLTypes`); Android declares it in its manifest.
+          urlSchemes = [ { scheme = "notein"; } ];
           desktopEntries = [
             {
               name = "NotIn Plus";
               # Named after the bundle id: Wayland matches the window's app id
               # against it, and flatpak requires it.
               fileName = "rs.sergioribera.notinplus";
-              exec = "/opt/${pname}/bin/${pname} %F";
+              # `%U`: links arrive as URLs, local files as paths or `file:` URLs.
+              exec = "/opt/${pname}/bin/${pname} %U";
               categories = [
                 "Office"
                 "Utility"
