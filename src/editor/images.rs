@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::{self, Cursor, Read};
+use std::io::{self, Cursor};
 use std::path::{Component as PathPart, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -29,6 +29,8 @@ use crate::failure::NetFailureExt;
 use crate::library::model::ItemId;
 
 use crate::library::bodies::ASSETS_SUBDIR as ASSETS_DIR;
+
+mod remote;
 /// Longest side an image is stored at; bigger ones are scaled down.
 const MAX_SIDE: u32 = 4096;
 /// Largest file read or downloaded, before decoding.
@@ -416,14 +418,10 @@ fn fetch(source: &Source) -> Result<Vec<u8>, ImageError> {
                 return Ok(bytes);
             }
             sismo::instant!("images::disk_cache_miss");
-            let mut raw = Vec::new();
-            {
+            let raw = {
                 sismo::scope!("images::download");
-                let response = reqwest::blocking::get(url)
-                    .and_then(reqwest::blocking::Response::error_for_status)
-                    .inspect_err(|_| sismo::instant!("images::download_failed"))?;
-                response.take(MAX_BYTES + 1).read_to_end(&mut raw)?;
-            }
+                remote::download(url).inspect_err(|_| sismo::instant!("images::download_failed"))?
+            };
             if raw.len() as u64 > MAX_BYTES {
                 return Err(ImageError::TooLarge);
             }
@@ -607,10 +605,98 @@ fn use_loaded(item: ItemId, source: Option<Source>) -> State<Load> {
 }
 
 impl Component for NoteImage {
+    #[sismo::function("images::note_image_gate")]
+    fn render(&self) -> impl IntoElement {
+        let remote = match &self.source {
+            Some(Source::Remote(url)) => Some(url.clone()),
+            _ => None,
+        };
+        let revealed = use_state(|| remote.as_deref().is_none_or(remote::allowed));
+        match remote {
+            Some(url) if !*revealed.read() => self.blocked(url, revealed),
+            _ => LoadingImage(self.clone()).into_element(),
+        }
+    }
+}
+
+impl NoteImage {
+    /// A web image nobody agreed to load yet: its name, its host and
+    /// the choice to load it.
+    fn blocked(&self, url: String, mut revealed: State<bool>) -> Element {
+        let colors = &self.colors;
+        let host = remote::host(&url).unwrap_or_default();
+        let once = url.clone();
+        rect()
+            .padding((8. * self.zoom, 12. * self.zoom))
+            .corner_radius(8. * self.zoom)
+            .background(colors.code_background)
+            .spacing(8. * self.zoom)
+            .child(
+                rect()
+                    .horizontal()
+                    .spacing(8. * self.zoom)
+                    .cross_align(Alignment::center())
+                    .child(
+                        SvgViewer::new(freya::icons::lucide::image())
+                            .color(colors.muted)
+                            .width(Size::px(16. * self.zoom))
+                            .height(Size::px(16. * self.zoom)),
+                    )
+                    .child(
+                        rect()
+                            .child(
+                                label()
+                                    .font_size(13. * self.zoom)
+                                    .color(colors.text)
+                                    .max_lines(1)
+                                    .text(self.name.clone()),
+                            )
+                            .child(
+                                label()
+                                    .font_size(11.5 * self.zoom)
+                                    .color(colors.muted)
+                                    .text(tr!("editor-image-remote", "host" => host.clone())),
+                            ),
+                    ),
+            )
+            .child(
+                rect()
+                    .horizontal()
+                    .spacing(6. * self.zoom)
+                    .child(
+                        notin_ui_kit::Button::new(tr!("editor-image-remote-load"))
+                            .small()
+                            .on_press(move |_| {
+                                remote::allow_once(&once);
+                                revealed.set(true);
+                            }),
+                    )
+                    .child(
+                        notin_ui_kit::Button::new(
+                            tr!("editor-image-remote-always", "host" => host),
+                        )
+                        .small()
+                        .ghost()
+                        .on_press(move |_| {
+                            remote::allow_host(&url);
+                            revealed.set(true);
+                        }),
+                    ),
+            )
+            .into_element()
+    }
+}
+
+/// A note image the person may see: loads it and shows it.
+#[derive(Clone, PartialEq)]
+struct LoadingImage(NoteImage);
+
+impl Component for LoadingImage {
     #[sismo::function("images::note_image")]
     fn render(&self) -> impl IntoElement {
+        let image = &self.0;
         use_drop(|| sismo::instant!("images::note_image_drop"));
-        let state = use_loaded(self.item, self.source.clone());
+        let state = use_loaded(image.item, image.source.clone());
 
         match &*state.read() {
             Load::Ready(loaded) => {
@@ -620,9 +706,9 @@ impl Component for NoteImage {
                     loaded.width as f32,
                     loaded.height as f32 / loaded.width.max(1) as f32,
                 );
-                let width = self.width(natural);
+                let width = image.width(natural);
                 rect()
-                    .corner_radius(8. * self.zoom)
+                    .corner_radius(8. * image.zoom)
                     .overflow(Overflow::Clip)
                     .child(
                         ImageViewer::new((loaded.key, loaded.bytes.clone()))
@@ -632,19 +718,19 @@ impl Component for NoteImage {
                     .into_element()
             }
             Load::Loading => rect()
-                .width(Size::px(self.width(320.)))
-                .height(Size::px(180. * self.zoom))
-                .corner_radius(8. * self.zoom)
-                .background(self.colors.code_background)
+                .width(Size::px(image.width(320.)))
+                .height(Size::px(180. * image.zoom))
+                .corner_radius(8. * image.zoom)
+                .background(image.colors.code_background)
                 .center()
                 .child(
                     SvgViewer::new(freya::icons::lucide::image())
-                        .color(self.colors.muted.with_a(120))
-                        .width(Size::px(22. * self.zoom))
-                        .height(Size::px(22. * self.zoom)),
+                        .color(image.colors.muted.with_a(120))
+                        .width(Size::px(22. * image.zoom))
+                        .height(Size::px(22. * image.zoom)),
                 )
                 .into_element(),
-            Load::Failed => self.failed(),
+            Load::Failed => image.failed(),
         }
     }
 }

@@ -14,3 +14,6 @@ editor-snapshot-empty = Nothing to picture there yet
 editor-snapshot-on-canvas = Added to the canvas
 editor-image-pick-title = Image
 editor-image-failed = Couldn't load the image
+editor-image-remote = Image from { $host }
+editor-image-remote-load = Load
+editor-image-remote-always = Always from { $host }
