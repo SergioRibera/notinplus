@@ -213,12 +213,22 @@ pub fn read_opened(path: &std::path::Path, cap: u64) -> std::io::Result<Vec<u8>>
             return Err(Error::new(ErrorKind::InvalidInput, "not a document path"));
         }
     }
-    // Checked before opening: opening a FIFO for reading blocks until a
-    // writer shows up.
+    // Cheap early answer; the check that counts is on the open handle,
+    // since the path may be swapped between the two.
     if !std::fs::metadata(path)?.is_file() {
         return Err(Error::new(ErrorKind::InvalidInput, "not a regular file"));
     }
-    let file = std::fs::File::open(path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    // Non-blocking, so a FIFO swapped in after the check above opens at
+    // once instead of waiting for a writer; it has no effect on regular
+    // files. No controlling terminal from a tty device either.
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(
+        &mut options,
+        libc::O_NONBLOCK | libc::O_NOCTTY,
+    );
+    let file = options.open(path)?;
     let meta = file.metadata()?;
     if !meta.is_file() {
         return Err(Error::new(ErrorKind::InvalidInput, "not a regular file"));
@@ -252,6 +262,21 @@ mod opened_tests {
             read_opened(std::path::Path::new("/dev/zero"), 1024).is_err(),
             "a device"
         );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_is_refused_without_waiting_for_a_writer() {
+        let dir = std::env::temp_dir().join(format!("notinplus-fifo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("pipe.md");
+        let c_path = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: `c_path` is a valid NUL-terminated path for the call.
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+        let started = std::time::Instant::now();
+        assert!(read_opened(&fifo, 1024).is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
         let _ = std::fs::remove_dir_all(dir);
     }
 }

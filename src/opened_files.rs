@@ -116,15 +116,35 @@ async fn open(document: OpenedDocument) {
     }
 }
 
-/// Read a file off the UI thread.
+/// How long a read may take before the app stops waiting: a stalled
+/// network share must not hold up the files opened after it.
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Read a file off the UI thread, giving up after [`READ_TIMEOUT`].
 pub(crate) async fn read(path: std::path::PathBuf) -> std::io::Result<Vec<u8>> {
     let (tx, rx) = flume::bounded(1);
-    std::thread::spawn(move || {
-        let _ = tx.send(crate::files::read_opened(
-            &path,
-            crate::files::OPENED_MAX_BYTES,
-        ));
-    });
+    let late = tx.clone();
+    std::thread::Builder::new()
+        .name("opened-file-read".into())
+        .spawn(move || {
+            let _ = tx.try_send(crate::files::read_opened(
+                &path,
+                crate::files::OPENED_MAX_BYTES,
+            ));
+        })?;
+    // Whichever answers first wins; the other send finds the slot full.
+    let watchdog = std::thread::Builder::new()
+        .name("opened-file-timeout".into())
+        .spawn(move || {
+            std::thread::sleep(READ_TIMEOUT);
+            let _ = late.try_send(Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "the file took too long to read",
+            )));
+        });
+    if let Err(err) = watchdog {
+        tracing::warn!("opened file timeout: {err}");
+    }
     rx.recv_async()
         .await
         .unwrap_or_else(|_| Err(std::io::Error::other("reader thread stopped")))

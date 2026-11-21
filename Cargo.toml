@@ -114,6 +114,10 @@ istmo-plugins = "0.1.1-alpha.6"
 istmo-window = "0.1.1-alpha.6"
 istmo-camera = { version = "0.1.1-alpha.6", features = ["desktop"] }
 
+[target."cfg(unix)".dependencies]
+# `O_NONBLOCK` / `O_NOCTTY` for opening files the system hands over.
+libc = "0.2"
+
 [dev-dependencies]
 freya-testing = "=0.5.0-rc.13"
 log = "0.4"

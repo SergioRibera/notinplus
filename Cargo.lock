@@ -5447,6 +5447,7 @@ dependencies = [
  "istmo-share",
  "istmo-window",
  "jni 0.21.1",
+ "libc",
  "log",
  "loro",
  "notin-beautify",
