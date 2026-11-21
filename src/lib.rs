@@ -107,6 +107,15 @@ pub mod desktop;
 )))]
 pub mod desktop_data_store;
 
+#[cfg(not(any(
+    target_os = "android",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos",
+    target_os = "visionos",
+)))]
+pub mod window_state;
+
 /// Per-window identifier the app assigns to its single root window.
 /// Matches [`istmo_pen::PenConfig::window_id`].
 pub const WINDOW_ID: u64 = 1;

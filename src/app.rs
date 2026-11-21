@@ -163,6 +163,8 @@ pub fn run() {
 
     #[cfg(not(target_os = "android"))]
     {
+        use crate::persist::Persisted as _;
+
         install_global_router();
         // Wayland matches windows to their `.desktop` entry (and its icon)
         // by app id; the bundles name the entry after the bundle id.
@@ -172,6 +174,19 @@ pub fn run() {
         if let Some(icon) = istmo::app_icon!() {
             window = window.with_icon(LaunchConfig::window_icon(icon));
         }
+        let window = window
+            .with_window_attributes(|attributes, event_loop| {
+                crate::window_state::WindowState::load().apply(attributes, event_loop)
+            })
+            .with_on_close(|ctx, id| {
+                if let Some(app) = ctx.windows.get(&id) {
+                    let state = crate::window_state::WindowState::load().capture(app.window());
+                    if let Err(err) = state.save() {
+                        tracing::warn!("saving the window state: {err}");
+                    }
+                }
+                CloseDecision::Close
+            });
         let cfg = launch_config().with_window(window.with_window_handle(|window| {
             // Freya hands us the live winit `Window` exactly once at
             // creation. Upgrade the symbolic pen registration to a
