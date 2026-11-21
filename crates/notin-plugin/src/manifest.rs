@@ -3,7 +3,8 @@
 //! The manifest sits next to the plugin's `.so` / `.dll` / `.dylib`
 //! and tells the host:
 //!
-//! - Plugin identity (`id`, `name`, `version`, `author`).
+//! - Plugin identity (`id`, `name`, `version`, `author`, optional
+//!   `description`), shown before anything is loaded.
 //! - What traits it provides (`provides` lines — informational).
 //! - Which `notin-sdk` ABI it was built against (`requires` lines).
 //! - Which library file to load on each platform (`library` lines,
@@ -19,6 +20,7 @@
 //! name    "Quran Source"
 //! version "1.0.0"
 //! author  "Alice"
+//! description "Read the Quran next to your notes."
 //! library "linux/x86_64/libquran.so"   target="linux-x86_64"
 //! library "linux/aarch64/libquran.so"  target="linux-aarch64"
 //! library "android/arm64/libquran.so"  target="android-aarch64"
@@ -44,6 +46,8 @@ pub struct PluginManifest {
     pub name: String,
     pub version: String,
     pub author: Option<String>,
+    /// One sentence for the install review.
+    pub description: Option<String>,
     /// The shared libraries, relative to the manifest, each for the
     /// platform its `target` names. Empty: the loader looks for the
     /// platform's default file name, see [`PluginManifest::library_for`].
@@ -144,6 +148,7 @@ impl PluginManifest {
         let mut name = None;
         let mut version = None;
         let mut author = None;
+        let mut description = None;
         let mut libraries = Vec::new();
         let mut provides = Vec::new();
         let mut requires = Vec::new();
@@ -160,6 +165,7 @@ impl PluginManifest {
                 "name" => name = Some(expect_string(path, line_no, rest)?),
                 "version" => version = Some(expect_string(path, line_no, rest)?),
                 "author" => author = Some(expect_string(path, line_no, rest)?),
+                "description" => description = Some(expect_string(path, line_no, rest)?),
                 "library" => libraries.push(parse_library(path, line_no, rest)?),
                 "provides" => provides.push(expect_string(path, line_no, rest)?),
                 "requires" => requires.push(parse_requires(path, line_no, rest)?),
@@ -183,6 +189,7 @@ impl PluginManifest {
                 field: "version",
             })?,
             author,
+            description,
             libraries,
             provides,
             requires,
@@ -379,6 +386,7 @@ id       "org.user.quran"
 name     "Quran Source"
 version  "1.0.0"
 author   "Alice"
+description "Read the \"Quran\"."
 library  "libquran.so"
 
 provides "io.notein.source"
@@ -387,6 +395,7 @@ requires "io.notein.pdf"
 "#)
         .unwrap();
         assert_eq!(m.author.as_deref(), Some("Alice"));
+        assert_eq!(m.description.as_deref(), Some("Read the \"Quran\"."));
         assert_eq!(
             m.libraries,
             vec![ManifestLibrary {
@@ -422,6 +431,7 @@ requires "io.notein.pdf"
             name: "Corán".into(),
             version: "1".into(),
             author: None,
+            description: None,
             libraries: libraries
                 .iter()
                 .map(|(path, target)| ManifestLibrary {

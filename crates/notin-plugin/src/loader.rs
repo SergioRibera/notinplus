@@ -263,13 +263,22 @@ impl Loaded {
     }
 }
 
-/// Load the plugin described by `manifest_path`.
+/// A plugin's manifest and the library this device would load, read
+/// without opening the library: nothing of the plugin runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Resolved {
+    pub manifest: PluginManifest,
+    pub library_path: PathBuf,
+}
+
+/// Read the manifest at `manifest_path` and pick this device's library,
+/// for reviewing a plugin before the user agrees to run it.
 ///
 /// # Errors
-/// [`LoaderError`] when the manifest, the library or its entry are
-/// missing or the plugin targets another SDK version.
-#[cfg_attr(feature = "sismo", sismo::function("plugin::loader_load"))]
-pub fn load(manifest_path: &Path) -> Result<Loaded, LoaderError> {
+/// [`LoaderError::Manifest`], [`LoaderError::MissingLibrary`] or
+/// [`LoaderError::NoLibraryForDevice`].
+#[cfg_attr(feature = "sismo", sismo::function("plugin::loader_resolve"))]
+pub fn resolve(manifest_path: &Path) -> Result<Resolved, LoaderError> {
     let manifest = PluginManifest::from_path(manifest_path)?;
     let device = Target::current();
     let library_path = manifest
@@ -287,6 +296,23 @@ pub fn load(manifest_path: &Path) -> Result<Loaded, LoaderError> {
                 }
             }
         })?;
+    Ok(Resolved {
+        manifest,
+        library_path,
+    })
+}
+
+/// Load the plugin described by `manifest_path`.
+///
+/// # Errors
+/// [`LoaderError`] when the manifest, the library or its entry are
+/// missing or the plugin targets another SDK version.
+#[cfg_attr(feature = "sismo", sismo::function("plugin::loader_load"))]
+pub fn load(manifest_path: &Path) -> Result<Loaded, LoaderError> {
+    let Resolved {
+        manifest,
+        library_path,
+    } = resolve(manifest_path)?;
     // SAFETY: the user chose to install this plugin; the manifest and
     // ABI checks below reject anything not built for this SDK.
     let library =

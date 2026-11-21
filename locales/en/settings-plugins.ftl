@@ -28,13 +28,9 @@ settings-plugins-tech-sdk = SDK: { $sdk }
 settings-plugins-incompatible = Can't install “{ $name }”
 settings-plugins-choose-another = Choose another
 settings-plugins-review-title = Install “{ $name }”
-settings-plugins-review-subtitle = Version { $version } · { $author }
-settings-plugins-review-kind = A new document type
-settings-plugins-review-entry = In the Create menu
-settings-plugins-review-settings = { $count ->
-    [one] Comes with { $count } setting you can change in Settings › Plugins.
-   *[other] Comes with { $count } settings you can change in Settings › Plugins.
-}
+settings-plugins-review-subtitle = Version { $version }, by { $author }
+settings-plugins-review-version = Version { $version }
+settings-plugins-review-later = What it adds (document types, Create menu entries, settings) shows once it is installed: until then none of its code runs.
 settings-plugins-review-warning = Third-party plugins run with the same permissions as NotIn Plus. Only install ones you know.
 settings-plugins-review-install = Install
 settings-plugins-installed-toast = “{ $name }” installed
@@ -55,7 +51,3 @@ settings-plugins-field-confirm = Sure? Tap again
 # $section: name of the Settings section holding the plugin's options.
 settings-plugins-settings-in = Its settings are in { $section }
 settings-plugins-settings-in-hint = Built-in plugins keep their options in their own section.
-settings-plugins-open-file = Install the plugin “{ $name }”?
-settings-plugins-open-file-warning = Plugins run code on this device
-settings-plugins-open-file-detail = Reviewing it loads the plugin. Continue only if you trust whoever gave you the file.
-settings-plugins-open-file-review = Review plugin

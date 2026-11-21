@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use notin_i18n::tr;
 use notin_plugin::UserMessage;
 use notin_plugin::catalog::{Failed, Origin, PluginCatalog};
-use notin_plugin::loader::{self, Loaded, LoaderError};
+use notin_plugin::loader::{self, Loaded, LoaderError, Resolved};
 
 /// Overrides the plugin folder (development).
 pub const PLUGIN_DIR_ENV: &str = "NOTINPLUS_PLUGIN_DIR";
@@ -68,14 +68,16 @@ fn register(catalog: &mut PluginCatalog, loaded: Loaded, manifest_path: &Path) {
     }
 }
 
-/// Load a plugin from a folder the user picked, without installing it,
-/// so the review sheet can say what it adds.
+/// Read the manifest of a plugin the user picked and check it ships a
+/// library for this device. None of its code runs: that waits for
+/// [`install`].
 ///
 /// # Errors
-/// [`LoaderError`] when it is not a compatible plugin.
+/// [`LoaderError`] when the manifest is unreadable or names no library
+/// for this device.
 #[sismo::function("plugins::dynamic_inspect")]
-pub fn inspect(folder: &Path) -> Result<Loaded, LoaderError> {
-    loader::load(&folder.join(MANIFEST))
+pub fn inspect(folder: &Path) -> Result<Resolved, LoaderError> {
+    loader::resolve(&folder.join(MANIFEST))
 }
 
 /// Why installing failed.
@@ -86,6 +88,8 @@ pub enum InstallError {
     Catalog(notin_plugin::catalog::CatalogError),
     Package(zip::result::ZipError),
     NoManifest,
+    /// The package unpacks to more files or bytes than a plugin needs.
+    TooLarge,
 }
 
 impl std::fmt::Display for InstallError {
@@ -96,6 +100,7 @@ impl std::fmt::Display for InstallError {
             Self::Catalog(err) => write!(f, "catalog: {err}"),
             Self::Package(err) => write!(f, "package: {err}"),
             Self::NoManifest => write!(f, "package has no {MANIFEST}"),
+            Self::TooLarge => f.write_str("package unpacks too large"),
         }
     }
 }
@@ -107,7 +112,7 @@ impl std::error::Error for InstallError {
             Self::Copy(err) => Some(err),
             Self::Catalog(err) => Some(err),
             Self::Package(err) => Some(err),
-            Self::NoManifest => None,
+            Self::NoManifest | Self::TooLarge => None,
         }
     }
 }
@@ -122,6 +127,7 @@ impl UserMessage for InstallError {
             Self::Catalog(err) => err.user_message(),
             Self::Package(_) => tr!("errors-plugin-not-a-package"),
             Self::NoManifest => tr!("errors-plugin-no-manifest", "manifest" => MANIFEST),
+            Self::TooLarge => tr!("errors-plugin-too-large"),
         }
     }
 }
@@ -135,10 +141,15 @@ impl UserMessage for InstallError {
 pub fn install(folder: &Path) -> Result<String, InstallError> {
     let probe = inspect(folder).map_err(InstallError::Load)?;
     let target = plugins_dir().join(sanitize(&probe.manifest.id));
-    drop(probe);
     copy_dir(folder, &target).map_err(InstallError::Copy)?;
     let manifest = target.join(MANIFEST);
-    let loaded = loader::load(&manifest).map_err(InstallError::Load)?;
+    // The first time any of the plugin's code runs.
+    let loaded = loader::load(&manifest).map_err(|err| {
+        if let Err(io) = std::fs::remove_dir_all(&target) {
+            tracing::warn!("plugin {}: {io}", target.display());
+        }
+        InstallError::Load(err)
+    })?;
     let name = loaded.manifest.name.clone();
     let id = loaded.plugin.info().id;
     let origin = Origin::ThirdParty {
@@ -207,11 +218,7 @@ impl Staged {
             plugin: root.clone(),
             root,
         };
-        let mut archive =
-            zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(InstallError::Package)?;
-        archive
-            .extract(&staged.root)
-            .map_err(InstallError::Package)?;
+        extract_capped(bytes, &staged.root, MAX_UNPACKED)?;
         if staged.root.join(MANIFEST).exists() {
             return Ok(staged);
         }
@@ -234,6 +241,51 @@ impl Staged {
     }
 }
 
+/// Most files a package may hold.
+const MAX_ENTRIES: usize = 4096;
+/// Most bytes a package may unpack to: one library per platform fits
+/// well below it, a zip bomb does not.
+const MAX_UNPACKED: u64 = 512 * 1024 * 1024;
+
+/// Unpack `bytes` into `root`: regular files and folders only, every
+/// path inside `root`, at most `max_bytes` whatever the archive claims.
+#[sismo::function("plugins::dynamic_extract_capped")]
+fn extract_capped(bytes: &[u8], root: &Path, max_bytes: u64) -> Result<(), InstallError> {
+    use std::io::Read as _;
+
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(InstallError::Package)?;
+    if archive.len() > MAX_ENTRIES {
+        return Err(InstallError::TooLarge);
+    }
+    let mut left = max_bytes;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(InstallError::Package)?;
+        let Some(relative) = entry.enclosed_name() else {
+            return Err(InstallError::Package(
+                zip::result::ZipError::InvalidArchive("path outside the package".into()),
+            ));
+        };
+        let dest = root.join(relative);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&dest).map_err(InstallError::Copy)?;
+            continue;
+        }
+        if entry.is_symlink() {
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(InstallError::Copy)?;
+        }
+        let mut out = std::fs::File::create(&dest).map_err(InstallError::Copy)?;
+        // One byte over what is left tells a lying header from a fit.
+        let written = std::io::copy(&mut (&mut entry).take(left + 1), &mut out)
+            .map_err(InstallError::Copy)?;
+        left = left.checked_sub(written).ok_or(InstallError::TooLarge)?;
+    }
+    Ok(())
+}
+
 impl Drop for Staged {
     fn drop(&mut self) {
         sismo::scope!("drop::plugin_staging");
@@ -247,4 +299,63 @@ fn rand_suffix() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write as _;
+
+    use super::*;
+
+    fn package(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, body) in files {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(body).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "notinplus-unpack-{name}-{}-{:x}",
+            std::process::id(),
+            rand_suffix()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn unpacks_within_the_cap() {
+        let root = scratch("fits");
+        let bytes = package(&[
+            ("plugin/plugin.ntp.kdl", b"id \"a\""),
+            ("plugin/lib.so", &[0; 64]),
+        ]);
+        extract_capped(&bytes, &root, 1024).unwrap();
+        assert!(root.join("plugin/plugin.ntp.kdl").is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_more_than_the_cap() {
+        let root = scratch("bomb");
+        let bytes = package(&[("a.bin", &[0; 600]), ("b.bin", &[0; 600])]);
+        assert!(matches!(
+            extract_capped(&bytes, &root, 1000),
+            Err(InstallError::TooLarge)
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_paths_outside_the_package() {
+        let root = scratch("escape");
+        let bytes = package(&[("../escaped.txt", b"x")]);
+        assert!(extract_capped(&bytes, &root, 1024).is_err());
+        assert!(!root.parent().unwrap().join("escaped.txt").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

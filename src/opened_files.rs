@@ -95,7 +95,7 @@ async fn open(document: OpenedDocument) {
         }
     };
     match ExternalKind::from(name.as_str()) {
-        ExternalKind::Plugin => crate::screens::settings::confirm_package(picked),
+        ExternalKind::Plugin => crate::screens::settings::review_package(picked).await,
         ExternalKind::Bundle => crate::flows::transfer::review_bundle(picked).await,
         ExternalKind::Document => {
             if crate::external_files::FileKind::of(&name).is_some() {

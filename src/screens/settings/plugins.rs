@@ -6,7 +6,7 @@ use std::sync::Arc;
 use freya::prelude::*;
 use notin_plugin::UserMessage;
 use notin_plugin::catalog::{Installed, Origin};
-use notin_plugin::loader::Review;
+use notin_plugin::manifest::PluginManifest;
 use notin_ui_kit::theme::palette;
 use notin_ui_kit::{
     Button, Group, Icon, ListRow, ModalController, Notice, NoticeTone, Section, Sheet, SheetFooter,
@@ -317,62 +317,39 @@ fn install() {
                 return;
             }
         };
-        review_package(&picked);
+        review_package(picked).await;
     }));
 }
 
 /// Review a `.ntp` package that was already read (picked, or opened
-/// from the system).
+/// from the system). Only its manifest is read: the plugin's code first
+/// runs when the user presses Install.
 #[sismo::function("settings::plugins_review_package")]
-fn review_package(picked: &crate::files::Picked) {
-    {
-        let staged = match Staged::unpack(&picked.bytes) {
-            Ok(staged) => staged,
-            Err(err) => {
-                incompatible(&picked.name, err.user_message());
-                return;
-            }
-        };
-        match dynamic::inspect(staged.folder()) {
-            Ok(loaded) => {
-                let review = loaded.review();
-                drop(loaded);
-                review_sheet(Arc::new(staged), &review);
-            }
-            Err(err) => incompatible(&picked.name, err.user_message()),
-        }
-    }
-}
-
-/// A `.ntp` the system opened with the app. Reviewing a package loads its
-/// library, which runs the plugin's code, so a file nobody picked in
-/// Settings asks first.
-#[sismo::function("settings::plugins_confirm_package")]
-pub fn confirm_package(picked: crate::files::Picked) {
+pub async fn review_package(picked: crate::files::Picked) {
     let name = picked.name.clone();
-    let picked = Arc::new(picked);
-    Sheet::titled(tr!("settings-plugins-open-file", "name" => name))
-        .child(
-            Notice::new(
-                NoticeTone::Warning,
-                tr!("settings-plugins-open-file-warning"),
-            )
-            .detail(tr!("settings-plugins-open-file-detail")),
-        )
-        .footer(SheetFooter::new([
-            Button::new(tr!("common-cancel"))
-                .ghost()
-                .on_press(|_| ModalController::get().close())
-                .into_element(),
-            Button::new(tr!("settings-plugins-open-file-review"))
-                .primary()
-                .on_press(move |_| {
-                    ModalController::get().close();
-                    review_package(&picked);
-                })
-                .into_element(),
-        ]))
-        .push();
+    let (tx, rx) = flume::bounded(1);
+    // Unpacking a large package must not stall the interface.
+    let spawned = std::thread::Builder::new()
+        .name("plugin-review".into())
+        .spawn(move || {
+            sismo::scope!("settings::plugins_unpack");
+            let reviewed = Staged::unpack(&picked.bytes)
+                .map_err(|err| err.user_message())
+                .and_then(|staged| match dynamic::inspect(staged.folder()) {
+                    Ok(resolved) => Ok((staged, resolved)),
+                    Err(err) => Err(err.user_message()),
+                });
+            let _ = tx.send(reviewed);
+        });
+    if let Err(err) = spawned {
+        tracing::warn!("plugin review thread: {err}");
+        return;
+    }
+    match rx.recv_async().await {
+        Ok(Ok((staged, resolved))) => review_sheet(Arc::new(staged), &resolved.manifest),
+        Ok(Err(why)) => incompatible(&name, why),
+        Err(_) => {}
+    }
 }
 
 #[sismo::function("settings::plugins_incompatible")]
@@ -396,42 +373,32 @@ fn incompatible(name: &str, why: String) {
 }
 
 #[sismo::function("settings::plugins_review_sheet")]
-fn review_sheet(staged: Arc<Staged>, review: &Review) {
+fn review_sheet(staged: Arc<Staged>, manifest: &PluginManifest) {
     use freya::icons::lucide;
-    let p = palette();
-    let rows: Vec<Element> = review
-        .kinds
-        .iter()
-        .map(|k| {
-            ListRow::new(k.label.clone())
-                .subtitle(tr!("settings-plugins-review-kind"))
-                .kind(k.icon.clone(), kind_color(&p, k.color))
-                .into_element()
-        })
-        .chain(review.entries.iter().map(|e| {
-            ListRow::new(e.label.clone())
-                .subtitle(tr!("settings-plugins-review-entry"))
-                .kind(e.icon.clone(), kind_color(&p, e.color))
-                .into_element()
-        }))
-        .collect();
-    let name = review.info.name.to_string();
+    let name = manifest.name.clone();
+    let version = manifest.version.clone();
+    let subtitle = manifest.author.as_ref().map_or_else(
+        || tr!("settings-plugins-review-version", "version" => version.clone()),
+        |author| tr!("settings-plugins-review-subtitle", "version" => version.clone(), "author" => author.clone()),
+    );
     Sheet::titled(tr!("settings-plugins-review-title", "name" => name.clone()))
-        .subtitle(tr!("settings-plugins-review-subtitle", "version" => review.info.version.to_string(), "author" => review.info.author.to_string()))
+        .subtitle(subtitle)
         .child(
             rect()
                 .width(Size::fill())
                 .spacing(14.0)
-                .child(Text::new(review.info.description.clone()))
-                .child(Section::new(tr!("settings-plugins-adds")).child(Group::default().children(rows)))
-                .maybe_child((review.settings > 0).then(|| {
-                    Text::new(tr!("settings-plugins-review-settings", "count" => review.settings))
-                        .role(TextRole::Hint)
-                }))
-                .child(Notice::new(NoticeTone::Warning, tr!("settings-plugins-review-warning"))),
+                .maybe_child(manifest.description.clone().map(Text::new))
+                .child(Text::new(tr!("settings-plugins-review-later")).role(TextRole::Hint))
+                .child(Notice::new(
+                    NoticeTone::Warning,
+                    tr!("settings-plugins-review-warning"),
+                )),
         )
         .footer(SheetFooter::new([
-            Button::new(tr!("common-cancel")).ghost().on_press(|_| ModalController::get().close()).into_element(),
+            Button::new(tr!("common-cancel"))
+                .ghost()
+                .on_press(|_| ModalController::get().close())
+                .into_element(),
             Button::new(tr!("settings-plugins-review-install"))
                 .primary()
                 .icon(lucide::download())
@@ -440,7 +407,9 @@ fn review_sheet(staged: Arc<Staged>, review: &Review) {
                     match dynamic::install(staged.folder()) {
                         Ok(installed) => {
                             crate::plugins::content::index_library();
-                            Toasts::get().show(Toast::new(tr!("settings-plugins-installed-toast", "name" => installed)));
+                            Toasts::get().show(Toast::new(
+                                tr!("settings-plugins-installed-toast", "name" => installed),
+                            ));
                         }
                         Err(err) => {
                             tracing::warn!("install plugin {name}: {err}");
