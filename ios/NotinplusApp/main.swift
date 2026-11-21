@@ -85,10 +85,33 @@ enum OpenedDocuments {
     // `istmo_plugins::DocumentLocation::Path`.
     private static let locationPath: UInt32 = 0
 
+    // Same cap as Android and as the Rust reader.
+    private static let maxBytes = 512 * 1024 * 1024
+
+    /// Copies off the main thread, like Android: a large file must not
+    /// freeze the launch.
     static func publish(_ url: URL, origin: UInt32) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            copyAndPublish(url, origin: origin)
+        }
+    }
+
+    private static func copyAndPublish(_ url: URL, origin: UInt32) {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        let name = url.lastPathComponent.isEmpty ? "document" : url.lastPathComponent
+        // Only regular files within the cap: a folder would be copied
+        // whole, and an unbounded file fills the device.
+        let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values?.isRegularFile == true else {
+            NSLog("OpenedDocuments: not a regular file: %@", url.path)
+            return
+        }
+        if let size = values?.fileSize, size > maxBytes {
+            NSLog("OpenedDocuments: too large: %@", url.path)
+            return
+        }
+        let last = url.lastPathComponent
+        let name = (last.isEmpty || last == "." || last == "..") ? "document" : last
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("opened", isDirectory: true)
             .appendingPathComponent(folder(of: url), isDirectory: true)
@@ -98,7 +121,14 @@ enum OpenedDocuments {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: url, to: copy)
         } catch {
-            NSLog("OpenedDocuments: could not copy % %@", url.path, error.localizedDescription)
+            NSLog("OpenedDocuments: could not copy %@: %@", url.path, error.localizedDescription)
+            return
+        }
+        // The size may be unknown before the copy (a file still in iCloud).
+        let copied = (try? copy.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        if copied > maxBytes {
+            try? FileManager.default.removeItem(at: dir)
+            NSLog("OpenedDocuments: too large: %@", url.path)
             return
         }
         var out = Data()
