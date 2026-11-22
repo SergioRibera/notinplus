@@ -30,7 +30,13 @@ settings-plugins-choose-another = Choose another
 settings-plugins-review-title = Install “{ $name }”
 settings-plugins-review-subtitle = Version { $version }, by { $author }
 settings-plugins-review-version = Version { $version }
-settings-plugins-review-later = What it adds (document types, Create menu entries, settings) shows once it is installed: until then none of its code runs.
+settings-plugins-review-later = This plugin does not say what it adds. You will see it once it is installed: until then none of its code runs.
+settings-plugins-review-kind = A new document type
+settings-plugins-review-entry = In the Create menu
+settings-plugins-review-settings = { $count ->
+    [one] Brings { $count } setting you can change in Settings, Plugins.
+   *[other] Brings { $count } settings you can change in Settings, Plugins.
+}
 settings-plugins-review-warning = Third-party plugins run with the same permissions as NotIn Plus. Only install ones you know.
 settings-plugins-review-install = Install
 settings-plugins-installed-toast = “{ $name }” installed

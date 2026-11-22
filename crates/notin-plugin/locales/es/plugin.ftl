@@ -6,6 +6,7 @@ plugin-load-not-for-device = No es un plugin de NotIn Plus para este dispositivo
 plugin-load-no-library = «{ $plugin }» no trae una versión para este dispositivo ({ $device }). Trae para: { $targets }.
 plugin-load-needs-newer-app = «{ $plugin }» pide una versión más nueva de NotIn Plus. Actualiza la app o pide una versión compatible.
 plugin-load-built-for-older-app = «{ $plugin }» es para una versión anterior de NotIn Plus. Pide una versión actualizada.
+plugin-load-tampered = «{ $plugin }» se modificó después de empaquetarlo, así que no se cargó. Vuelve a descargarlo de su autor.
 # Shown in the platform list for a library that runs on any device.
 plugin-manifest-any-target = cualquiera
 

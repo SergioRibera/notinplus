@@ -39,6 +39,10 @@ use notin_i18n::tr;
 use crate::failure::UserMessage;
 use crate::target::{Fit, Target};
 
+mod declared;
+
+pub use declared::{Checksum, Declared, DeclaredEntry, DeclaredKind, Mismatch, quote};
+
 /// Parsed `plugin.ntp.kdl` manifest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginManifest {
@@ -54,6 +58,11 @@ pub struct PluginManifest {
     pub libraries: Vec<ManifestLibrary>,
     pub provides: Vec<String>,
     pub requires: Vec<ManifestRequirement>,
+    /// What the plugin says it adds; `None` when the manifest says
+    /// nothing (written by hand, or by an older `notin-pack`).
+    pub declared: Option<Declared>,
+    /// SHA-256 of its library files, checked before one is loaded.
+    pub checksums: Vec<Checksum>,
 }
 
 /// One `library` line.
@@ -152,6 +161,9 @@ impl PluginManifest {
         let mut libraries = Vec::new();
         let mut provides = Vec::new();
         let mut requires = Vec::new();
+        let mut declared = Declared::default();
+        let mut any_declared = false;
+        let mut checksums = Vec::new();
 
         for (idx, raw_line) in text.lines().enumerate() {
             let line_no = idx + 1;
@@ -169,6 +181,48 @@ impl PluginManifest {
                 "library" => libraries.push(parse_library(path, line_no, rest)?),
                 "provides" => provides.push(expect_string(path, line_no, rest)?),
                 "requires" => requires.push(parse_requires(path, line_no, rest)?),
+                "kind" => {
+                    let (id, attrs) = parse_attrs(path, line_no, rest)?;
+                    declared.kinds.push(DeclaredKind {
+                        label: attr(&attrs, "label").unwrap_or_else(|| id.clone()),
+                        id,
+                    });
+                    any_declared = true;
+                }
+                "create" => {
+                    let (id, attrs) = parse_attrs(path, line_no, rest)?;
+                    let kind = attr(&attrs, "kind").ok_or_else(|| ManifestError::Parse {
+                        path: path.to_path_buf(),
+                        line: line_no,
+                        message: "`create` needs `kind=`".into(),
+                    })?;
+                    declared.entries.push(DeclaredEntry {
+                        label: attr(&attrs, "label").unwrap_or_else(|| id.clone()),
+                        id,
+                        kind,
+                    });
+                    any_declared = true;
+                }
+                "settings" => {
+                    declared.settings = rest.trim().parse().map_err(|_| ManifestError::Parse {
+                        path: path.to_path_buf(),
+                        line: line_no,
+                        message: format!("`settings` takes a number, got `{rest}`"),
+                    })?;
+                    any_declared = true;
+                }
+                "checksum" => {
+                    let (file, attrs) = parse_attrs(path, line_no, rest)?;
+                    let sha256 = attr(&attrs, "sha256")
+                        .map(|hex| hex.to_ascii_lowercase())
+                        .filter(|hex| hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+                        .ok_or_else(|| ManifestError::Parse {
+                            path: path.to_path_buf(),
+                            line: line_no,
+                            message: "`checksum` needs `sha256=` with 64 hex digits".into(),
+                        })?;
+                    checksums.push(Checksum { path: file, sha256 });
+                }
                 // Unknown nodes are tolerated — forward-compat with
                 // richer manifests. Logged by the loader if desired.
                 _ => {}
@@ -193,6 +247,8 @@ impl PluginManifest {
             libraries,
             provides,
             requires,
+            declared: any_declared.then_some(declared),
+            checksums,
         })
     }
 
@@ -282,6 +338,40 @@ fn parse_library(path: &Path, line: usize, rest: &str) -> Result<ManifestLibrary
         path: library,
         target,
     })
+}
+
+/// `"value" key="v" …`: the value and every attribute, unknown ones
+/// included (newer `notin-pack` versions may add some).
+fn parse_attrs(
+    path: &Path,
+    line: usize,
+    rest: &str,
+) -> Result<(String, Vec<(String, String)>), ManifestError> {
+    let (value, mut after) = parse_quoted(path, line, rest)?;
+    let mut attrs = Vec::new();
+    loop {
+        after = after.trim_start();
+        if after.is_empty() {
+            return Ok((value, attrs));
+        }
+        let Some((key, remainder)) = after.split_once('=') else {
+            return Err(ManifestError::Parse {
+                path: path.to_path_buf(),
+                line,
+                message: format!("unexpected trailing tokens: `{after}`"),
+            });
+        };
+        let (text, next) = parse_quoted(path, line, remainder)?;
+        attrs.push((key.trim().to_owned(), text));
+        after = next;
+    }
+}
+
+fn attr(attrs: &[(String, String)], key: &str) -> Option<String> {
+    attrs
+        .iter()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.clone())
 }
 
 fn parse_requires(
@@ -379,6 +469,42 @@ version "1.0.0"
     }
 
     #[test]
+    fn declarations_round_trip() {
+        let declared = Declared {
+            kinds: vec![DeclaredKind {
+                id: "q.reading".into(),
+                label: "Lectura \"diaria\"".into(),
+            }],
+            entries: vec![DeclaredEntry {
+                id: "new".into(),
+                kind: "q.reading".into(),
+                label: "Nueva".into(),
+            }],
+            settings: 3,
+        };
+        let checksum = Checksum {
+            path: "linux/libq.so".into(),
+            sha256: "AB".repeat(32),
+        };
+        let text = format!(
+            "id \"q\"\nname \"Q\"\nversion \"1\"\n{}{}future \"x\" key=\"v\"\n",
+            declared.to_kdl(),
+            checksum.to_kdl()
+        );
+        let m = mk(&text).unwrap();
+        assert_eq!(m.declared, Some(declared));
+        assert_eq!(m.checksums.len(), 1);
+        assert_eq!(m.checksums[0].sha256, "ab".repeat(32), "stored lowercase");
+        assert_eq!(
+            mk("id \"q\"\nname \"Q\"\nversion \"1\"\n")
+                .unwrap()
+                .declared,
+            None
+        );
+        assert!(mk("id \"q\"\nname \"Q\"\nversion \"1\"\nchecksum \"a\" sha256=\"zz\"\n").is_err());
+    }
+
+    #[test]
     fn parses_full_manifest() {
         let m = mk(r#"
 // top-level comment
@@ -441,6 +567,8 @@ requires "io.notein.pdf"
                 .collect(),
             provides: Vec::new(),
             requires: Vec::new(),
+            declared: None,
+            checksums: Vec::new(),
         }
     }
 

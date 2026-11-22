@@ -16935,6 +16935,13 @@ rec {
         crateName = "notin-plugin";
         version = "0.1.0-alpha.5";
         edition = "2024";
+        crateBin = [
+          {
+            name = "notin-pack";
+            path = "src/bin/notin-pack.rs";
+            requiredFeatures = [ "pack" ];
+          }
+        ];
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/notin-plugin; };
         libName = "notin_plugin";
         authors = [
@@ -16972,6 +16979,10 @@ rec {
             packageId = "notin-i18n";
           }
           {
+            name = "sha2";
+            packageId = "sha2 0.10.9";
+          }
+          {
             name = "sismo";
             packageId = "sismo";
             optional = true;
@@ -16992,6 +17003,13 @@ rec {
             usesDefaultFeatures = false;
             features = [ "derive" "std" ];
           }
+          {
+            name = "zip";
+            packageId = "zip";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "deflate" ];
+          }
         ];
         buildDependencies = [
           {
@@ -17001,9 +17019,10 @@ rec {
           }
         ];
         features = {
+          "pack" = [ "dep:zip" ];
           "sismo" = [ "dep:sismo" ];
         };
-        resolvedDefaultFeatures = [ "sismo" ];
+        resolvedDefaultFeatures = [ "pack" "sismo" ];
       };
       "notin-relay" = rec {
         crateName = "notin-relay";
@@ -17355,6 +17374,11 @@ rec {
             packageId = "jni 0.21.1";
             usesDefaultFeatures = false;
             target = { target, features }: ("android" == target."os" or null);
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            target = { target, features }: (target."unix" or false);
           }
           {
             name = "loro";

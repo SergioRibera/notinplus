@@ -6,7 +6,7 @@ use std::sync::Arc;
 use freya::prelude::*;
 use notin_plugin::UserMessage;
 use notin_plugin::catalog::{Installed, Origin};
-use notin_plugin::manifest::PluginManifest;
+use notin_plugin::manifest::{Declared, PluginManifest};
 use notin_ui_kit::theme::palette;
 use notin_ui_kit::{
     Button, Group, Icon, ListRow, ModalController, Notice, NoticeTone, Section, Sheet, SheetFooter,
@@ -373,6 +373,44 @@ fn incompatible(name: &str, why: String) {
 }
 
 #[sismo::function("settings::plugins_review_sheet")]
+/// What the manifest says the plugin adds. Installing checks the plugin
+/// adds exactly that; a manifest that says nothing only gets a hint.
+fn declared_adds(declared: Option<&Declared>) -> Element {
+    use freya::icons::lucide;
+    let Some(declared) = declared.filter(|declared| !declared.is_empty()) else {
+        return Text::new(tr!("settings-plugins-review-later"))
+            .role(TextRole::Hint)
+            .into_element();
+    };
+    let rows: Vec<Element> = declared
+        .kinds
+        .iter()
+        .map(|kind| {
+            ListRow::new(kind.label.clone())
+                .subtitle(tr!("settings-plugins-review-kind"))
+                .icon(lucide::file_text())
+                .into_element()
+        })
+        .chain(declared.entries.iter().map(|entry| {
+            ListRow::new(entry.label.clone())
+                .subtitle(tr!("settings-plugins-review-entry"))
+                .icon(lucide::plus())
+                .into_element()
+        }))
+        .collect();
+    rect()
+        .width(Size::fill())
+        .spacing(8.0)
+        .maybe_child((!rows.is_empty()).then(|| {
+            Section::new(tr!("settings-plugins-adds")).child(Group::default().children(rows))
+        }))
+        .maybe_child((declared.settings > 0).then(|| {
+            Text::new(tr!("settings-plugins-review-settings", "count" => declared.settings))
+                .role(TextRole::Hint)
+        }))
+        .into_element()
+}
+
 fn review_sheet(staged: Arc<Staged>, manifest: &PluginManifest) {
     use freya::icons::lucide;
     let name = manifest.name.clone();
@@ -388,7 +426,7 @@ fn review_sheet(staged: Arc<Staged>, manifest: &PluginManifest) {
                 .width(Size::fill())
                 .spacing(14.0)
                 .maybe_child(manifest.description.clone().map(Text::new))
-                .child(Text::new(tr!("settings-plugins-review-later")).role(TextRole::Hint))
+                .child(declared_adds(manifest.declared.as_ref()))
                 .child(Notice::new(
                     NoticeTone::Warning,
                     tr!("settings-plugins-review-warning"),

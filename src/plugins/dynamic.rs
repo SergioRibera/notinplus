@@ -90,6 +90,8 @@ pub enum InstallError {
     NoManifest,
     /// The package unpacks to more files or bytes than a plugin needs.
     TooLarge,
+    /// The plugin registered something else than its manifest declares.
+    Undeclared(String),
 }
 
 impl std::fmt::Display for InstallError {
@@ -101,6 +103,7 @@ impl std::fmt::Display for InstallError {
             Self::Package(err) => write!(f, "package: {err}"),
             Self::NoManifest => write!(f, "package has no {MANIFEST}"),
             Self::TooLarge => f.write_str("package unpacks too large"),
+            Self::Undeclared(name) => write!(f, "{name} adds something else than it declares"),
         }
     }
 }
@@ -112,7 +115,7 @@ impl std::error::Error for InstallError {
             Self::Copy(err) => Some(err),
             Self::Catalog(err) => Some(err),
             Self::Package(err) => Some(err),
-            Self::NoManifest | Self::TooLarge => None,
+            Self::NoManifest | Self::TooLarge | Self::Undeclared(_) => None,
         }
     }
 }
@@ -128,6 +131,7 @@ impl UserMessage for InstallError {
             Self::Package(_) => tr!("errors-plugin-not-a-package"),
             Self::NoManifest => tr!("errors-plugin-no-manifest", "manifest" => MANIFEST),
             Self::TooLarge => tr!("errors-plugin-too-large"),
+            Self::Undeclared(name) => tr!("errors-plugin-undeclared", "name" => name.as_str()),
         }
     }
 }
@@ -143,13 +147,29 @@ pub fn install(folder: &Path) -> Result<String, InstallError> {
     let target = plugins_dir().join(sanitize(&probe.manifest.id));
     copy_dir(folder, &target).map_err(InstallError::Copy)?;
     let manifest = target.join(MANIFEST);
-    // The first time any of the plugin's code runs.
-    let loaded = loader::load(&manifest).map_err(|err| {
+    let discard = |err: InstallError| {
         if let Err(io) = std::fs::remove_dir_all(&target) {
             tracing::warn!("plugin {}: {io}", target.display());
         }
-        InstallError::Load(err)
-    })?;
+        err
+    };
+    // The first time any of the plugin's code runs.
+    let loaded = loader::load(&manifest).map_err(|err| discard(InstallError::Load(err)))?;
+    // A plugin that adds something else than its manifest showed in the
+    // review is not kept.
+    if let Some(declared) = &loaded.manifest.declared
+        && let Some(mismatch) = declared.mismatch(&loaded.declared())
+    {
+        tracing::warn!(
+            "plugin {}: registers {:?}, declares but lacks {:?}",
+            loaded.manifest.id,
+            mismatch.undeclared,
+            mismatch.missing
+        );
+        let name = loaded.manifest.name.clone();
+        drop(loaded);
+        return Err(discard(InstallError::Undeclared(name)));
+    }
     let name = loaded.manifest.name.clone();
     let id = loaded.plugin.info().id;
     let origin = Origin::ThirdParty {

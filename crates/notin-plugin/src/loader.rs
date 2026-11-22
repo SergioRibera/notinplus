@@ -18,7 +18,7 @@ use crate::create::CreationEntry;
 use crate::failure::UserMessage;
 use crate::info::PluginInfo;
 use crate::kind::KindInfo;
-use crate::manifest::{ManifestError, PluginManifest};
+use crate::manifest::{Declared, DeclaredEntry, DeclaredKind, ManifestError, PluginManifest};
 use crate::plugin::{Plugin, Registrar};
 use crate::target::Target;
 
@@ -100,6 +100,18 @@ pub enum LoaderError {
         expected: u32,
         found: u32,
     },
+    /// The library differs from the checksum its manifest gives, or the
+    /// manifest gives checksums but none for it: the package was changed
+    /// after it was packed.
+    Checksum {
+        plugin: String,
+        library: PathBuf,
+    },
+    /// The library could not be read to check it.
+    Read {
+        library: PathBuf,
+        error: std::io::Error,
+    },
 }
 
 impl UserMessage for LoaderError {
@@ -129,6 +141,10 @@ impl UserMessage for LoaderError {
             Self::AbiMismatch { plugin, .. } => {
                 tr!("plugin-load-built-for-older-app", "plugin" => plugin.as_str())
             }
+            Self::Checksum { plugin, .. } => {
+                tr!("plugin-load-tampered", "plugin" => plugin.as_str())
+            }
+            Self::Read { error, .. } => error.user_message(),
         }
     }
 }
@@ -160,8 +176,67 @@ impl std::fmt::Display for LoaderError {
             } => {
                 write!(f, "{plugin}: SDK ABI v{found}, host expects v{expected}")
             }
+            Self::Checksum { plugin, library } => {
+                write!(
+                    f,
+                    "{plugin}: {} does not match its checksum",
+                    library.display()
+                )
+            }
+            Self::Read { library, error } => write!(f, "read {}: {error}", library.display()),
         }
     }
+}
+
+/// Refuse `library` unless the manifest's checksum for it matches. A
+/// manifest without checksums (packed by hand or by an older
+/// `notin-pack`) is taken as is.
+fn verify_checksum(
+    manifest: &PluginManifest,
+    manifest_path: &Path,
+    library: &Path,
+) -> Result<(), LoaderError> {
+    if manifest.checksums.is_empty() {
+        return Ok(());
+    }
+    let dir = manifest_path.parent().unwrap_or_else(|| Path::new(""));
+    let refused = || LoaderError::Checksum {
+        plugin: manifest.name.clone(),
+        library: library.to_path_buf(),
+    };
+    let expected = manifest
+        .checksums
+        .iter()
+        .find(|checksum| dir.join(&checksum.path) == library)
+        .ok_or_else(refused)?;
+    let actual = sha256_hex(library).map_err(|error| LoaderError::Read {
+        library: library.to_path_buf(),
+        error,
+    })?;
+    if actual == expected.sha256 {
+        Ok(())
+    } else {
+        Err(refused())
+    }
+}
+
+/// Lowercase hex SHA-256 of the file at `path`.
+///
+/// # Errors
+/// The file cannot be read.
+pub fn sha256_hex(path: &Path) -> std::io::Result<String> {
+    use sha2::Digest as _;
+    use std::fmt::Write as _;
+
+    let mut hasher = sha2::Sha256::new();
+    std::io::copy(&mut std::fs::File::open(path)?, &mut hasher)?;
+    Ok(hasher
+        .finalize()
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        }))
 }
 
 impl std::error::Error for LoaderError {}
@@ -261,6 +336,39 @@ impl Loaded {
             settings: registrar.settings.map_or(0, |s| s.schema().fields.len()),
         }
     }
+
+    /// What the plugin registers, in the shape its manifest declares
+    /// it: for `notin-pack` to write, and for the host to compare with
+    /// the manifest once the plugin is installed.
+    #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::loader_declared"))]
+    pub fn declared(&self) -> Declared {
+        let mut registrar = Registrar::default();
+        self.plugin.register(&mut registrar);
+        let mut declared = Declared {
+            settings: registrar.settings.map_or(0, |s| s.schema().fields.len()),
+            ..Declared::default()
+        };
+        for kind in &registrar.kinds {
+            let info = kind.info();
+            declared
+                .entries
+                .extend(
+                    kind.creation_entries()
+                        .into_iter()
+                        .map(|entry| DeclaredEntry {
+                            id: entry.id.into_owned(),
+                            kind: info.id.to_string(),
+                            label: entry.label.into_owned(),
+                        }),
+                );
+            declared.kinds.push(DeclaredKind {
+                id: info.id.into_owned(),
+                label: info.label.into_owned(),
+            });
+        }
+        declared
+    }
 }
 
 /// A plugin's manifest and the library this device would load, read
@@ -313,6 +421,8 @@ pub fn load(manifest_path: &Path) -> Result<Loaded, LoaderError> {
         manifest,
         library_path,
     } = resolve(manifest_path)?;
+    // Before the library opens: its initialisers are the plugin's code.
+    verify_checksum(&manifest, manifest_path, &library_path)?;
     // SAFETY: the user chose to install this plugin; the manifest and
     // ABI checks below reject anything not built for this SDK.
     let library =
@@ -352,6 +462,40 @@ pub fn load(manifest_path: &Path) -> Result<Loaded, LoaderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_library_must_match_its_checksum() {
+        let dir = std::env::temp_dir().join(format!("notin-checksum-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let library = dir.join("libq.so");
+        std::fs::write(&library, b"original").unwrap();
+        let sha256 = sha256_hex(&library).unwrap();
+        let manifest_path = dir.join("plugin.ntp.kdl");
+        let manifest = |checksum: &str| {
+            PluginManifest::parse(
+                &manifest_path,
+                &format!("id \"q\"\nname \"Q\"\nversion \"1\"\nlibrary \"libq.so\"\n{checksum}"),
+            )
+            .unwrap()
+        };
+        let packed = manifest(&format!("checksum \"libq.so\" sha256=\"{sha256}\"\n"));
+        assert!(verify_checksum(&packed, &manifest_path, &library).is_ok());
+        assert!(
+            verify_checksum(&manifest(""), &manifest_path, &library).is_ok(),
+            "no checksums: packed by hand"
+        );
+        let other = manifest(&format!("checksum \"other.so\" sha256=\"{sha256}\"\n"));
+        assert!(matches!(
+            verify_checksum(&other, &manifest_path, &library),
+            Err(LoaderError::Checksum { .. })
+        ));
+        std::fs::write(&library, b"changed").unwrap();
+        assert!(matches!(
+            verify_checksum(&packed, &manifest_path, &library),
+            Err(LoaderError::Checksum { .. })
+        ));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     struct Blank;
 

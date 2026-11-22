@@ -25,6 +25,8 @@ missing_panics_doc = "allow"
 
 [features]
 sismo = ["dep:sismo"]
+# The `notin-pack` tool authors run to build a `.ntp` package.
+pack = ["dep:zip"]
 
 [dependencies]
 # Spans for the sismo profiler; off unless an app turns it on.
@@ -40,6 +42,14 @@ bytes = "1"
 freya-core = "=0.5.0-rc.13"
 freya-markdown-editor = { version = "0.1.0-alpha.5", path = "../freya-markdown-editor", default-features = false }
 tracing = "0.1"
+# Library checksums in the manifest, checked before a library loads.
+sha2 = "0.10"
+# Writes `.ntp` packages (zip archives) for `notin-pack`.
+zip = { version = "2.4", default-features = false, features = ["deflate"], optional = true }
+
+[[bin]]
+name = "notin-pack"
+required-features = ["pack"]
 
 [build-dependencies]
 notin-i18n = { version = "0.1.0-alpha.5", path = "../notin-i18n", features = ["build"] }

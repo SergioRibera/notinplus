@@ -5357,10 +5357,12 @@ dependencies = [
  "istmo-core",
  "libloading",
  "notin-i18n",
+ "sha2 0.10.9",
  "sismo",
  "tracing",
  "uuid",
  "wincode",
+ "zip",
 ]
 
 [[package]]
