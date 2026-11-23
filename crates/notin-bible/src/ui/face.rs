@@ -509,6 +509,12 @@ impl PartialEq for BibleViewer {
     }
 }
 
+/// Text dropped on the Bible goes into the note of a verse.
+fn use_drops(ctx: &FaceContext<BibleKind>, reader: &Reader, gesture: highlight::Gesture) {
+    let reader = reader.clone();
+    ctx.use_drops(move |dropped| gesture.take_drop(&reader, dropped));
+}
+
 impl Component for BibleViewer {
     #[cfg_attr(feature = "sismo", sismo::function("bible::viewer"))]
     fn render(&self) -> impl IntoElement {
@@ -519,6 +525,7 @@ impl Component for BibleViewer {
         let viewport_top = use_state(|| 0.0_f32);
         let mut width = use_state(|| 0.0_f32);
         let wide = track_wide(&reader, *width.read());
+        use_drops(&self.ctx, &reader, gesture);
         self.ctx.use_header_presses({
             let reader = reader.clone();
             move |press| match press.action.as_str() {

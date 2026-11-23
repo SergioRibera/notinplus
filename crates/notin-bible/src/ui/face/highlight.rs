@@ -10,7 +10,9 @@ use std::sync::Arc;
 use freya::prelude::*;
 use notin_i18n::tr;
 use notin_sdk::bookmark::SourceRef;
-use notin_sdk::services::{AnnotationOutcome, AnnotationRequest, Share};
+use notin_sdk::services::{
+    AnnotationOutcome, AnnotationRequest, Dropped, HostToast, Share, ToastTone,
+};
 use notin_sdk::ui::{SelectionExtra, SelectionMenu};
 use notin_ui_kit::theme::palette;
 
@@ -30,6 +32,9 @@ pub(super) struct Gesture {
     /// Window point of the press that opened the selection.
     at: State<(f32, f32)>,
     preview: State<Option<Color>>,
+    /// Text dropped on the Bible with no verse selected: it goes into the
+    /// note of the next verse chosen.
+    dropped: State<Option<Dropped>>,
     /// The reader's scope. Tasks the gesture starts live in it, so they
     /// end with the reader instead of writing these states after it
     /// unmounts (closing its tab while the note popover is open).
@@ -165,6 +170,15 @@ impl Selection {
     }
 }
 
+/// A verse note with dropped text added under what it says.
+fn with_dropped(note: String, dropped: Option<String>) -> String {
+    match dropped {
+        Some(dropped) if note.trim().is_empty() => dropped,
+        Some(dropped) => format!("{}\n\n{dropped}", note.trim_end()),
+        None => note,
+    }
+}
+
 fn packed(rgb: [u8; 3]) -> u32 {
     rgba_to_u32([rgb[0], rgb[1], rgb[2], 0xFF])
 }
@@ -176,7 +190,43 @@ impl Gesture {
             place: use_state(|| None),
             at: use_state(|| (0.0, 0.0)),
             preview: use_state(|| None),
+            dropped: use_state(|| None),
             scope: current_scope_id(),
+        }
+    }
+
+    /// Text dropped on the Bible goes into the note of a verse: of the
+    /// verses selected now, or of the next ones chosen. The note popover
+    /// opens with it added, so nothing is saved without a look.
+    #[cfg_attr(feature = "sismo", sismo::function("bible::selection_take_drop"))]
+    pub(super) fn take_drop(self, reader: &Reader, dropped: Dropped) {
+        let selected = self.selected_now(reader);
+        let selection = (!selected.is_empty()).then(|| Selection::of(reader, &selected));
+        if let Some(selection) = selection.filter(|selection| selection.single().is_some()) {
+            let (x, y) = *self.at.peek();
+            reader.ui.close_selection();
+            self.annotate(reader, &selection, x, y, Some(dropped.markdown));
+            return;
+        }
+        reader.host.toast(HostToast {
+            text: tr!("reader-drop-pick-verse", "name" => dropped.label.clone()),
+            tone: ToastTone::Info,
+            action: None,
+        });
+        let mut waiting = self.dropped;
+        waiting.set(Some(dropped));
+    }
+
+    /// [`Self::selected`] without subscribing (event handlers).
+    fn selected_now(self, reader: &Reader) -> BTreeSet<u16> {
+        let st = reader.state.peek();
+        let here = self.place.peek().as_ref().is_some_and(|(book, chapter)| {
+            *book == st.current_book && *chapter == st.current_chapter
+        });
+        if here {
+            (**self.verses.peek()).clone()
+        } else {
+            BTreeSet::new()
         }
     }
 
@@ -300,6 +350,16 @@ impl Gesture {
         let selection = Rc::new(Selection::of(reader, &verses));
         let mut held = self.verses;
         held.set(Rc::new(verses));
+        // A drop was waiting for a verse: this one gets it, in its note.
+        if selection.single().is_some() {
+            let mut dropped = self.dropped;
+            if let Some(waiting) = dropped.take() {
+                let (x, y) = *self.at.peek();
+                reader.ui.close_selection();
+                self.annotate(reader, &selection, x, y, Some(waiting.markdown));
+                return;
+            }
+        }
         let active = selection.rgb().and_then(|c| {
             palette()
                 .highlighters
@@ -331,7 +391,7 @@ impl Gesture {
             let (reader, selection) = (reader.clone(), Rc::clone(&selection));
             Rc::new(move || {
                 let (x, y) = *self.at.peek();
-                self.annotate(&reader, &selection, x, y);
+                self.annotate(&reader, &selection, x, y, None);
             }) as Rc<dyn Fn()>
         });
         let reference = selection.reference(reader);
@@ -403,7 +463,14 @@ impl Gesture {
     /// The note popover for a selection of one run; its colour previews
     /// live on the verses.
     #[cfg_attr(feature = "sismo", sismo::function("bible::selection_annotate"))]
-    fn annotate(self, reader: &Reader, selection: &Selection, x: f32, y: f32) {
+    fn annotate(
+        self,
+        reader: &Reader,
+        selection: &Selection,
+        x: f32,
+        y: f32,
+        extra: Option<String>,
+    ) {
         let Some((lo, hi)) = selection.single() else {
             return;
         };
@@ -453,10 +520,13 @@ impl Gesture {
                 title: selection.title(),
                 quote: (!selection.quote.is_empty()).then(|| selection.quote.clone()),
                 color: selection.rgb(),
-                body: existing
-                    .as_ref()
-                    .map(|h| h.note.clone())
-                    .unwrap_or_default(),
+                body: with_dropped(
+                    existing
+                        .as_ref()
+                        .map(|h| h.note.clone())
+                        .unwrap_or_default(),
+                    extra,
+                ),
                 target: Some((x, y, 1.0, 1.0)),
                 existing: existing_id.is_some(),
             },

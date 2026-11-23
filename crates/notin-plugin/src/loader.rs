@@ -24,7 +24,7 @@ use crate::target::Target;
 
 /// Version of the plugin contract. A plugin built against another one
 /// is refused before any of its code runs past the entry function.
-pub const SDK_ABI_VERSION: u32 = 2;
+pub const SDK_ABI_VERSION: u32 = 3;
 
 /// Name of the exported entry symbol.
 pub const ENTRY_SYMBOL: &[u8] = b"notin_plugin_entry\0";

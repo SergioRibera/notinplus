@@ -235,6 +235,25 @@ pub trait HostServices: Send + Sync + std::fmt::Debug {
     /// the document is on screen: holding it is what tells the others
     /// this person is here.
     fn presence(&self, doc: DocId) -> Arc<dyn Presence>;
+
+    /// What is dropped on `doc` in `pane` from now on (a file dragged onto
+    /// the window, turned into markdown by the shell). Taking the
+    /// receiver tells the shell the face takes drops; dropping it stops
+    /// that. See [`crate::face::FaceContext::use_drops`].
+    fn drops(&self, doc: DocId, pane: Option<PaneKey>) -> flume::Receiver<Dropped> {
+        let _ = (doc, pane);
+        flume::unbounded().1
+    }
+}
+
+/// Something dropped on a document whose face takes drops.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Dropped {
+    /// Name of what was dropped (a file name), for the face to show.
+    pub label: String,
+    /// What to put in: markdown, a reference chip or text, to add where
+    /// the face sees fit (Bible: the note of a verse).
+    pub markdown: String,
 }
 
 /// Values a document keeps by key, merged with every device and person.

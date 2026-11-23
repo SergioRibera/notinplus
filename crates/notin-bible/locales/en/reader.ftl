@@ -23,3 +23,5 @@ reader-refs-count = { $count ->
 # $place is the verse the references start from, e.g. “John 3:16”.
 reader-refs-title = References of { $place }
 reader-refs-close = Close
+# $name: what was dropped on the Bible (a file name).
+reader-drop-pick-verse = Select a verse (press and hold, or double-click) to add “{ $name }” to its note.

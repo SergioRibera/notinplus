@@ -23,3 +23,5 @@ reader-refs-count = { $count ->
 # $place es el versículo del que parten las referencias, p. ej. «Juan 3:16».
 reader-refs-title = Referencias de { $place }
 reader-refs-close = Cerrar
+# $name: lo que se soltó sobre la Biblia (un nombre de archivo).
+reader-drop-pick-verse = Selecciona un versículo (mantén pulsado o haz doble clic) para añadir «{ $name }» a su nota.

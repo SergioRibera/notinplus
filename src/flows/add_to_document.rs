@@ -66,10 +66,13 @@ enum FileKind {
 }
 
 impl FileKind {
-    const fn choices(self) -> &'static [Choice] {
+    /// What the sheet offers; `images` when the document takes pictures.
+    const fn choices(self, images: bool) -> &'static [Choice] {
         match self {
-            Self::Pdf { .. } => &[Choice::Reference, Choice::Link, Choice::Text, Choice::Image],
-            Self::Text => &[Choice::Reference, Choice::Link, Choice::Text],
+            Self::Pdf { .. } if images => {
+                &[Choice::Reference, Choice::Link, Choice::Text, Choice::Image]
+            }
+            Self::Pdf { .. } | Self::Text => &[Choice::Reference, Choice::Link, Choice::Text],
             Self::Image => &[],
         }
     }
@@ -103,11 +106,16 @@ pub(super) async fn run(path: PathBuf, document: ItemId, position: usize, total:
         return;
     };
     let target = document_name(document).unwrap_or_default();
+    let takes_images = Destination::of(document).is_some_and(|d| d.takes_images());
     if kind == FileKind::Image {
-        insert_image(document, &picked).await;
+        if takes_images {
+            insert_image(document, &picked).await;
+        } else {
+            refused(&picked.name);
+        }
         return;
     }
-    let Some(asked) = ask(&picked.name, &target, kind, position, total).await else {
+    let Some(asked) = ask(&picked.name, &target, kind, takes_images, position, total).await else {
         return;
     };
     LAST.with(|last| last.set(asked.choice));
@@ -197,10 +205,11 @@ async fn ask(
     file: &str,
     document: &str,
     kind: FileKind,
+    images: bool,
     position: usize,
     total: usize,
 ) -> Option<Asked> {
-    let choices = kind.choices();
+    let choices = kind.choices(images);
     let first = LAST.with(Cell::get);
     let choice = State::create_in_scope(
         if choices.contains(&first) {
@@ -370,6 +379,10 @@ pub(crate) enum Destination {
     /// A canvas on screen: text boxes and pictures at the middle of the
     /// view.
     Board(std::sync::Arc<std::sync::Mutex<crate::canvas::Board>>),
+    /// A plugin face that takes drops itself
+    /// ([`notin_plugin::face::FaceContext::use_drops`]; the Bible puts
+    /// them in the note of a verse). Text only.
+    Face(notin_plugin::DocId),
 }
 
 impl Destination {
@@ -380,6 +393,15 @@ impl Destination {
         crate::editor::body_editor(document)
             .map(Self::Editor)
             .or_else(|| crate::active_boards::get_item(document).map(Self::Board))
+            .or_else(|| {
+                let doc = crate::plugins::content::doc_id(document);
+                crate::plugins::host::takes_drops(doc).then_some(Self::Face(doc))
+            })
+    }
+
+    /// Whether pictures can go in.
+    const fn takes_images(&self) -> bool {
+        !matches!(self, Self::Face(_))
     }
 
     /// [`Self::of`], or why there is none.
@@ -387,7 +409,8 @@ impl Destination {
         Self::of(document).ok_or_else(|| tr!("flows-add-closed"))
     }
 
-    fn insert_markdown(&self, markdown: &str) -> Result<(), String> {
+    /// `markdown` came from `label` (a file name).
+    fn insert_markdown(&self, markdown: &str, label: &str) -> Result<(), String> {
         let inserted = match self {
             Self::Editor(editor) => {
                 let mounted = editor.is_mounted();
@@ -397,6 +420,13 @@ impl Destination {
                 mounted
             }
             Self::Board(board) => crate::canvas::lock(board).insert_text_at_view_center(markdown),
+            Self::Face(doc) => crate::plugins::host::deliver_drop(
+                *doc,
+                &notin_plugin::Dropped {
+                    label: label.to_owned(),
+                    markdown: markdown.to_owned(),
+                },
+            ),
         };
         inserted
             .then_some(())
@@ -419,7 +449,7 @@ impl Destination {
                     .map(|image| format!("![{label}]({})", image.url))
                     .collect();
                 markdown.extend(source.map(|url| link_markdown(&label, url)));
-                self.insert_markdown(&markdown.join("\n\n"))
+                self.insert_markdown(&markdown.join("\n\n"), &label)
             }
             Self::Board(board) => {
                 let assets: Vec<(String, (u32, u32))> = images
@@ -431,6 +461,7 @@ impl Destination {
                     .then_some(())
                     .ok_or_else(|| tr!("flows-add-closed"))
             }
+            Self::Face(_) => Err(tr!("flows-add-no-images")),
         }
     }
 }
@@ -464,7 +495,7 @@ fn link_markdown(label: &str, url: &str) -> String {
 async fn reference(document: ItemId, picked: &Picked) -> Result<String, String> {
     let (_, url) = import_beside(document, picked).await?;
     let label = file_label(&picked.name);
-    Destination::open(document)?.insert_markdown(&link_markdown(&label, &url))?;
+    Destination::open(document)?.insert_markdown(&link_markdown(&label, &url), &label)?;
     Ok(tr!("flows-add-done", "name" => label))
 }
 
@@ -538,7 +569,8 @@ async fn text(
         FileKind::Text | FileKind::Image => String::from_utf8_lossy(&picked.bytes).into_owned(),
     };
     let source = source_line(document, picked, asked).await?;
-    Destination::open(document)?.insert_markdown(&format!("{body}{source}"))?;
+    Destination::open(document)?
+        .insert_markdown(&format!("{body}{source}"), &file_label(&picked.name))?;
     Ok(tr!("flows-add-done", "name" => file_label(&picked.name)))
 }
 

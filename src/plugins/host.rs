@@ -12,10 +12,11 @@ use freya::prelude::*;
 use notin_i18n::tr;
 use notin_plugin::bookmark::SourceRef;
 use notin_plugin::doc::DocId;
-use notin_plugin::face::RawStore;
+use notin_plugin::face::{PaneKey, RawStore};
 use notin_plugin::services::{
-    AnnotationDone, AnnotationPreview, AnnotationRequest, HeaderPress, HistoryRequest, Host,
-    HostServices, HostToast, Jump, Placement, Progress, Share, TextBody, ToastTone as HostTone,
+    AnnotationDone, AnnotationPreview, AnnotationRequest, Dropped, HeaderPress, HistoryRequest,
+    Host, HostServices, HostToast, Jump, Placement, Progress, Share, TextBody,
+    ToastTone as HostTone,
 };
 use notin_ui_kit::{Toast, ToastId, ToastTone, Toasts};
 
@@ -37,6 +38,9 @@ enum HostEvent {
     Share(Share),
 }
 
+/// A face taking drops: its document, its pane and where drops go.
+type DropTarget = (DocId, Option<PaneKey>, flume::Sender<Dropped>);
+
 /// The shell's [`HostServices`].
 pub struct ShellHost {
     events: flume::Sender<HostEvent>,
@@ -45,6 +49,8 @@ pub struct ShellHost {
     jump_listeners: Mutex<Vec<(String, flume::Sender<Jump>)>>,
     header_listeners: Mutex<Vec<(String, flume::Sender<HeaderPress>)>>,
     history_listeners: Mutex<Vec<(String, flume::Sender<HistoryRequest>)>>,
+    /// Faces that take drops ([`HostServices::drops`]).
+    drop_targets: Mutex<Vec<DropTarget>>,
 }
 
 impl std::fmt::Debug for ShellHost {
@@ -65,6 +71,7 @@ fn shell_host() -> &'static Arc<ShellHost> {
             jump_listeners: Mutex::default(),
             header_listeners: Mutex::default(),
             history_listeners: Mutex::default(),
+            drop_targets: Mutex::default(),
         })
     })
 }
@@ -138,6 +145,30 @@ impl ShellHost {
 #[must_use]
 pub fn shell() -> Arc<ShellHost> {
     Arc::clone(shell_host())
+}
+
+/// Whether a face of `doc` on screen takes dropped files.
+#[must_use]
+pub(crate) fn takes_drops(doc: DocId) -> bool {
+    let mut targets = shell_host()
+        .drop_targets
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    targets.retain(|(_, _, tx)| !tx.is_disconnected());
+    targets.iter().any(|(target, _, _)| *target == doc)
+}
+
+/// Hand `dropped` to the first face of `doc` that takes drops. `false`
+/// when none does any more.
+pub(crate) fn deliver_drop(doc: DocId, dropped: &Dropped) -> bool {
+    let targets = shell_host()
+        .drop_targets
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    targets
+        .iter()
+        .filter(|(target, _, _)| *target == doc)
+        .any(|(_, _, tx)| tx.send(dropped.clone()).is_ok())
 }
 
 impl HostServices for ShellHost {
@@ -219,6 +250,15 @@ impl HostServices for ShellHost {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push((kind.to_owned(), tx));
+        rx
+    }
+
+    fn drops(&self, doc: DocId, pane: Option<PaneKey>) -> flume::Receiver<Dropped> {
+        let (tx, rx) = flume::unbounded();
+        self.drop_targets
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((doc, pane, tx));
         rx
     }
 

@@ -185,6 +185,23 @@ impl<K: DocumentKind> FaceContext<K> {
         });
     }
 
+    /// Take what is dropped on this document in this pane (a file dragged
+    /// onto the window, turned into markdown by the shell) for as long as
+    /// the face is on screen. A hook: call it from the face's render.
+    /// Without it, files dropped on the document go to the library.
+    #[cfg_attr(feature = "sismo", sismo::function("plugin::face_use_drops"))]
+    pub fn use_drops(&self, mut on_drop: impl FnMut(crate::services::Dropped) + 'static) {
+        let (host, doc, pane) = (Arc::clone(&self.host), self.doc, self.pane);
+        use_hook(move || {
+            let rx = host.drops(doc, pane);
+            spawn(traced!("task::plugin::drops", async move {
+                while let Ok(dropped) = rx.recv_async().await {
+                    on_drop(dropped);
+                }
+            }));
+        });
+    }
+
     /// Run `on_jump` with the anchor this document was opened at, then
     /// with every move queued for it while it is on screen (an outline
     /// row, a chip). A hook: call it from the face's render.

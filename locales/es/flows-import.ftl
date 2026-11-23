@@ -73,3 +73,4 @@ flows-add-failed = No se pudo añadir «{ $name }»
 flows-add-closed = El documento se cerró.
 flows-add-unreadable = No se pudo leer el PDF.
 flows-add-no-text = Esas páginas no tienen texto que copiar. Prueba a insertarlas como imágenes.
+flows-add-no-images = Este documento no admite imágenes.
