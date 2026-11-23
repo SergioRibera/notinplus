@@ -23,8 +23,8 @@ use freya::prelude::*;
 use notin_i18n::tr;
 use notin_plugin::SourceRef;
 use notin_ui_kit::{
-    Button, Group, ListRow, ModalController, Section, Sheet, SheetFooter, Text, TextField,
-    TextRole, Toast, ToastTone, Toasts, Trailing,
+    Button, Group, ListRow, ModalController, Notice, NoticeTone, Section, Sheet, SheetFooter, Text,
+    TextField, TextRole, Toast, ToastTone, Toasts, Trailing,
 };
 
 use super::create::import_entry;
@@ -106,16 +106,40 @@ pub(super) async fn run(path: PathBuf, document: ItemId, position: usize, total:
         return;
     };
     let target = document_name(document).unwrap_or_default();
+    let shared = match Sharing::of(document) {
+        Sharing::ReadOnly => {
+            Toasts::get().show(
+                Toast::new(tr!("flows-add-read-only", "document" => target)).tone(ToastTone::Error),
+            );
+            return;
+        }
+        Sharing::With(notice) => Some(notice),
+        Sharing::Private => None,
+    };
     let takes_images = Destination::of(document).is_some_and(|d| d.takes_images());
     if kind == FileKind::Image {
-        if takes_images {
-            insert_image(document, &picked).await;
-        } else {
+        if !takes_images {
             refused(&picked.name);
+        } else if let Some(notice) = &shared {
+            if confirm_shared(&picked.name, notice).await {
+                insert_image(document, &picked).await;
+            }
+        } else {
+            insert_image(document, &picked).await;
         }
         return;
     }
-    let Some(asked) = ask(&picked.name, &target, kind, takes_images, position, total).await else {
+    let Some(asked) = ask(
+        &picked.name,
+        &target,
+        kind,
+        takes_images,
+        shared,
+        position,
+        total,
+    )
+    .await
+    else {
         return;
     };
     LAST.with(|last| last.set(asked.choice));
@@ -140,6 +164,69 @@ pub(super) async fn run(path: PathBuf, document: ItemId, position: usize, total:
             );
         }
     }
+}
+
+/// Whether others see the document as it changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Sharing {
+    Private,
+    /// Shared, and this device may edit it: the warning to show.
+    With(String),
+    /// Shared for this device to look at only.
+    ReadOnly,
+}
+
+impl Sharing {
+    fn of(document: ItemId) -> Self {
+        let shares = crate::sync::shares_of(document);
+        let Some(first) = shares.first() else {
+            return Self::Private;
+        };
+        if !crate::sync::can_edit(document) {
+            return Self::ReadOnly;
+        }
+        // The owner and every member, of every share holding it.
+        let people: std::collections::HashSet<_> = shares
+            .iter()
+            .flat_map(|share| {
+                std::iter::once(share.owner.device)
+                    .chain(share.members.iter().map(|m| m.member.device))
+            })
+            .collect();
+        // This device counts among them.
+        let others = people.len().saturating_sub(1);
+        if others == 0 {
+            return Self::Private;
+        }
+        Self::With(tr!(
+            "flows-add-shared",
+            "share" => first.title.clone(),
+            "people" => others
+        ))
+    }
+}
+
+/// Ask before a picture goes into a shared document, since it reaches
+/// everyone at once; `true` to go on.
+async fn confirm_shared(file: &str, notice: &str) -> bool {
+    let (tx, rx) = flume::bounded(1);
+    let cancelled = tx.clone();
+    Sheet::titled(tr!("flows-add-title", "name" => file.to_owned()))
+        .on_close(move |()| {
+            let _ = cancelled.try_send(false);
+        })
+        .child(Notice::new(NoticeTone::Warning, notice.to_owned()))
+        .footer(SheetFooter::new([Button::new(tr!("flows-add-submit"))
+            .primary()
+            .on_press(move |_| {
+                let mut modal = ModalController::get();
+                modal.clear_top_on_close();
+                modal.close();
+                let _ = tx.try_send(true);
+            })
+            .into_element()]))
+        .push();
+    rx.recv_async().await.unwrap_or(false)
 }
 
 /// `None` for files no choice applies to.
@@ -206,6 +293,7 @@ async fn ask(
     document: &str,
     kind: FileKind,
     images: bool,
+    shared: Option<String>,
     position: usize,
     total: usize,
 ) -> Option<Asked> {
@@ -237,6 +325,7 @@ async fn ask(
         .on_close(move |()| {
             let _ = cancelled.try_send(None);
         })
+        .maybe_child(shared.map(|notice| Notice::new(NoticeTone::Warning, notice)))
         .child(Choices {
             offered: choices,
             choice,

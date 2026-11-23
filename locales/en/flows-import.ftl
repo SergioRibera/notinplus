@@ -74,3 +74,9 @@ flows-add-closed = The document was closed.
 flows-add-unreadable = The PDF couldn't be read.
 flows-add-no-text = Those pages have no text to copy. Try inserting them as images.
 flows-add-no-images = This document doesn't take pictures.
+# $share: the share's name; $people: everyone else in it.
+flows-add-shared = This document is shared in “{ $share }” with { $people ->
+    [one] 1 other person
+   *[other] { $people } other people
+}. What you insert reaches them right away, pictures included.
+flows-add-read-only = “{ $document }” is shared with you to look at only.
