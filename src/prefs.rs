@@ -16,8 +16,7 @@
 //!
 //! ```text
 //! <data_dir>/notinplus/
-//!     local.bin                      // toolbar prefs ("prefs.bin") and
-//!                                    // editor prefs ("editor.bin"),
+//!     local.bin                      // toolbar prefs ("prefs.bin"),
 //!                                    // see [`crate::persist`]
 //!     views/<item_id>.bin            // per-doc viewport sidecar
 //! ```
@@ -73,19 +72,6 @@ impl Prefs {
     pub fn size_scales_map(&self) -> HashMap<BrushKind, f32> {
         self.size_scales.iter().copied().collect()
     }
-}
-
-/// Markdown note editor prefs, shared by every note editor. Kept out of
-/// [`Prefs`] so adding fields to either never resets the other.
-#[istmo::message]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct EditorPrefs {
-    /// Show the markdown source of formatting around the caret.
-    pub show_markdown_syntax: bool,
-}
-
-impl Persisted for EditorPrefs {
-    const FILE: &'static str = "editor.bin";
 }
 
 /// Per-doc view state (pan + zoom). Primitive fields so the encoded shape
@@ -153,22 +139,6 @@ pub fn load_prefs() -> Prefs {
 /// Encode / fs failures.
 #[sismo::function("prefs::save_prefs")]
 pub fn save_prefs(prefs: &Prefs) -> io::Result<()> {
-    prefs.save()
-}
-
-/// Read [`EditorPrefs`]. Missing / corrupt payload → defaults.
-#[must_use]
-#[sismo::function("prefs::load_editor_prefs")]
-pub fn load_editor_prefs() -> EditorPrefs {
-    EditorPrefs::load()
-}
-
-/// Store [`EditorPrefs`].
-///
-/// # Errors
-/// Encode / fs failures.
-#[sismo::function("prefs::save_editor_prefs")]
-pub fn save_editor_prefs(prefs: EditorPrefs) -> io::Result<()> {
     prefs.save()
 }
 
