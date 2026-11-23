@@ -564,7 +564,8 @@ impl Published {
                 | BlobKind::Workspace
                 | BlobKind::ItemTags
                 | BlobKind::FolderTags
-                | BlobKind::Pins => false,
+                | BlobKind::Pins
+                | BlobKind::Settings => false,
             };
             if !allowed
                 || self
@@ -4216,7 +4217,8 @@ fn permitted(share: &Share, from: DeviceId, message: Message) -> Option<Message>
                     | BlobKind::Workspace
                     | BlobKind::ItemTags
                     | BlobKind::FolderTags
-                    | BlobKind::Pins => false,
+                    | BlobKind::Pins
+                    | BlobKind::Settings => false,
                 })
                 .collect();
             (!kept.is_empty()).then_some(Message::Blobs(kept))

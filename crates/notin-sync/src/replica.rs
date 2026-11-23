@@ -66,6 +66,10 @@ pub enum BlobKind {
     /// The documents a person pinned, in order; one per library, keyed
     /// by zeros. As personal as [`Self::ItemTags`].
     Pins,
+    /// One part of a person's settings (the pen, the notes, the
+    /// look, ...), keyed by the part; last writer wins. As personal as
+    /// [`Self::ItemTags`]. Added in protocol 6: keep it last.
+    Settings,
 }
 
 /// Identity plus freshness of a blob; enough to decide who is newer.
@@ -304,7 +308,12 @@ mod tests {
                 id: doc.0,
             }]),
         };
-        for kind in [BlobKind::ItemTags, BlobKind::FolderTags, BlobKind::Pins] {
+        for kind in [
+            BlobKind::ItemTags,
+            BlobKind::FolderTags,
+            BlobKind::Pins,
+            BlobKind::Settings,
+        ] {
             assert!(!scope.covers_blob(BlobKey { kind, id: doc.0 }));
             assert!(Scope::All.covers_blob(BlobKey { kind, id: doc.0 }));
         }
