@@ -52,6 +52,16 @@ pub enum SyncRecord {
     },
     /// What this person pinned, like [`Self::ItemTags`].
     Pins(Pins),
+    /// A part of this person's settings, like [`Self::ItemTags`]; last
+    /// writer wins per part ([`crate::settings::stored`]).
+    Settings(crate::settings::stored::StoredPart),
+}
+
+/// The settings part `id` names, with its stamp.
+fn settings_record(id: [u8; 16]) -> Option<(u64, SyncRecord)> {
+    let part = crate::settings::stored::Part::from_id(id)?;
+    crate::settings::stored::part(part)
+        .map(|stored| (stored.updated_at, SyncRecord::Settings(stored)))
 }
 
 /// Key of the one [`SyncRecord::Pins`] a library holds.
@@ -98,7 +108,8 @@ const fn buried_of(kind: BlobKind) -> Option<Buried> {
         | BlobKind::Attachment
         | BlobKind::ItemTags
         | BlobKind::FolderTags
-        | BlobKind::Pins => None,
+        | BlobKind::Pins
+        | BlobKind::Settings => None,
     }
 }
 
@@ -227,6 +238,11 @@ impl Library {
             SyncRecord::Pins(pins) => {
                 self.data.index.pins = pins;
                 self.persist()?;
+            }
+            SyncRecord::Settings(part) => {
+                if let Err(err) = crate::settings::stored::apply_remote(part) {
+                    tracing::warn!("settings from another device: {err}");
+                }
             }
             SyncRecord::Gone(stone) => self.apply_gone(&stone, yard).await?,
         }
@@ -358,6 +374,11 @@ impl LibraryData {
         if self.index.pins.updated_at > 0 {
             heads.push(head(BlobKind::Pins, PINS_ID, self.index.pins.updated_at));
         }
+        heads.extend(
+            crate::settings::stored::heads()
+                .into_iter()
+                .map(|(part, at)| head(BlobKind::Settings, part.id(), at)),
+        );
         let mut at: std::collections::HashMap<(BlobKind, [u8; 16]), usize> = heads
             .iter()
             .enumerate()
@@ -420,6 +441,7 @@ impl LibraryData {
             BlobKind::ItemTags => self.item_tags_record(super::ItemId(key.id)),
             BlobKind::FolderTags => self.folder_tags_record(super::FolderId(key.id)),
             BlobKind::Pins => self.pins_record(key.id),
+            BlobKind::Settings => settings_record(key.id),
         };
         match (live, stone) {
             (Some((at, record)), Some(stone)) if at >= stone.at => Some(record),
@@ -556,6 +578,7 @@ impl LibraryData {
                 .get(&super::FolderId(key.id))
                 .map(|t| t.updated_at),
             BlobKind::Pins => self.pins_record(key.id).map(|(at, _)| at),
+            BlobKind::Settings => settings_record(key.id).map(|(at, _)| at),
         };
         match (live, stone) {
             (Some(a), Some(b)) => Some(a.max(b)),

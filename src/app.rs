@@ -123,6 +123,8 @@ fn spawn_prefs_worker(board: Arc<Mutex<Board>>, rx: flume::Receiver<()>) {
             if let Err(err) = prefs::save_prefs(&snapshot) {
                 tracing::error!("save_prefs: {err}");
             }
+            // The writing style follows the person to their other devices.
+            crate::settings::stored::save_handwriting(&snapshot.style);
         }
     }));
 }
@@ -663,7 +665,9 @@ pub(crate) fn mount_board(mount: CanvasMount, state: &ChromeState) -> Arc<Mutex<
             g.set_current_color(color);
         }
         g.set_input_mode(saved.input_mode());
-        g.set_style_profile(saved.style);
+        // Learned here or on another device; the toolbar file only holds it
+        // from before it travelled.
+        g.set_style_profile(crate::settings::stored::handwriting().unwrap_or(saved.style));
         g.set_prefs_sink(prefs_tx);
     }
     spawn_idle_timer(

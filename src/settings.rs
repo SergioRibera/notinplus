@@ -1,14 +1,15 @@
 //! User settings (Ajustes): appearance, pen, notes and library.
 //!
-//! One record on disk, one reactive [`SettingsStore`] in the app root.
+//! Stored and sent to the person's other devices by [`stored`]; one
+//! reactive [`SettingsStore`] in the app root.
 //! Screens read a section, edit it through [`SettingsStore::update`],
 //! and the store writes the file and re-applies the appearance.
+
+pub(crate) mod stored;
 
 use freya::prelude::*;
 use notin_i18n::{Lang, tr};
 use notin_ui_kit::theme::{Appearance, TextSize, ThemeChoice, ThemeHandle, ThemeKind};
-
-use crate::persist::Persisted;
 
 /// Theme the user picked.
 #[istmo::message]
@@ -455,13 +456,16 @@ pub struct Settings {
     pub sessions: SessionSettings,
 }
 
-impl Persisted for Settings {
-    const FILE: &'static str = "settings.v2.bin";
-}
-
 static PEN_DOUBLE_TAP: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 impl Settings {
+    /// The stored settings, outside the store (before the interface
+    /// starts).
+    #[must_use]
+    pub fn load() -> Self {
+        stored::load()
+    }
+
     /// The pen shortcut action, readable off the UI thread (the pen
     /// pump runs on its own).
     #[must_use]
@@ -544,7 +548,7 @@ impl SettingsStore {
         let settings = self.state.peek().clone();
         settings.publish(*self.device.peek());
         self.theme.set(settings.appearance.into());
-        if let Err(err) = settings.save() {
+        if let Err(err) = stored::save(&settings) {
             tracing::error!("settings save: {err}");
         }
     }
@@ -555,7 +559,7 @@ impl SettingsStore {
 pub fn use_settings_root() -> SettingsStore {
     let mut device = use_state(device_lang);
     let state = use_state(|| {
-        let settings = Settings::load();
+        let settings = stored::load();
         settings.publish(*device.peek());
         settings
     });
@@ -578,6 +582,25 @@ pub fn use_settings_root() -> SettingsStore {
             }
             Err(err) => tracing::warn!("system locale updates: {err}"),
         }
+        // Parts that arrive from the person's other devices.
+        let arrivals = stored::changes();
+        spawn(traced!("task::settings::arrivals", async move {
+            let (mut state, mut theme) = (state, theme);
+            while let Ok(part) = arrivals.recv_async().await {
+                if part == stored::Part::Handwriting {
+                    if let Some(profile) = stored::handwriting() {
+                        for board in crate::active_boards::all() {
+                            crate::canvas::lock(&board).set_style_profile(profile.clone());
+                        }
+                    }
+                    continue;
+                }
+                let settings = stored::load();
+                settings.publish(*device.peek());
+                theme.set(settings.appearance.into());
+                state.set(settings);
+            }
+        }));
         let store = SettingsStore {
             state,
             theme,

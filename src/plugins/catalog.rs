@@ -40,10 +40,7 @@ fn init() -> RwLock<PluginCatalog> {
         }
     }
     super::dynamic::load_installed(&mut catalog);
-    for id in <crate::settings::Settings as crate::persist::Persisted>::load()
-        .plugins
-        .disabled
-    {
+    for id in crate::settings::Settings::load().plugins.disabled {
         catalog.set_enabled(&id, false);
     }
     catalog.install_host(&super::host::handle());
