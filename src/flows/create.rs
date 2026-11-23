@@ -418,7 +418,7 @@ pub fn run(entry: CatalogEntry, context: Context) {
                 let extensions: Vec<&str> = extensions.iter().map(AsRef::as_ref).collect();
                 let mimes: Vec<&str> = mime_types.iter().map(AsRef::as_ref).collect();
                 match crate::files::pick(&title, &extensions, &mimes).await {
-                    Ok(Some(picked)) => import_sheet(entry, context, picked, Landing::Open),
+                    Ok(Some(picked)) => import_sheet(entry, context, picked, Landing::Open, None),
                     Ok(None) => {}
                     Err(err) => {
                         tracing::error!("pick: {err}");
@@ -464,7 +464,58 @@ pub fn import_file_landing(
     let Some(entry) = entry else {
         return false;
     };
-    import_sheet(entry, context, picked, landing);
+    import_sheet(entry, context, picked, landing, None);
+    true
+}
+
+/// Where a queued import stands in its queue, for its sheet.
+#[derive(Clone)]
+pub struct QueueSlot {
+    /// 1-based.
+    pub position: usize,
+    pub total: usize,
+    /// How it ended.
+    pub on_done: std::rc::Rc<dyn Fn(Outcome)>,
+    /// Drop the imports waiting after this one.
+    pub cancel_rest: std::rc::Rc<dyn Fn()>,
+}
+
+impl std::fmt::Debug for QueueSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QueueSlot")
+            .field("position", &self.position)
+            .field("total", &self.total)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The import entry of the first plugin that imports `name`'s
+/// extension.
+#[must_use]
+pub fn import_entry(name: &str) -> Option<CatalogEntry> {
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())?
+        .to_ascii_lowercase();
+    crate::plugins::catalog().entries().into_iter().find(|e| {
+        matches!(
+            &e.entry.flow,
+            CreationFlow::Import { extensions, .. }
+                if extensions.iter().any(|known| known.eq_ignore_ascii_case(&ext))
+        )
+    })
+}
+
+/// [`import_file`] as one of several imports in a row: the sheet says
+/// which one it is, opens nothing afterwards and reports through
+/// `slot` how it ended. `false` when no plugin imports the file.
+#[sismo::function("flows::import_queued")]
+pub fn import_queued(picked: crate::files::Picked, context: Context, slot: QueueSlot) -> bool {
+    let Some(entry) = import_entry(&picked.name) else {
+        return false;
+    };
+    let landing = Landing::Queued(std::rc::Rc::clone(&slot.on_done));
+    import_sheet(entry, context, picked, landing, Some(slot));
     true
 }
 
@@ -485,6 +536,20 @@ pub enum Landing {
     /// Hand it to whoever asked for the import, which shows it its own
     /// way (a file opened from outside the library stays in its view).
     Report(std::rc::Rc<dyn Fn(ItemId)>),
+    /// One of several imports in a row ([`super::import_queue`]): open
+    /// nothing, show no sheet of its own after the form, report how it
+    /// ended.
+    Queued(std::rc::Rc<dyn Fn(Outcome)>),
+}
+
+/// How a queued import ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Imported(ItemId),
+    /// Closed without importing.
+    Skipped,
+    /// The file could not be read or stored; a toast said why.
+    Failed,
 }
 
 impl PartialEq for Landing {
@@ -492,7 +557,8 @@ impl PartialEq for Landing {
         match (self, other) {
             (Self::Open, Self::Open) => true,
             (Self::Report(a), Self::Report(b)) => std::rc::Rc::ptr_eq(a, b),
-            (Self::Open, Self::Report(_)) | (Self::Report(_), Self::Open) => false,
+            (Self::Queued(a), Self::Queued(b)) => std::rc::Rc::ptr_eq(a, b),
+            _ => false,
         }
     }
 }
@@ -502,6 +568,7 @@ impl std::fmt::Debug for Landing {
         match self {
             Self::Open => f.write_str("Open"),
             Self::Report(_) => f.write_str("Report"),
+            Self::Queued(_) => f.write_str("Queued"),
         }
     }
 }
@@ -646,6 +713,7 @@ fn import_sheet(
     context: Context,
     picked: crate::files::Picked,
     landing: Landing,
+    slot: Option<QueueSlot>,
 ) {
     let p = palette();
     let Some(kind) = crate::plugins::kind(&entry.kind) else {
@@ -658,14 +726,20 @@ fn import_sheet(
     let found = match kind.inspect(&entry.entry.id, file) {
         Ok(found) => found,
         Err(err) => {
-            import_error(&entry, context, &picked.name, &err.user_message());
+            match &slot {
+                Some(slot) => {
+                    failed_toast(&picked.name, &err.user_message());
+                    (slot.on_done)(Outcome::Failed);
+                }
+                None => import_error(&entry, context, &picked.name, &err.user_message()),
+            }
             return;
         }
     };
     // A kept file (the PDF itself) brings its own look and often wants
     // a notebook to write beside it.
     let keeps_file = kind.info().attachment.is_some();
-    let spec = FormSpec {
+    let mut spec = FormSpec {
         title: tr!("flows-create-import-kind", "kind" => entry.entry.label.to_string()),
         kind_icon: Some(entry.entry.icon.clone()),
         kind_color: Some(kind_color(&p, entry.entry.color)),
@@ -679,6 +753,31 @@ fn import_sheet(
         submit: tr!("flows-create-import-submit"),
         ..FormSpec::default()
     };
+    if let Some(slot) = &slot {
+        spec.title = tr!(
+            "flows-create-import-queued",
+            "kind" => entry.entry.label.to_string(),
+            "position" => slot.position,
+            "total" => slot.total
+        );
+        // Opening each one would leave the queue behind.
+        spec.submit = tr!("flows-create-import-submit-queued");
+        let on_done = std::rc::Rc::clone(&slot.on_done);
+        spec.on_cancel = Some(forms::FormAction(std::rc::Rc::new(move || {
+            on_done(Outcome::Skipped);
+        })));
+        let rest = slot.total - slot.position;
+        if rest > 0 {
+            let cancel_rest = std::rc::Rc::clone(&slot.cancel_rest);
+            spec.leading = Some((
+                tr!("flows-create-import-cancel-rest", "count" => rest),
+                forms::FormAction(std::rc::Rc::new(move || {
+                    cancel_rest();
+                    ModalController::get().close();
+                })),
+            ));
+        }
+    }
     let initial = FormValues {
         name: found.name,
         folder: context.folder,
@@ -695,6 +794,18 @@ fn import_sheet(
             },
         );
     });
+}
+
+/// Say a queued import failed without stopping the queue for it.
+fn failed_toast(file: &str, why: &str) {
+    Toasts::get().show(
+        Toast::new(tr!(
+            "errors-headline-detail",
+            "headline" => tr!("flows-create-read-failed", "file" => file.to_owned()),
+            "detail" => why.to_owned()
+        ))
+        .tone(ToastTone::Error),
+    );
 }
 
 #[sismo::function("flows::import_error")]
@@ -784,7 +895,10 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
         let created = match created {
             Ok(created) => created,
             Err(err) => {
-                if let Some(file) = &file {
+                if let (Some(file), Landing::Queued(done)) = (&file, &landing) {
+                    failed_toast(&file.name, &err.user_message());
+                    done(Outcome::Failed);
+                } else if let Some(file) = &file {
                     import_error(&entry, context, &file.name, &err.user_message());
                 } else {
                     Toasts::get().show(Toast::new(err.user_message()).tone(ToastTone::Error));
@@ -803,48 +917,46 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
             } else {
                 created.name.clone()
             };
-            let item = match lib
-                .create_item(
-                    values.folder,
-                    DocKind::plugin(entry.kind.clone()),
-                    &name,
-                    values.color,
-                    tags,
-                    values.paper,
-                )
-                .await
-            {
+            let placed = Placement {
+                folder: values.folder,
+                name: &name,
+                color: values.color,
+                tags,
+                paper: values.paper,
+            };
+            let item = match put_in_library(&mut lib, &entry, &created, placed).await {
                 Ok(item) => item,
                 Err(err) => {
                     tracing::error!("create item: {err}");
                     Toasts::get()
                         .show(Toast::new(tr!("errors-headline-detail", "headline" => tr!("flows-create-failed"), "detail" => err.user_message())).tone(ToastTone::Error));
+                    if let Landing::Queued(done) = &landing {
+                        done(Outcome::Failed);
+                    }
                     return;
                 }
             };
-            content::write(item, &entry.kind, &created.content);
-            if let Some(attachment) = &created.attachment
-                && let Err(err) = lib.attach_pdf(item, attachment).await
-            {
-                tracing::error!("attach: {err}");
-            }
             drop(lib);
             item
         };
-        record_use(&entry);
-        if let Some(attachment) = created.attachment {
-            prepare_attachment(item, &entry.kind, attachment);
-        } else {
-            crate::plugins::content::reindex(item);
-        }
+        // A queue shows its next sheet instead of this one's progress.
+        let progress = !matches!(landing, Landing::Queued(_));
+        settle(item, &entry, created.attachment, progress);
         if values.notebook {
             let notebook = {
                 let mut lib = handle.lock().await;
                 crate::notebooks::create_notebook(&mut lib, item).await
             };
-            if let Landing::Report(report) = &landing {
-                report(item);
-                return;
+            match &landing {
+                Landing::Report(report) => {
+                    report(item);
+                    return;
+                }
+                Landing::Queued(done) => {
+                    done(Outcome::Imported(item));
+                    return;
+                }
+                Landing::Open => {}
             }
             super::open(item);
             if let Ok(notebook) = notebook {
@@ -854,15 +966,128 @@ fn create(entry: CatalogEntry, context: Context, request: Request) {
             match &landing {
                 Landing::Open => super::open(item),
                 Landing::Report(report) => report(item),
+                Landing::Queued(done) => done(Outcome::Imported(item)),
             }
         }
     }));
 }
 
+/// Where a new document goes and how it looks.
+pub(super) struct Placement<'a> {
+    pub folder: FolderId,
+    pub name: &'a str,
+    pub color: Option<crate::library::Rgba>,
+    pub tags: Vec<crate::library::TagId>,
+    pub paper: BackgroundStyle,
+}
+
+/// Add what `entry`'s kind created to the library: the item, its
+/// content and the file it keeps.
+///
+/// # Errors
+/// The library refused the item.
+pub(super) async fn put_in_library(
+    lib: &mut crate::library::Library,
+    entry: &CatalogEntry,
+    created: &notin_plugin::create::Created<Vec<u8>>,
+    placed: Placement<'_>,
+) -> crate::library::Result<ItemId> {
+    let item = lib
+        .create_item(
+            placed.folder,
+            DocKind::plugin(entry.kind.clone()),
+            placed.name,
+            placed.color,
+            placed.tags,
+            placed.paper,
+        )
+        .await?;
+    content::write(item, &entry.kind, &created.content);
+    if let Some(attachment) = &created.attachment
+        && let Err(err) = lib.attach_pdf(item, attachment).await
+    {
+        tracing::error!("attach: {err}");
+    }
+    Ok(item)
+}
+
+/// Import `picked` into `folder` with its kind's defaults (its own name,
+/// no colour or tags), without a sheet: one document of a folder tree.
+///
+/// # Errors
+/// What the person should read: the file is not one the kind takes, or
+/// the library refused it.
+pub(super) async fn import_quietly(
+    entry: &CatalogEntry,
+    folder: FolderId,
+    picked: &crate::files::Picked,
+) -> Result<ItemId, String> {
+    let kind = crate::plugins::kind(&entry.kind).ok_or_else(|| tr!("flows-create-failed"))?;
+    let file = || ImportedFile {
+        name: &picked.name,
+        bytes: &picked.bytes,
+    };
+    let found = kind
+        .inspect(&entry.entry.id, file())
+        .map_err(|err| err.user_message())?;
+    let paper = BackgroundStyle::default();
+    let created = kind
+        .create(
+            &entry.entry.id,
+            CreationRequest {
+                name: &found.name,
+                paper: paper.into(),
+                paper_color: None,
+                file: Some(file()),
+                choice: None,
+            },
+        )
+        .map_err(|err| err.user_message())?;
+    let handle = crate::library::shared()
+        .await
+        .map_err(|err| err.user_message())?;
+    let name = if created.name.trim().is_empty() {
+        tr!("common-untitled")
+    } else {
+        created.name.clone()
+    };
+    let item = {
+        let mut lib = handle.lock().await;
+        let placed = Placement {
+            folder,
+            name: &name,
+            color: None,
+            tags: Vec::new(),
+            paper,
+        };
+        put_in_library(&mut lib, entry, &created, placed)
+            .await
+            .map_err(|err| err.user_message())?
+    };
+    settle(item, entry, created.attachment, false);
+    Ok(item)
+}
+
+/// After [`put_in_library`]: count the use and prepare the document in
+/// the background (cover and index of a kept file, or the index).
+pub(super) fn settle(
+    item: ItemId,
+    entry: &CatalogEntry,
+    attachment: Option<Vec<u8>>,
+    progress: bool,
+) {
+    record_use(entry);
+    if let Some(attachment) = attachment {
+        prepare_attachment(item, &entry.kind, attachment, progress);
+    } else {
+        crate::plugins::content::reindex(item);
+    }
+}
+
 /// Draw the cover of an attachment and index it in the background,
 /// showing progress while a large one prepares.
 #[sismo::function("flows::prepare_attachment")]
-fn prepare_attachment(item: ItemId, kind_id: &str, bytes: Vec<u8>) {
+fn prepare_attachment(item: ItemId, kind_id: &str, bytes: Vec<u8>, progress: bool) {
     let Some(kind) = crate::plugins::kind(kind_id) else {
         return;
     };
@@ -871,7 +1096,7 @@ fn prepare_attachment(item: ItemId, kind_id: &str, bytes: Vec<u8>) {
     let total = kind.index_size(&content);
     // Opened before the job starts: a fast machine may finish it before
     // the first look at its progress.
-    let done = (total >= LARGE_IMPORT).then(|| {
+    let done = (progress && total >= LARGE_IMPORT).then(|| {
         let done = State::create_in_scope(0u32, ScopeId::ROOT);
         Sheet::titled(tr!("flows-create-importing"))
             .child(Preparing {
@@ -978,7 +1203,7 @@ pub fn replace_attachment(item: ItemId, kind_id: String) {
         kind.forget(content::doc_id(item));
         content::attachment_replaced(item);
         content::notify_remote(item);
-        prepare_attachment(item, &kind_id, picked.bytes);
+        prepare_attachment(item, &kind_id, picked.bytes, true);
         Toasts::get().show(Toast::new(
             tr!("flows-create-replaced", "file" => picked.name.clone()),
         ));

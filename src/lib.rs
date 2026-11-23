@@ -45,6 +45,7 @@ pub mod deferred;
 pub mod diagnostics;
 pub mod doc;
 pub mod doc_op;
+pub mod dropped_files;
 pub mod editor;
 pub mod external;
 pub mod external_files;

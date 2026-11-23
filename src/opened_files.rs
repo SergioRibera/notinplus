@@ -21,7 +21,7 @@ use crate::files::Picked;
 
 /// What an opened file is, by extension.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ExternalKind {
+pub(crate) enum ExternalKind {
     /// A `.ntp` plugin package.
     Plugin,
     /// A `.notin` bundle.
@@ -94,26 +94,27 @@ async fn open(document: OpenedDocument) {
             return;
         }
     };
-    match ExternalKind::from(name.as_str()) {
-        ExternalKind::Plugin => crate::screens::settings::review_package(picked).await,
-        ExternalKind::Bundle => crate::flows::transfer::review_bundle(picked).await,
-        ExternalKind::Document => {
-            if crate::external_files::FileKind::of(&name).is_some() {
-                if let Some(file) = crate::external_files::ExternalFile::new(path, picked) {
-                    crate::external_files::show(file);
-                }
-                return;
-            }
-            let context = crate::flows::create::Context {
-                folder: crate::screens::home::Browse::get().folder(),
-                selection: Vec::new(),
-                folders: Vec::new(),
-            };
-            if !crate::flows::create::import_file(picked, context) {
-                failed(&name, &tr!("opened-files-unsupported"));
-            }
+    // Documents the app shows on their own open in their view; the rest
+    // (packages, plugins, documents only an import takes) wait their turn
+    // in the import queue, so two of them never replace each other's sheet.
+    if ExternalKind::from(name.as_str()) == ExternalKind::Document
+        && crate::external_files::FileKind::of(&name).is_some()
+    {
+        if let Some(file) = crate::external_files::ExternalFile::new(path, picked) {
+            crate::external_files::show(file);
         }
+        return;
     }
+    let context = crate::flows::create::Context {
+        folder: crate::screens::home::Browse::get().folder_now(),
+        ..crate::flows::create::Context::default()
+    };
+    crate::flows::import_queue::add(
+        vec![crate::flows::import_queue::Pending::Read(picked)],
+        &context,
+        crate::flows::import_queue::Source::Opened,
+        Vec::new(),
+    );
 }
 
 /// How long a read may take before the app stops waiting: a stalled

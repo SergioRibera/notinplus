@@ -382,9 +382,17 @@ impl Component for AppShell {
             sismo::scope!("app::announce_crash");
             crate::diagnostics::ui::announce_crash();
         });
+        // Files dragged over the window from the system (desktop).
+        let mut dragging = use_state(|| false);
         rect()
             .expanded()
             .background(notin_ui_kit::palette().bg)
+            .on_global_file_hover(move |_| dragging.set(true))
+            .on_global_file_hover_cancelled(move |_| dragging.set(false))
+            .on_file_drop(move |e: Event<FileEventData>| {
+                dragging.set(false);
+                crate::dropped_files::dropped(e.file_paths.clone());
+            })
             .on_sized({
                 let mut area = area;
                 move |e: Event<SizedEventData>| area.set(e.area)
@@ -414,6 +422,7 @@ impl Component for AppShell {
                 crate::components::modal::provide_host_modal_chrome();
                 crate::components::ModalPortal::new(area)
             })
+            .child(crate::dropped_files::DropOverlay { dragging })
             .child(notin_ui_kit::ToastHost::new(insets.bottom))
             .child(crate::follow::FollowFrame { top: insets.top })
     }

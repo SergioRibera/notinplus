@@ -83,6 +83,12 @@ pub struct FormSpec {
     pub trash: Option<FormAction>,
     /// "Move N selected documents inside" (new folder).
     pub move_selected: Option<usize>,
+    /// Runs when the sheet closes without submitting (×, Escape,
+    /// Cancel, the backdrop, or another sheet taking its place).
+    pub on_cancel: Option<FormAction>,
+    /// Text button on the left of the footer, with its label, when no
+    /// Trash takes that place (an import queue's "Cancel the rest").
+    pub leading: Option<(String, FormAction)>,
 }
 
 /// What the form collected.
@@ -109,6 +115,9 @@ pub fn open(spec: FormSpec, initial: FormValues, on_submit: impl Fn(FormValues) 
     if let (Some(icon), Some(color)) = (spec.kind_icon.clone(), spec.kind_color) {
         sheet = sheet.kind(icon, color);
     }
+    if let Some(cancel) = spec.on_cancel.clone() {
+        sheet = sheet.on_close(move |()| (cancel.0)());
+    }
     let footer_spec = spec.clone();
     let footer_submit = Rc::clone(&submit);
     sheet
@@ -119,6 +128,15 @@ pub fn open(spec: FormSpec, initial: FormValues, on_submit: impl Fn(FormValues) 
         })
         .footer(footer(&footer_spec, values, footer_submit))
         .open();
+}
+
+/// Close the form and hand `collected` over. The close is not a cancel:
+/// the sheet's `on_cancel` must not run.
+fn finish(submit: &dyn Fn(FormValues), collected: FormValues) {
+    let mut modal = ModalController::get();
+    modal.clear_top_on_close();
+    modal.close();
+    submit(collected);
 }
 
 #[derive(Clone)]
@@ -145,9 +163,7 @@ fn footer(
         Button::new(submit_label)
             .primary()
             .on_press(move |_| {
-                let collected = values.peek().clone();
-                ModalController::get().close();
-                submit(collected);
+                finish(&*submit, values.peek().clone());
             })
             .into_element(),
     ])
@@ -162,7 +178,12 @@ fn footer(
                     (trash.0)();
                 }),
         ),
-        None => base,
+        None => match spec.leading.clone() {
+            Some((label, action)) => {
+                base.leading(Button::new(label).ghost().on_press(move |_| (action.0)()))
+            }
+            None => base,
+        },
     }
 }
 
@@ -241,9 +262,7 @@ impl Component for Form {
                     .placeholder(spec.placeholder.clone())
                     .auto_focus(true)
                     .on_submit(move |_| {
-                        let collected = values.peek().clone();
-                        ModalController::get().close();
-                        (submit.0)(collected);
+                        finish(&*submit.0, values.peek().clone());
                     }),
             )
             .maybe_child(spec.paper.then_some(PaperPicker { values }))

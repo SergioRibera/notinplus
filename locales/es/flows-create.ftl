@@ -25,6 +25,12 @@ flows-create-submit = Crear y abrir
 # $kind: nombre del tipo.
 flows-create-import-kind = Importar { $kind }
 flows-create-import-submit = Importar y abrir
+flows-create-import-queued = Importar { $kind } ({ $position } de { $total })
+flows-create-import-submit-queued = Importar
+flows-create-import-cancel-rest = { $count ->
+    [one] Cancelar el siguiente
+   *[other] Cancelar los { $count } restantes
+}
 # $file: nombre del archivo.
 flows-create-read-failed = No se pudo leer «{ $file }»
 flows-create-pick-another = Elegir otro archivo

@@ -60,6 +60,12 @@ impl Browse {
         *self.folder.read()
     }
 
+    /// The folder on screen, without subscribing (event handlers).
+    #[must_use]
+    pub fn folder_now(&self) -> FolderId {
+        *self.folder.peek()
+    }
+
     /// Show `folder`.
     pub fn enter(mut self, folder: FolderId) {
         self.folder.set(folder);
