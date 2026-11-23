@@ -1,5 +1,6 @@
-//! A file dropped on an open document whose body is the host's markdown
-//! editor (a note, or any plugin page built on it).
+//! A file dropped on an open document that takes one: a body written in
+//! the host's markdown editor (a note, or any plugin page built on it) or
+//! a canvas, which gets text boxes and pictures in the middle of the view.
 //!
 //! One sheet asks how it joins the document, in the words `/ref`
 //! already uses:
@@ -12,7 +13,7 @@
 //! - **Insert as image**: pages of a PDF, as pictures kept with the
 //!   document.
 //!
-//! The insert goes through the document's editor, at the caret or after
+//! In a note the insert goes through its editor, at the caret or after
 //! the last block, as one undo step. Images are inserted without asking.
 
 use std::cell::Cell;
@@ -27,6 +28,7 @@ use notin_ui_kit::{
 };
 
 use super::create::import_entry;
+use crate::editor::images::StoredImage;
 use crate::files::Picked;
 use crate::library::ItemId;
 use crate::library::LinkKind;
@@ -359,9 +361,78 @@ fn parse_pages(text: &str, count: usize) -> Vec<usize> {
     pages
 }
 
-/// The editor showing `document`.
-fn editor_of(document: ItemId) -> Result<freya_markdown_editor::prelude::EditorController, String> {
-    crate::editor::body_editor(document).ok_or_else(|| tr!("flows-add-closed"))
+/// Where dropped content goes in an open document.
+#[derive(Clone)]
+pub(crate) enum Destination {
+    /// A body written in the host's markdown editor (a note): at the
+    /// caret, or after the last block.
+    Editor(freya_markdown_editor::prelude::EditorController),
+    /// A canvas on screen: text boxes and pictures at the middle of the
+    /// view.
+    Board(std::sync::Arc<std::sync::Mutex<crate::canvas::Board>>),
+}
+
+impl Destination {
+    /// Where `document` takes dropped content, when it is on screen and
+    /// takes any.
+    #[must_use]
+    pub(crate) fn of(document: ItemId) -> Option<Self> {
+        crate::editor::body_editor(document)
+            .map(Self::Editor)
+            .or_else(|| crate::active_boards::get_item(document).map(Self::Board))
+    }
+
+    /// [`Self::of`], or why there is none.
+    fn open(document: ItemId) -> Result<Self, String> {
+        Self::of(document).ok_or_else(|| tr!("flows-add-closed"))
+    }
+
+    fn insert_markdown(&self, markdown: &str) -> Result<(), String> {
+        let inserted = match self {
+            Self::Editor(editor) => {
+                let mounted = editor.is_mounted();
+                if mounted {
+                    editor.insert_markdown_anywhere(markdown);
+                }
+                mounted
+            }
+            Self::Board(board) => crate::canvas::lock(board).insert_text_at_view_center(markdown),
+        };
+        inserted
+            .then_some(())
+            .ok_or_else(|| tr!("flows-add-closed"))
+    }
+
+    /// Pictures stored with the document, with what they came from
+    /// (`source`, a `notein://` link) when it is kept.
+    fn insert_images(
+        &self,
+        images: &[StoredImage],
+        label: &str,
+        source: Option<&str>,
+    ) -> Result<(), String> {
+        match self {
+            Self::Editor(_) => {
+                let label = label.replace(['[', ']'], "");
+                let mut markdown: Vec<String> = images
+                    .iter()
+                    .map(|image| format!("![{label}]({})", image.url))
+                    .collect();
+                markdown.extend(source.map(|url| link_markdown(&label, url)));
+                self.insert_markdown(&markdown.join("\n\n"))
+            }
+            Self::Board(board) => {
+                let assets: Vec<(String, (u32, u32))> = images
+                    .iter()
+                    .map(|image| (image.name.clone(), image.size))
+                    .collect();
+                crate::canvas::lock(board)
+                    .add_snapshots_at_view_center(&assets, source)
+                    .then_some(())
+                    .ok_or_else(|| tr!("flows-add-closed"))
+            }
+        }
+    }
 }
 
 /// Import the file next to `document` and return its reference URL.
@@ -393,7 +464,7 @@ fn link_markdown(label: &str, url: &str) -> String {
 async fn reference(document: ItemId, picked: &Picked) -> Result<String, String> {
     let (_, url) = import_beside(document, picked).await?;
     let label = file_label(&picked.name);
-    editor_of(document)?.insert_markdown_anywhere(&link_markdown(&label, &url));
+    Destination::open(document)?.insert_markdown(&link_markdown(&label, &url))?;
     Ok(tr!("flows-add-done", "name" => label))
 }
 
@@ -467,7 +538,7 @@ async fn text(
         FileKind::Text | FileKind::Image => String::from_utf8_lossy(&picked.bytes).into_owned(),
     };
     let source = source_line(document, picked, asked).await?;
-    editor_of(document)?.insert_markdown_anywhere(&format!("{body}{source}"));
+    Destination::open(document)?.insert_markdown(&format!("{body}{source}"))?;
     Ok(tr!("flows-add-done", "name" => file_label(&picked.name)))
 }
 
@@ -496,28 +567,29 @@ async fn pages_as_images(
     .ok_or_else(|| tr!("flows-add-unreadable"))?;
     let images = crate::editor::images::ItemImages::new(document);
     let label = file_label(&picked.name);
-    let mut blocks = Vec::with_capacity(encoded.len());
-    for (png, page) in encoded.into_iter().zip(&asked.pages) {
-        let stored = images
-            .store(png)
-            .await
-            .map_err(|err| notin_plugin::UserMessage::user_message(&err))?;
-        blocks.push(format!("![{label} {}]({})", page + 1, stored.url));
+    let mut stored = Vec::with_capacity(encoded.len());
+    for png in encoded {
+        stored.push(
+            images
+                .store(png)
+                .await
+                .map_err(|err| notin_plugin::UserMessage::user_message(&err))?,
+        );
     }
-    let source = source_line(document, picked, asked).await?;
-    editor_of(document)?.insert_markdown_anywhere(&format!("{}{source}", blocks.join("\n\n")));
+    let source = if asked.keep_file {
+        Some(import_beside(document, picked).await?.1)
+    } else {
+        None
+    };
+    Destination::open(document)?.insert_images(&stored, &label, source.as_deref())?;
     Ok(tr!("flows-add-done", "name" => label))
 }
 
 async fn insert_image(document: ItemId, picked: &Picked) {
     let images = crate::editor::images::ItemImages::new(document);
     let result = match images.store(picked.bytes.clone()).await {
-        Ok(stored) => editor_of(document).map(|editor| {
-            editor.insert_markdown_anywhere(&format!(
-                "![{}]({})",
-                file_label(&picked.name).replace(['[', ']'], ""),
-                stored.url
-            ));
+        Ok(stored) => Destination::open(document).and_then(|destination| {
+            destination.insert_images(&[stored], &file_label(&picked.name), None)
         }),
         Err(err) => Err(notin_plugin::UserMessage::user_message(&err)),
     };
@@ -547,7 +619,11 @@ mod tests {
     #[test]
     fn page_ranges() {
         assert_eq!(parse_pages("1-3, 7", 10), [0, 1, 2, 6]);
-        assert_eq!(parse_pages("3-1", 10), [0, 1, 2], "a range written backwards");
+        assert_eq!(
+            parse_pages("3-1", 10),
+            [0, 1, 2],
+            "a range written backwards"
+        );
         assert_eq!(
             parse_pages("2, 2, 40", 10),
             [1],

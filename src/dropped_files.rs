@@ -4,8 +4,8 @@
 //! over the window the file is while it is dragged nor where it lands,
 //! so the destination comes from where the person is:
 //!
-//! - in a mesa whose focused document is written in the host's editor
-//!   (a note), the files go into that document ([`crate::flows`]
+//! - in a mesa whose focused document takes them (a note, a canvas),
+//!   the files go into that document ([`crate::flows`]
 //!   asks how);
 //! - elsewhere they are imported into the library folder on screen, a
 //!   folder as a folder tree.
@@ -26,12 +26,12 @@ use crate::flows::import_queue::{self, Pending, Source};
 use crate::library::{ItemId, WorkspaceId};
 use crate::route::Route;
 
-/// The focused document of mesa `id`, when its body is the host's
-/// editor and it is on screen.
+/// The focused document of mesa `id`, when it is on screen and takes
+/// dropped files (a note, a canvas).
 fn focused_body(id: WorkspaceId) -> Option<ItemId> {
     let data = crate::state::LibraryView::try_get()?.data()?;
     let item = crate::screens::mesa::Focus::of(data.workspace(id)?)?.item()?;
-    crate::editor::body_editor(item).map(|_| item)
+    crate::flows::add_to_document::Destination::of(item).map(|_| item)
 }
 
 /// What a drop does where the person is.
