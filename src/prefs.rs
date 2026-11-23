@@ -16,8 +16,9 @@
 //!
 //! ```text
 //! <data_dir>/notinplus/
-//!     prefs.bin                      // global toolbar prefs
-//!     editor.bin                     // markdown note editor prefs
+//!     local.bin                      // toolbar prefs ("prefs.bin") and
+//!                                    // editor prefs ("editor.bin"),
+//!                                    // see [`crate::persist`]
 //!     views/<item_id>.bin            // per-doc viewport sidecar
 //! ```
 //!
@@ -34,10 +35,8 @@ use crate::brush::{BrushKind, BrushPreset};
 use crate::canvas::{InputMode, Viewport};
 use crate::library::bodies;
 use crate::library::{ItemId, ViewSlot};
+use crate::persist::Persisted;
 
-// Bounded, so a forged length in what is read back is an error.
-const PREFS_FILE: &str = "prefs.bin";
-const EDITOR_PREFS_FILE: &str = "editor.bin";
 const VIEWS_SUBDIR: &str = "views";
 const VIEW_EXT: &str = "bin";
 /// Global toolbar prefs. `HashMap`-shaped state is serialised as
@@ -54,6 +53,10 @@ pub struct Prefs {
     pub input_mode_pan: bool,
     /// The writer's handwriting style, learned from beautified words.
     pub style: notin_beautify::StyleProfile,
+}
+
+impl Persisted for Prefs {
+    const FILE: &'static str = "prefs.bin";
 }
 
 impl Prefs {
@@ -79,6 +82,10 @@ impl Prefs {
 pub struct EditorPrefs {
     /// Show the markdown source of formatting around the caret.
     pub show_markdown_syntax: bool,
+}
+
+impl Persisted for EditorPrefs {
+    const FILE: &'static str = "editor.bin";
 }
 
 /// Per-doc view state (pan + zoom). Primitive fields so the encoded shape
@@ -111,11 +118,6 @@ impl DocView {
     }
 }
 
-#[must_use]
-fn prefs_path() -> PathBuf {
-    bodies::root_dir().join(PREFS_FILE)
-}
-
 /// Which view a viewport sidecar belongs to: the item alone (a
 /// standalone mount) or the item as shown by one pane of one mesa.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -137,47 +139,37 @@ fn view_path(key: ViewKey) -> PathBuf {
     )
 }
 
-/// Read [`Prefs`] from disk. Missing / corrupt payload → `Prefs::default`
+/// Read [`Prefs`]. Missing / corrupt payload → `Prefs::default`
 /// so a first-run or schema-bump never surfaces to the user as an error.
 #[must_use]
 #[sismo::function("prefs::load_prefs")]
 pub fn load_prefs() -> Prefs {
-    let Ok(bytes) = fs::read(prefs_path()) else {
-        return Prefs::default();
-    };
-    notin_plugin::decode::<Prefs>(&bytes).unwrap_or_default()
+    Prefs::load()
 }
 
-/// Atomically overwrite the prefs file.
+/// Store [`Prefs`].
 ///
 /// # Errors
 /// Encode / fs failures.
 #[sismo::function("prefs::save_prefs")]
 pub fn save_prefs(prefs: &Prefs) -> io::Result<()> {
-    let bytes =
-        notin_plugin::encode(prefs).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    write_atomic(&prefs_path(), &bytes)
+    prefs.save()
 }
 
 /// Read [`EditorPrefs`]. Missing / corrupt payload → defaults.
 #[must_use]
 #[sismo::function("prefs::load_editor_prefs")]
 pub fn load_editor_prefs() -> EditorPrefs {
-    let Ok(bytes) = fs::read(bodies::root_dir().join(EDITOR_PREFS_FILE)) else {
-        return EditorPrefs::default();
-    };
-    notin_plugin::decode::<EditorPrefs>(&bytes).unwrap_or_default()
+    EditorPrefs::load()
 }
 
-/// Atomically overwrite the editor prefs file.
+/// Store [`EditorPrefs`].
 ///
 /// # Errors
 /// Encode / fs failures.
 #[sismo::function("prefs::save_editor_prefs")]
 pub fn save_editor_prefs(prefs: EditorPrefs) -> io::Result<()> {
-    let bytes =
-        notin_plugin::encode(&prefs).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    write_atomic(&bodies::root_dir().join(EDITOR_PREFS_FILE), &bytes)
+    prefs.save()
 }
 
 /// Read the view sidecar for `key`. `None` when missing / corrupt.
