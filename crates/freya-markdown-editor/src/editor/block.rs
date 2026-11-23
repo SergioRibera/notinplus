@@ -1426,8 +1426,13 @@ impl Component for BlockView {
                         SvgViewer::new(freya::icons::lucide::grip_vertical())
                             .color(if hovered() {
                                 colors.muted
-                            } else {
+                            } else if TOUCH_FIRST {
                                 colors.muted.with_a(70)
+                            } else {
+                                // Out of the way until the pointer is over the
+                                // block; the column keeps its width so the text
+                                // does not move when it shows.
+                                Color::TRANSPARENT
                             })
                             .width(Size::px(14.))
                             .height(Size::px(16.)),
@@ -1466,6 +1471,10 @@ impl Component for BlockView {
             .into_element()
     }
 }
+
+/// Phones and tablets have no hover to reveal the drag handle: there it
+/// always shows, faint.
+const TOUCH_FIRST: bool = cfg!(any(target_os = "android", target_os = "ios"));
 
 /// Width of the drag handle column shown when blocks can be reordered.
 const HANDLE: f32 = 20.0;
