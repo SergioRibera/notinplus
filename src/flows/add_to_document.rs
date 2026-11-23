@@ -16,7 +16,6 @@
 //! In a note the insert goes through its editor, at the caret or after
 //! the last block, as one undo step. Images are inserted without asking.
 
-use std::cell::Cell;
 use std::path::PathBuf;
 
 use freya::prelude::*;
@@ -32,6 +31,7 @@ use crate::editor::images::StoredImage;
 use crate::files::Picked;
 use crate::library::ItemId;
 use crate::library::LinkKind;
+use crate::persist::Persisted;
 
 /// Most PDF pages one drop inserts as text.
 const MAX_TEXT_PAGES: usize = 50;
@@ -40,7 +40,9 @@ const MAX_IMAGE_PAGES: usize = 20;
 /// Pixels per point of a page inserted as an image.
 const PAGE_SCALE: f32 = 2.0;
 
-/// How the file joins the document.
+/// How the file joins the document. Remembered on disk by position:
+/// add new ones at the end.
+#[istmo::message]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Choice {
     Reference,
@@ -49,9 +51,49 @@ enum Choice {
     Image,
 }
 
-thread_local! {
-    /// The choice made last, offered first next time.
-    static LAST: Cell<Choice> = const { Cell::new(Choice::Reference) };
+/// The choice made last for each kind of document and kind of file, offered
+/// first next time (a note may want references and a canvas page images).
+#[istmo::message]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct LastChoices {
+    /// `<document kind>:<file kind>` and what was chosen.
+    by_pair: Vec<(String, Choice)>,
+}
+
+impl Persisted for LastChoices {
+    const FILE: &'static str = "drop-choices";
+}
+
+impl LastChoices {
+    fn get(&self, pair: &str) -> Option<Choice> {
+        self.by_pair
+            .iter()
+            .find(|(known, _)| known == pair)
+            .map(|(_, choice)| *choice)
+    }
+
+    fn remember(pair: String, choice: Choice) {
+        let mut last = Self::load();
+        last.by_pair.retain(|(known, _)| *known != pair);
+        last.by_pair.push((pair, choice));
+        if let Err(err) = last.save() {
+            tracing::warn!("saving the drop choice: {err}");
+        }
+    }
+}
+
+/// Key of the choice remembered for `kind` dropped on `document`.
+fn pair(document: ItemId, kind: FileKind) -> String {
+    let plugin = crate::state::LibraryView::try_get()
+        .and_then(|view| view.data())
+        .and_then(|data| data.item(document).map(|item| item.kind.plugin_id.clone()))
+        .unwrap_or_default();
+    let file = match kind {
+        FileKind::Pdf { .. } => "pdf",
+        FileKind::Text => "text",
+        FileKind::Image => "image",
+    };
+    format!("{plugin}:{file}")
 }
 
 /// What the dropped file is.
@@ -129,20 +171,21 @@ pub(super) async fn run(path: PathBuf, document: ItemId, position: usize, total:
         }
         return;
     }
-    let Some(asked) = ask(
-        &picked.name,
-        &target,
+    let Some(asked) = ask(Offer {
+        file: &picked.name,
+        document: &target,
         kind,
-        takes_images,
+        images: takes_images,
+        remembered: LastChoices::load().get(&pair(document, kind)),
         shared,
         position,
         total,
-    )
+    })
     .await
     else {
         return;
     };
-    LAST.with(|last| last.set(asked.choice));
+    LastChoices::remember(pair(document, kind), asked.choice);
     let inserted = match asked.choice {
         Choice::Reference => reference(document, &picked).await,
         Choice::Link => link(document, &picked).await,
@@ -288,17 +331,35 @@ struct Asked {
 }
 
 /// The sheet; `None` when it closed without inserting.
-async fn ask(
-    file: &str,
-    document: &str,
+/// What the sheet offers and says.
+struct Offer<'a> {
+    file: &'a str,
+    document: &'a str,
     kind: FileKind,
+    /// The document takes pictures.
     images: bool,
+    /// Chosen last time for this kind of document and file.
+    remembered: Option<Choice>,
+    /// The warning of a shared document.
     shared: Option<String>,
+    /// 1-based place in the queue, and its size.
     position: usize,
     total: usize,
-) -> Option<Asked> {
+}
+
+async fn ask(offer: Offer<'_>) -> Option<Asked> {
+    let Offer {
+        file,
+        document,
+        kind,
+        images,
+        remembered,
+        shared,
+        position,
+        total,
+    } = offer;
     let choices = kind.choices(images);
-    let first = LAST.with(Cell::get);
+    let first = remembered.unwrap_or(Choice::Reference);
     let choice = State::create_in_scope(
         if choices.contains(&first) {
             first
