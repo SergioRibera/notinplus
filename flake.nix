@@ -211,6 +211,7 @@
           inherit pkgs lib;
           inherit (windows) cargoNix;
           exe = "notin-pack.exe";
+          built = "notin_pack.exe";
         };
         prefixed = prefix: lib.mapAttrs' (name: value: lib.nameValuePair "${prefix}-${name}" value);
         packPackages =

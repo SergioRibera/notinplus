@@ -11,6 +11,8 @@
   lib,
   cargoNix,
   exe ? "notin-pack",
+  # The file the crate build leaves in `bin/`, when it differs from `exe`.
+  built ? exe,
 }:
 let
   manifest = lib.importTOML ../Cargo.toml;
@@ -24,7 +26,7 @@ let
   };
 
   drv = pkgs.runCommand "${pname}-${version}" { meta.mainProgram = pname; } ''
-    install -Dm755 ${crate}/bin/${exe} $out/bin/${exe}
+    install -Dm755 ${crate}/bin/${built} $out/bin/${exe}
   '';
 
   info = {

@@ -132,6 +132,17 @@ let
           # Only the exe ships; the cdylib and staticlib are the mobile entry.
           type = [ "rlib" ];
         };
+      # buildRustCrate renames `notin_pack` to the bin name `notin-pack`
+      # without the `.exe` the MSVC target adds, and fails. Built under the
+      # crate-style name, nix/pack.nix installs it as `notin-pack.exe`.
+      notin-plugin =
+        attrs:
+        perCrate.crateOverrides.notin-plugin attrs
+        // {
+          crateBin = map (bin: bin // { name = lib.replaceStrings [ "-" ] [ "_" ] bin.name; }) (
+            attrs.crateBin or [ ]
+          );
+        };
     };
     buildRustCrateForBuild = perCrate.buildRustCrateForPkgs;
     desktopCrate = perCrate.crate;
