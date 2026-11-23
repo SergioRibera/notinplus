@@ -141,6 +141,8 @@ let
 in
 {
   inherit xwinSdk;
+  # For other binaries of the workspace built for Windows (notin-pack).
+  cargoNix = cargoNixWindows;
   # The exe, next to the pdfium it loads.
   package =
     pkgs.runCommand "${pname}-windows-${version}"

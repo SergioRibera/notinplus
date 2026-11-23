@@ -113,8 +113,15 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # The plugin packaging tool, same version as the app (nix/pack.nix).
+      - name: Build notin-pack
+        run: nix build -L .#notin-pack-bundles -o result-pack
+
       - name: Stage artifacts
         run: bash .github/scripts/stage-bundles.sh result-bundles dist ${{ matrix.system }}
+
+      - name: Stage notin-pack
+        run: bash .github/scripts/stage-bundles.sh result-pack dist ${{ matrix.system }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -136,7 +143,7 @@ jobs:
         uses: ./.github/actions/attic-push
         with:
           push-enabled: ${{ steps.nix.outputs.push-enabled }}
-          paths: result-app result-bundles result-flatpak-kit
+          paths: result-app result-bundles result-flatpak-kit result-pack
           closure-of: .#notinplus
 
   # Cross-built from Linux: LLVM links the MSVC target against the xwin SDK
@@ -164,8 +171,14 @@ jobs:
       - name: Build NSIS / MSI / zip
         run: nix build -L .#windows-bundles -o result-bundles
 
+      - name: Build notin-pack
+        run: nix build -L .#notin-pack-windows-bundles -o result-pack
+
       - name: Stage artifacts
         run: bash .github/scripts/stage-bundles.sh result-bundles dist ${{ matrix.system }}
+
+      - name: Stage notin-pack
+        run: bash .github/scripts/stage-bundles.sh result-pack dist ${{ matrix.system }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -179,7 +192,7 @@ jobs:
         uses: ./.github/actions/attic-push
         with:
           push-enabled: ${{ steps.nix.outputs.push-enabled }}
-          paths: result-bundles
+          paths: result-bundles result-pack
           closure-of: .#notinplus-windows
 
   # nix-bundle-app emits a flatpak source kit; finishing it needs
@@ -432,6 +445,11 @@ jobs:
           - \`notin-relay_*.deb\` / \`notin-relay-*.rpm\`: installs and starts the \`notin-relay\` systemd service (UDP 7720, data in \`/var/lib/notin-relay\`).
           - \`notin-relay-*-linux.tar.gz\`: standalone binary.
           - Docker: \`docker run -p 7720:7720/udp -v relay:/data ghcr.io/sergioribera/notin-relay:${TAG#v} --port 7720 --data /data --advertise <public-host>\`
+
+          ### Plugin packaging (\`notin-pack\`)
+
+          - \`notin-pack-*-<system>.tar.gz\` / \`.zip\`: builds a \`.ntp\` plugin package for this release's SDK.
+          - In GitHub Actions: \`uses: SergioRibera/notinplus/plugin-action@$TAG\`.
           EOF
           } > NOTES.md
           head -60 NOTES.md

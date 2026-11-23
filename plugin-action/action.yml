@@ -1,0 +1,118 @@
+name: Pack a NotIn Plus plugin
+description: >-
+  Writes what a plugin adds and its library checksums into plugin.ntp.kdl
+  and builds the .ntp package, with the notin-pack of a NotIn Plus release.
+author: Sergio Ribera
+branding:
+  icon: package
+  color: purple
+
+inputs:
+  plugin-dir:
+    description: >-
+      Folder holding plugin.ntp.kdl and every library it lists, built
+      against the SDK of the same release. One of them must be for the
+      runner's system: notin-pack loads it to read what it registers.
+    required: true
+  output:
+    description: Path of the .ntp to write. Default `<id>-<version>.ntp` next to plugin-dir.
+    required: false
+    default: ""
+  version:
+    description: >-
+      Release whose notin-pack to use (`v0.1.0-alpha.6`). Default: the ref
+      this action is used at, when it is a release tag. Use the same
+      release as the SDK the plugin is built with.
+    required: false
+    default: ""
+
+outputs:
+  package:
+    description: Path of the .ntp written.
+    value: ${{ steps.pack.outputs.package }}
+
+runs:
+  using: composite
+  steps:
+    - id: tool
+      name: Download notin-pack
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_REPO: ${{ github.action_repository }}
+      run: |
+        set -euo pipefail
+        tag="${VERSION:-$ACTION_REF}"
+        case "$tag" in
+          v[0-9]*) ;;
+          *)
+            echo "::error::Set \`version\` to a release tag (v0.1.0-alpha.6), or use the action at one: '$tag' is not a release."
+            exit 1
+            ;;
+        esac
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64) system=x86_64-linux; ext=tar.gz ;;
+          Linux-ARM64) system=aarch64-linux; ext=tar.gz ;;
+          macOS-ARM64) system=aarch64-darwin; ext=tar.gz ;;
+          Windows-X64) system=x86_64-windows; ext=zip ;;
+          *)
+            echo "::error::No notin-pack build for $RUNNER_OS $RUNNER_ARCH."
+            exit 1
+            ;;
+        esac
+        repo="${ACTION_REPO:-SergioRibera/notinplus}"
+        name="notin-pack-${tag#v}-$system.$ext"
+        base="https://github.com/$repo/releases/download/$tag"
+        dir="$RUNNER_TEMP/notin-pack"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 -o "$dir/$name" "$base/$name"
+        curl -fsSL --retry 3 -o "$dir/SHA256SUMS" "$base/SHA256SUMS"
+        expected=$(awk -v f="$name" '$2 == f || $2 == "*"f {print $1}' "$dir/SHA256SUMS")
+        if command -v sha256sum >/dev/null 2>&1; then
+          actual=$(sha256sum "$dir/$name" | cut -d' ' -f1)
+        else
+          actual=$(shasum -a 256 "$dir/$name" | cut -d' ' -f1)
+        fi
+        if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+          echo "::error::$name does not match the release's SHA256SUMS."
+          exit 1
+        fi
+        mkdir -p "$dir/unpacked"
+        case "$ext" in
+          zip)
+            if command -v unzip >/dev/null 2>&1; then
+              unzip -q -o "$dir/$name" -d "$dir/unpacked"
+            else
+              pwsh -NoProfile -Command "Expand-Archive -Force -LiteralPath '$dir/$name' -DestinationPath '$dir/unpacked'"
+            fi
+            ;;
+          *) tar -xzf "$dir/$name" -C "$dir/unpacked" ;;
+        esac
+        # Linux archives keep it in opt/notin-pack/bin (next to its
+        # libraries), macOS in bin/, Windows at the archive root.
+        exe=$(find "$dir/unpacked" -type f \( -name notin-pack -o -name notin-pack.exe \) | sort | head -n 1)
+        if [ -z "$exe" ]; then
+          echo "::error::$name holds no notin-pack binary."
+          exit 1
+        fi
+        bindir=$(dirname "$exe")
+        # Windows reads GITHUB_PATH as Windows paths.
+        if command -v cygpath >/dev/null 2>&1; then bindir=$(cygpath -w "$bindir"); fi
+        echo "$bindir" >> "$GITHUB_PATH"
+
+    - id: pack
+      name: Pack
+      shell: bash
+      env:
+        PLUGIN_DIR: ${{ inputs.plugin-dir }}
+        OUTPUT: ${{ inputs.output }}
+      run: |
+        set -euo pipefail
+        notin-pack --version
+        args=("$PLUGIN_DIR")
+        if [ -n "$OUTPUT" ]; then args+=("$OUTPUT"); fi
+        log=$(notin-pack "${args[@]}")
+        echo "$log"
+        package=${log#packed }
+        echo "package=$package" >> "$GITHUB_OUTPUT"

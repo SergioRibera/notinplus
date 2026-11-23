@@ -200,6 +200,38 @@
           inherit pkgs lib;
           inherit (notinplus) perCrate;
         };
+        # notin-pack, the `.ntp` packaging tool for plugin authors
+        # (nix/pack.nix): `.#notin-pack`, `.#notin-pack-bundles` (tar.gz), and
+        # on x86_64-linux `.#notin-pack-windows-bundles` (zip).
+        pack = import ./nix/pack.nix {
+          inherit pkgs lib;
+          inherit (notinplus.perCrate) cargoNix;
+        };
+        packWindows = import ./nix/pack.nix {
+          inherit pkgs lib;
+          inherit (windows) cargoNix;
+          exe = "notin-pack.exe";
+        };
+        prefixed = prefix: lib.mapAttrs' (name: value: lib.nameValuePair "${prefix}-${name}" value);
+        packPackages =
+          prefixed "notin-pack" (mkBundles {
+            inherit (pack) drv info;
+            formats = [ "tar.gz" ];
+            name = pack.pname;
+          })
+          // { notin-pack = pack.drv; }
+          // lib.optionalAttrs (system == "x86_64-linux") (
+            prefixed "notin-pack-windows" (mkBundles {
+              inherit (packWindows) drv info;
+              formats = [ "zip" ];
+              name = packWindows.pname;
+              target = {
+                arch = "x86_64";
+                os = "windows";
+              };
+            })
+          );
+
         serverTarget = targets.server.${system} or null;
         relayPackages = lib.optionalAttrs (serverTarget != null) (
           lib.mapAttrs' (name: value: lib.nameValuePair "relay-${name}" value) (mkBundles {
@@ -243,7 +275,8 @@
             android-gradle = android.gradle;
           }
         )
-        // relayPackages;
+        // relayPackages
+        // packPackages;
 
         devShells.android = android.devShell;
 

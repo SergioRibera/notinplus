@@ -46,7 +46,9 @@ enum PackError {
 impl fmt::Display for PackError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Usage => f.write_str("usage: notin-pack <plugin folder> [<out.ntp>]"),
+            Self::Usage => f.write_str(
+                "usage: notin-pack <plugin folder> [<out.ntp>]\n       notin-pack --version",
+            ),
             Self::Read { path, error } => write!(f, "read {}: {error}", path.display()),
             Self::Write { path, error } => write!(f, "write {}: {error}", path.display()),
             Self::Manifest(err) => write!(f, "manifest: {err}"),
@@ -72,6 +74,16 @@ impl From<zip::result::ZipError> for PackError {
 }
 
 fn main() -> std::process::ExitCode {
+    // Which release it comes from and the plugin contract it loads, so a
+    // CI log shows what a package was built against.
+    if matches!(std::env::args().nth(1).as_deref(), Some("--version" | "-V")) {
+        println!(
+            "notin-pack {} (SDK ABI {})",
+            env!("CARGO_PKG_VERSION"),
+            loader::SDK_ABI_VERSION
+        );
+        return std::process::ExitCode::SUCCESS;
+    }
     match run() {
         Ok(out) => {
             println!("packed {}", out.display());

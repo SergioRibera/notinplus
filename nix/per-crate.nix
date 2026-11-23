@@ -56,6 +56,8 @@ let
     v4l2-sys-mit = _: bindgen;
     # cdylib: links Skia, whose GL and Wayland libraries must be found.
     notin-bible = _: { inherit buildInputs; };
+    # notin-pack (feature `pack`) links Skia through freya-core too.
+    notin-plugin = _: { inherit buildInputs; };
     notinplus = _: {
       inherit src;
       inherit buildInputs;

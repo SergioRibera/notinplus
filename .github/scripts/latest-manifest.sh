@@ -14,7 +14,8 @@
 #                   "size": 123, "sha256": "…" }, … ] }
 #
 # platform ∈ android | linux | macos | windows; arch ∈ x86_64 | aarch64 |
-# universal. Server artifacts (notin-relay) are left out — the manifest
+# universal. Server artifacts (notin-relay) and the plugin packaging tool
+# (notin-pack) are left out — the manifest
 # is for the app.
 set -euo pipefail
 shopt -s nullglob
@@ -37,7 +38,7 @@ arch_of() {
 # Prints "<platform> <kind>" or nothing for files the app doesn't install.
 classify() {
   case "$1" in
-    notin-relay*) ;;
+    notin-relay* | notin-pack*) ;;
     *.apk) echo "android apk" ;;
     *.AppImage) echo "linux appimage" ;;
     *.deb) echo "linux deb" ;;
