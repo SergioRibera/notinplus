@@ -137,7 +137,7 @@ impl BibleKind {
             action: cfg!(feature = "importer").then(|| KindAction {
                 id: DOWNLOAD_ORIGINALS.into(),
                 label: tr!("originals-card-download").into(),
-                icon: freya::icons::lucide::download(),
+                icon: freya_icons::lucide::download(),
             }),
         })
     }
