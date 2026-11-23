@@ -839,6 +839,9 @@ impl Component for BrushPopover {
                                 + t * (crate::canvas::SIZE_SCALE_MAX
                                     - crate::canvas::SIZE_SCALE_MIN);
                             lock(&size_board).set_current_size(scale);
+                            // The slider shows the board's size: without a
+                            // render it stays where it was while dragged.
+                            bump();
                         })
                         .value(percent),
                     ),
