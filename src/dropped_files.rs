@@ -2,9 +2,15 @@
 //!
 //! The window takes the drop as a whole: the system says neither where
 //! over the window the file is while it is dragged nor where it lands,
-//! so the destination comes from where the person is. In the library the
-//! files are imported into the folder on screen, through the import
-//! queue; a folder comes in as a folder tree.
+//! so the destination comes from where the person is:
+//!
+//! - in a mesa whose focused document is written in the host's editor
+//!   (a note), the files go into that document ([`crate::flows`]
+//!   asks how);
+//! - elsewhere they are imported into the library folder on screen, a
+//!   folder as a folder tree.
+//!
+//! Either way they pass through the import queue, one sheet at a time.
 //!
 //! While something is dragged over the window an overlay says what a
 //! drop will do.
@@ -17,13 +23,24 @@ use notin_ui_kit::{Toast, ToastTone, Toasts, palette};
 
 use crate::flows::create::Context;
 use crate::flows::import_queue::{self, Pending, Source};
+use crate::library::{ItemId, WorkspaceId};
 use crate::route::Route;
+
+/// The focused document of mesa `id`, when its body is the host's
+/// editor and it is on screen.
+fn focused_body(id: WorkspaceId) -> Option<ItemId> {
+    let data = crate::state::LibraryView::try_get()?.data()?;
+    let item = crate::screens::mesa::Focus::of(data.workspace(id)?)?.item()?;
+    crate::editor::body_editor(item).map(|_| item)
+}
 
 /// What a drop does where the person is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Target {
     /// Imported into the library folder on screen.
     Library,
+    /// Into the focused document, through its editor.
+    Document(ItemId),
     /// Nowhere (the trash).
     None,
 }
@@ -31,7 +48,8 @@ enum Target {
 impl Target {
     fn here() -> Self {
         match crate::app::global_router().current::<Route>() {
-            Route::Home | Route::Space { .. } => Self::Library,
+            Route::Home => Self::Library,
+            Route::Space { id } => focused_body(id).map_or(Self::Library, Self::Document),
             Route::Trash => Self::None,
         }
     }
@@ -67,6 +85,25 @@ pub(crate) fn dropped(paths: Vec<PathBuf>) {
                 .collect();
             import_queue::add(items, &context, Source::Dropped, Vec::new());
         }
+        Target::Document(document) => {
+            let mut refused = Vec::new();
+            let items = paths
+                .into_iter()
+                .filter_map(|path| {
+                    if std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir()) {
+                        refused.push(
+                            path.file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                        );
+                        None
+                    } else {
+                        Some(Pending::IntoDocument { path, document })
+                    }
+                })
+                .collect();
+            import_queue::add(items, &Context::default(), Source::Dropped, refused);
+        }
     }
 }
 
@@ -85,6 +122,13 @@ impl Component for DropOverlay {
         let p = palette();
         let text = match Target::here() {
             Target::Library => tr!("flows-import-drop-here"),
+            Target::Document(document) => tr!(
+                "flows-add-drop",
+                "document" => crate::state::LibraryView::try_get()
+                    .and_then(|view| view.data())
+                    .and_then(|data| data.item(document).map(|item| item.name.clone()))
+                    .unwrap_or_default()
+            ),
             Target::None => tr!("flows-import-drop-nowhere"),
         };
         // Percentages, not `fill`: an absolute child gets what the stacked

@@ -2,6 +2,7 @@
 //! library or opens a sheet calls into here, so a behaviour lives in
 //! one place whatever surface started it.
 
+mod add_to_document;
 pub mod create;
 pub mod export_as;
 pub mod forms;

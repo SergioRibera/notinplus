@@ -291,6 +291,13 @@ impl MarkdownEditor {
         self
     }
 
+    /// The controller given with [`Self::controller`], for hosts that
+    /// act on the editor from outside (inserting what was dropped on it).
+    #[must_use]
+    pub const fn controller_handle(&self) -> Option<EditorController> {
+        self.controller
+    }
+
     /// Force read only (`true`) or edit mode (`false`). When unset the
     /// controller's mode is used, so it can be toggled at runtime with
     /// [`EditorController::set_read_only`].

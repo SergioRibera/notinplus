@@ -39,3 +39,37 @@ flows-import-tree-submit = { $count ->
 flows-import-tree-empty = «{ $name }» no tiene documentos que se puedan importar.
 flows-import-tree-importing = Importando documentos
 flows-import-tree-progress = { $done } de { $total }
+
+## Un archivo soltado sobre un documento abierto (una nota).
+
+# $document: nombre del documento.
+flows-add-drop = Suelta para añadir a «{ $document }»
+# $name: el archivo soltado.
+flows-add-title = Añadir «{ $name }»
+flows-add-title-queued = Añadir «{ $name }» ({ $position } de { $total })
+flows-add-subtitle = A «{ $document }»
+flows-add-submit = Insertar
+flows-add-reference = Referencia
+flows-add-reference-detail = Lo importa y pone un enlace que lo abre.
+flows-add-link = Vincular
+flows-add-link-detail = Lo importa y lo vincula con este documento, sin tocar el texto.
+flows-add-text = Insertar el texto
+flows-add-text-detail = Pone aquí todo su texto.
+flows-add-text-pages-detail = Pone aquí el texto de las páginas que elijas.
+flows-add-image = Insertar como imagen
+flows-add-image-detail = Pone aquí las páginas que elijas como imágenes.
+flows-add-pages = Páginas
+# $count: páginas del PDF.
+flows-add-pages-field = Páginas (de { $count })
+flows-add-pages-placeholder = 1-3, 7
+flows-add-pages-hint = Hasta 50 páginas como texto y 20 como imágenes.
+flows-add-keep-file = Guardar también el PDF en la biblioteca
+flows-add-keep-file-on = Un enlace debajo de lo que insertes lo abre.
+flows-add-keep-file-off = Sin el PDF, lo que insertes no tendrá enlace a su origen.
+# $name: lo que se añadió.
+flows-add-done = «{ $name }» añadido
+flows-add-linked = «{ $name }» importado y vinculado
+flows-add-failed = No se pudo añadir «{ $name }»
+flows-add-closed = El documento se cerró.
+flows-add-unreadable = No se pudo leer el PDF.
+flows-add-no-text = Esas páginas no tienen texto que copiar. Prueba a insertarlas como imágenes.

@@ -1165,6 +1165,38 @@ impl EditorController {
         });
     }
 
+    /// [`Self::insert_markdown`] at the caret, or after the last block
+    /// when nobody is typing (something dropped on a note): one undo step
+    /// either way.
+    #[cfg_attr(
+        feature = "sismo",
+        sismo::function("markdown::ctl_insert_markdown_anywhere")
+    )]
+    pub fn insert_markdown_anywhere(&self, markdown: &str) {
+        if self.peek(|state| state.selection.is_some()) {
+            self.insert_markdown(markdown);
+            return;
+        }
+        self.update(|state| {
+            let parsed = Document::parse_with(markdown, &state.parse);
+            state.record(None);
+            let document = state.document_mut();
+            // An empty paragraph closing the note is where the caret
+            // rests, not content: the insert takes its place.
+            if let Some(last) = document.blocks().last()
+                && matches!(&last.kind, BlockKind::Paragraph(content) if content.is_empty())
+            {
+                let id = last.id;
+                document.remove(id);
+            }
+            for block in parsed.blocks() {
+                document.insert(usize::MAX, (**block).clone());
+            }
+            document.ensure_editable();
+            state.changed();
+        });
+    }
+
     /// Paste markdown at the caret: one paragraph is inserted inline, more
     /// blocks split the current one around them.
     #[cfg_attr(feature = "sismo", sismo::function("markdown::ctl_insert_markdown"))]

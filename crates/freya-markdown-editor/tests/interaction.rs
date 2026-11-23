@@ -218,6 +218,23 @@ fn a_transclusion_pasted_mid_paragraph_splits_it_and_keeps_typing_after() {
 }
 
 #[test]
+fn markdown_inserted_without_a_caret_goes_at_the_end_and_undoes_at_once() {
+    let mut harness = Harness::new("nota");
+    let controller = harness.controller;
+    harness.runner.run_in(|| {
+        controller.insert_markdown_anywhere("[Informe](app://doc)\n\n![p1](assets/a.png)");
+    });
+    harness.settle();
+    assert_eq!(
+        harness.value(),
+        "nota\n\n[Informe](app://doc)\n\n![p1](assets/a.png)\n"
+    );
+    harness.runner.run_in(|| controller.undo());
+    harness.settle();
+    assert_eq!(harness.value(), "nota\n");
+}
+
+#[test]
 fn a_transclusion_pasted_at_a_line_start_goes_before_it() {
     let mut harness = Harness::new("arriba\n\nabajo");
     let empty = harness.block(1);

@@ -36,6 +36,11 @@ pub enum Pending {
     Read(Picked),
     /// A folder whose documents are imported as a folder tree.
     Tree(PathBuf),
+    /// A file dropped on an open document, which takes it in.
+    IntoDocument {
+        path: PathBuf,
+        document: crate::library::ItemId,
+    },
 }
 
 /// Who handed the files over, which decides what they may be.
@@ -143,6 +148,10 @@ async fn take(waiting: Waiting, position: usize, total: usize) {
         Pending::Tree(path) => {
             let imported = super::import_tree::run(path, context.folder).await;
             record(imported, context.folder);
+            return;
+        }
+        Pending::IntoDocument { path, document } => {
+            super::add_to_document::run(path, document, position, total).await;
             return;
         }
         Pending::Read(picked) => picked,

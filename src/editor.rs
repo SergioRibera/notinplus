@@ -98,6 +98,26 @@ pub fn editor_on_board(
     configure_with(MarkdownEditor::new(value).controller(controller), sink)
 }
 
+thread_local! {
+    /// Editors of document bodies, by document, for what is dropped on
+    /// a document that is open: the host inserts it through the editor
+    /// (caret, undo, collaboration) instead of under it.
+    static BODY_EDITORS: std::cell::RefCell<std::collections::HashMap<crate::library::model::ItemId, Vec<EditorController>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// A mounted editor of `item`'s body: the one of the first pane showing
+/// it.
+#[must_use]
+pub(crate) fn body_editor(item: crate::library::model::ItemId) -> Option<EditorController> {
+    BODY_EDITORS.with(|editors| {
+        let mut editors = editors.borrow_mut();
+        let list = editors.get_mut(&item)?;
+        list.retain(EditorController::is_mounted);
+        list.first().copied()
+    })
+}
+
 /// [`configure`] for the body of `item`: its images load from the item's
 /// folder and new ones are stored there.
 #[must_use]
@@ -106,6 +126,14 @@ pub fn configure_for(
     editor: MarkdownEditor,
     item: crate::library::model::ItemId,
 ) -> MarkdownEditor {
+    if let Some(controller) = editor.controller_handle() {
+        BODY_EDITORS.with(|editors| {
+            let mut editors = editors.borrow_mut();
+            let list = editors.entry(item).or_default();
+            list.retain(|known| known.is_mounted() && *known != controller);
+            list.push(controller);
+        });
+    }
     let images = images::ItemImages::new(item);
     configure_with(editor, SnapshotSink::Note(item))
         .image_picker(images.picker())
