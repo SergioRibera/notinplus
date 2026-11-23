@@ -707,6 +707,8 @@ fn choose(
     sheet.open();
 }
 
+/// Read the file off the UI thread (a large PDF takes a while), then
+/// show its import sheet.
 #[sismo::function("flows::import_sheet")]
 fn import_sheet(
     entry: CatalogEntry,
@@ -715,23 +717,55 @@ fn import_sheet(
     landing: Landing,
     slot: Option<QueueSlot>,
 ) {
+    let Some(kind) = crate::plugins::kind(&entry.kind) else {
+        return;
+    };
+    let id = entry.entry.id.to_string();
+    spawn_in_window(traced!("task::flows::import_inspect", async move {
+        let (tx, rx) = flume::bounded(1);
+        let spawned = std::thread::Builder::new()
+            .name("import-inspect".into())
+            .spawn(move || {
+                sismo::scope!("flows::import_inspect");
+                let file = notin_plugin::create::ImportedFile {
+                    name: &picked.name,
+                    bytes: &picked.bytes,
+                };
+                let found = kind.inspect(&id, file).map_err(|err| err.user_message());
+                let _ = tx.send((found, picked));
+            });
+        if let Err(err) = spawned {
+            tracing::warn!("import inspect: {err}");
+            return;
+        }
+        if let Ok((found, picked)) = rx.recv_async().await {
+            show_import_sheet(entry, context, picked, landing, slot, found);
+        }
+    }));
+}
+
+#[sismo::function("flows::show_import_sheet")]
+fn show_import_sheet(
+    entry: CatalogEntry,
+    context: Context,
+    picked: crate::files::Picked,
+    landing: Landing,
+    slot: Option<QueueSlot>,
+    found: Result<notin_plugin::create::ImportPreview, String>,
+) {
     let p = palette();
     let Some(kind) = crate::plugins::kind(&entry.kind) else {
         return;
     };
-    let file = notin_plugin::create::ImportedFile {
-        name: &picked.name,
-        bytes: &picked.bytes,
-    };
-    let found = match kind.inspect(&entry.entry.id, file) {
+    let found = match found {
         Ok(found) => found,
-        Err(err) => {
+        Err(why) => {
             match &slot {
                 Some(slot) => {
-                    failed_toast(&picked.name, &err.user_message());
+                    failed_toast(&picked.name, &why);
                     (slot.on_done)(Outcome::Failed);
                 }
-                None => import_error(&entry, context, &picked.name, &err.user_message()),
+                None => import_error(&entry, context, &picked.name, &why),
             }
             return;
         }
