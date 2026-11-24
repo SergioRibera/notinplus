@@ -160,3 +160,55 @@ impl Component for DropOverlay {
             .into_element()
     }
 }
+
+/// Drops `istmo-drop` receives itself: on Wayland, where winit delivers
+/// none, from the compositor. They take the same way as Freya's
+/// `on_file_drop`, and `dragging` shows the same overlay while files
+/// hover. Elsewhere on desktop nothing arrives here.
+#[cfg(not(any(
+    target_os = "android",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos",
+    target_os = "visionos",
+)))]
+#[sismo::function("dropped_files::listen_system")]
+pub(crate) fn listen_system(mut dragging: State<bool>) {
+    use istmo_drop::{DragState, DropInbox, DropOptions, FileDropClient};
+
+    spawn_in_window(async move {
+        let listening = match FileDropClient::acquire() {
+            Ok(client) => client.listen(DropOptions::any().with_folders()).await,
+            Err(err) => Err(err),
+        };
+        if let Err(err) = listening {
+            tracing::warn!("system drops unavailable: {err}");
+            return;
+        }
+        let inbox = match DropInbox::acquire() {
+            Ok(inbox) => inbox,
+            Err(err) => {
+                tracing::warn!("system drops unavailable: {err}");
+                return;
+            }
+        };
+        let changes = inbox.drag_changes();
+        spawn_in_window(async move {
+            while let Ok(state) = changes.recv_async().await {
+                dragging.set(matches!(state, DragState::Over(_)));
+            }
+        });
+        let drops = inbox.stream();
+        while let Ok(drop) = drops.recv_async().await {
+            for skipped in &drop.skipped {
+                tracing::debug!(name = %skipped.display_name, reason = ?skipped.reason, "drop skipped");
+            }
+            dropped(
+                drop.files
+                    .into_iter()
+                    .map(|file| PathBuf::from(file.path))
+                    .collect(),
+            );
+        }
+    });
+}

@@ -386,6 +386,14 @@ impl Component for AppShell {
         });
         // Files dragged over the window from the system (desktop).
         let mut dragging = use_state(|| false);
+        #[cfg(not(any(
+            target_os = "android",
+            target_os = "ios",
+            target_os = "tvos",
+            target_os = "watchos",
+            target_os = "visionos",
+        )))]
+        use_hook(move || crate::dropped_files::listen_system(dragging));
         rect()
             .expanded()
             .background(notin_ui_kit::palette().bg)

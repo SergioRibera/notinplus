@@ -126,6 +126,7 @@ notin_i18n::catalog!();
 use istmo::plugins::{DeepLinks, Documents, SafeArea, SystemInfoClient};
 use istmo_camera::CameraClient;
 use istmo_data_store::DataStoreClient;
+use istmo_drop::FileDropClient;
 use istmo_file_picker::FilePickerClient;
 use istmo_installer::InstallerClient;
 use istmo_opener::OpenerClient;
@@ -133,7 +134,7 @@ use istmo_pen::PenClient;
 use istmo_share::ShareClient;
 
 istmo::runtime!(
-    plugins: [PenClient, SafeArea, DeepLinks, Documents, SystemInfoClient, FilePickerClient, DataStoreClient, ShareClient, CameraClient, OpenerClient, InstallerClient],
+    plugins: [PenClient, SafeArea, DeepLinks, Documents, SystemInfoClient, FilePickerClient, DataStoreClient, ShareClient, CameraClient, OpenerClient, InstallerClient, FileDropClient],
 );
 
 #[cfg(any(

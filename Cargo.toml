@@ -49,6 +49,7 @@ istmo-share = "0.1.1-alpha.6"
 istmo-camera = "0.1.1-alpha.6"
 rqrr = "0.10"
 istmo-opener = "0.1.1-alpha.6"
+istmo-drop = "0.1.1-alpha.6"
 freya = { version = "=0.5.0-rc.13", features = ["router", "icons", "icons-lucide"] }
 freya-engine = "=0.5.0-rc.13"
 freya-components = "=0.5.0-rc.13"
@@ -128,6 +129,24 @@ istmo-build = "0.1.1-alpha.6"
 notin-i18n = { version = "0.1.0-alpha.5", path = "crates/notin-i18n", features = ["build"] }
 
 [patch.crates-io]
+# istmo from the sibling checkout until the release that carries
+# istmo-drop (Wayland drops) and the desktop deep links is published.
+istmo = { path = "../istmo" }
+istmo-android = { path = "../istmo/crates/android" }
+istmo-build = { path = "../istmo/crates/build" }
+istmo-core = { path = "../istmo/crates/core" }
+istmo-ios = { path = "../istmo/crates/ios" }
+istmo-macros = { path = "../istmo/crates/macros" }
+istmo-plugins = { path = "../istmo/crates/plugins" }
+istmo-plugins-schema = { path = "../istmo/crates/plugins-schema" }
+istmo-window = { path = "../istmo/crates/window" }
+istmo-camera = { path = "../istmo/plugins/camera" }
+istmo-data-store = { path = "../istmo/plugins/data-store" }
+istmo-drop = { path = "../istmo/plugins/drop" }
+istmo-file-picker = { path = "../istmo/plugins/file-picker" }
+istmo-pen = { path = "../istmo/plugins/istmo-pen" }
+istmo-opener = { path = "../istmo/plugins/opener" }
+istmo-share = { path = "../istmo/plugins/share" }
 winit ={ git = "https://github.com/SergioRibera/winit", branch = "notein-native-input" }
 # Touch editing and soft keyboard work, on top of freya 0.5.0-rc.13 (main).
 freya = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
