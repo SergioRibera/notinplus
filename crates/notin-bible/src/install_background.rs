@@ -343,14 +343,30 @@ pub(crate) fn run(
     }
 
     let desc_url = format!("{BIBLIONLABS_BASE}/bibles/{bible_id}/manifest.json");
-    let books_template = format!("{BIBLIONLABS_BASE}/bibles/{{bible_id}}/books/{{book}}.json");
+    // Also caches the catalogue the fetch.bible book list is read from.
     let meta = catalogue_meta(&client, &cache_dir, bible_id);
+    // Translations the app hosts itself come from its own repository with a
+    // manifest; the rest of the catalogue from fetch.bible, book by book.
+    let (books, books_template) = if biblionlabs::find_extra(bible_id).is_some() {
+        (
+            biblionlabs::Books::Manifest(&desc_url),
+            format!("{BIBLIONLABS_BASE}/bibles/{{bible_id}}/books/{{book}}.json"),
+        )
+    } else {
+        match biblionlabs::catalogue_books(&cache_dir, bible_id) {
+            Ok(ids) => (
+                biblionlabs::Books::Listed(ids),
+                biblionlabs::FETCH_BIBLE_BOOK_URL.to_owned(),
+            ),
+            Err(e) => return fail(progress, e),
+        }
+    };
     let install = biblionlabs::Install {
         db,
         client: &client,
         bible_id,
         cache_dir: &cache_dir,
-        desc_url: &desc_url,
+        books,
         books_url_template: &books_template,
         cache_ttl: CACHE_TTL,
         meta: &meta,
@@ -701,7 +717,7 @@ fn refresh(db: &Db, config: &SharedConfig, bible_id: &str, stored: u32) {
         client: &client,
         bible_id,
         cache_dir: &cache_dir,
-        desc_url: &desc_url,
+        books: biblionlabs::Books::Manifest(&desc_url),
         books_url_template: &books_template,
         cache_ttl: CACHE_TTL,
         meta: &meta,

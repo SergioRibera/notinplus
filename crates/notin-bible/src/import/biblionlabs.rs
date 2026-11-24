@@ -297,13 +297,25 @@ pub struct BibleMeta {
 ///
 /// Each file is fetched again only when its cached copy is older than
 /// `cache_ttl`.
+/// Where an install learns which books a translation has.
+#[derive(Debug, Clone)]
+pub enum Books<'a> {
+    /// A per-Bible manifest at this URL (biblionlabs: book names in reading
+    /// order, headings, a revision).
+    Manifest(&'a str),
+    /// These book ids, from the fetch.bible catalogue, which has no
+    /// per-Bible manifest; each book file names itself.
+    Listed(Vec<String>),
+}
+
 #[derive(Debug)]
 pub struct Install<'a> {
     pub db: &'a Db,
     pub client: &'a Client,
     pub bible_id: &'a str,
     pub cache_dir: &'a Path,
-    pub desc_url: &'a str,
+    /// Where the list of books comes from.
+    pub books: Books<'a>,
     /// Book URL with `{bible_id}` and `{book}` placeholders.
     pub books_url_template: &'a str,
     pub cache_ttl: Duration,
@@ -398,14 +410,25 @@ impl Install<'_> {
     #[cfg_attr(feature = "sismo", sismo::function("bible::import_manifest"))]
     fn manifest(&self, bible_dir: &Path) -> Result<BibleDesc> {
         std::fs::create_dir_all(bible_dir)?;
-        let desc_path = bible_dir.join("manifest.json");
-        fetch_if_stale(self.client, self.desc_url, &desc_path, self.ttl())?;
-        let desc_bytes = std::fs::read(&desc_path)?;
-        let mut desc: BibleDesc =
-            serde_json::from_slice(&desc_bytes).map_err(|e| ImportError::Json {
-                context: format!("{} desc", self.bible_id),
-                source: e,
-            })?;
+        let mut desc: BibleDesc = match &self.books {
+            Books::Manifest(url) => {
+                let desc_path = bible_dir.join("manifest.json");
+                fetch_if_stale(self.client, url, &desc_path, self.ttl())?;
+                let desc_bytes = std::fs::read(&desc_path)?;
+                serde_json::from_slice(&desc_bytes).map_err(|e| ImportError::Json {
+                    context: format!("{} desc", self.bible_id),
+                    source: e,
+                })?
+            }
+            Books::Listed(ids) => BibleDesc {
+                book_names: BookNames(
+                    ids.iter()
+                        .map(|id| (id.clone(), BookName::default()))
+                        .collect(),
+                ),
+                ..BibleDesc::default()
+            },
+        };
         let meta = self.meta;
         if desc.name_local.is_none() {
             desc.name_local.clone_from(&meta.name_local);
@@ -487,6 +510,17 @@ impl Install<'_> {
             let (n, extras) = insert_book_contents(&tx, self.bible_id, book_id, &book_doc)
                 .map_err(crate::db::DbError::from)?;
             insert_headers(&tx, self.bible_id, book_id, desc).map_err(crate::db::DbError::from)?;
+            // A listed book had no name before its file came: take the
+            // file's own.
+            if desc
+                .book_names
+                .get(book_id)
+                .is_none_or(|name| name.normal.is_empty())
+                && !book_doc.name.normal.is_empty()
+            {
+                name_book(&tx, self.bible_id, book_id, &book_doc.name)
+                    .map_err(crate::db::DbError::from)?;
+            }
             tx.commit().map_err(crate::db::DbError::from)?;
             Ok((n, extras))
         })?;
@@ -694,6 +728,30 @@ fn upsert_bible(
              name_local = excluded.name_local,
              language = excluded.language",
         params![bible_id, abbrev, name_local, language],
+    )?;
+    Ok(())
+}
+
+/// Give `book_id` of `bible_id` the name its own file carries.
+fn name_book(
+    conn: &rusqlite::Connection,
+    bible_id: &str,
+    book_id: &str,
+    name: &BookName,
+) -> rusqlite::Result<()> {
+    let long = if name.long.is_empty() {
+        &name.normal
+    } else {
+        &name.long
+    };
+    let abbrev = if name.abbrev.is_empty() {
+        &name.normal
+    } else {
+        &name.abbrev
+    };
+    conn.execute(
+        "UPDATE books SET name = ?3, abbrev = ?4 WHERE bible_id = ?1 AND book_id = ?2",
+        params![bible_id, book_id, long, abbrev],
     )?;
     Ok(())
 }
@@ -1030,6 +1088,56 @@ pub fn find_extra(id: &str) -> Option<&'static ExtraBible> {
 }
 
 // ─── Catalogue helpers ────────────────────────────────────────────
+
+/// Book file of a fetch.bible translation: `{bible_id}` and `{book}` filled
+/// in by the installer.
+pub const FETCH_BIBLE_BOOK_URL: &str = "https://v1.fetch.bible/bibles/{bible_id}/txt/{book}.json";
+
+/// Books of `bible_id` in reading order, from the fetch.bible catalogue
+/// cached in `cache_dir` by [`load_catalogue`].
+///
+/// # Errors
+/// The catalogue is not cached or does not list `bible_id`.
+pub fn catalogue_books(cache_dir: &Path, bible_id: &str) -> Result<Vec<String>> {
+    let bytes = std::fs::read(cache_dir.join("manifest.json"))?;
+    let catalogue: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| ImportError::Json {
+            context: "catalogue".into(),
+            source: e,
+        })?;
+    books_listed(&catalogue, bible_id).ok_or_else(|| ImportError::Format {
+        reason: format!("{bible_id} is not in the catalogue"),
+    })
+}
+
+/// `books_ordered`, kept to what `bibles.<id>.books_ot` / `books_nt` say:
+/// `true` for the whole testament, or the ids it has. The first 39 of the
+/// order are the Old Testament.
+fn books_listed(catalogue: &serde_json::Value, bible_id: &str) -> Option<Vec<String>> {
+    const OLD_TESTAMENT: usize = 39;
+    let entry = catalogue.get("bibles")?.get(bible_id)?;
+    let has = |key: &str, book: &str| match entry.get(key) {
+        Some(serde_json::Value::Bool(all)) => *all,
+        Some(serde_json::Value::Array(ids)) => ids.iter().any(|id| id.as_str() == Some(book)),
+        _ => false,
+    };
+    let books: Vec<String> = catalogue
+        .get("books_ordered")?
+        .as_array()?
+        .iter()
+        .enumerate()
+        .filter_map(|(index, book)| {
+            let book = book.as_str()?;
+            let testament = if index < OLD_TESTAMENT {
+                "books_ot"
+            } else {
+                "books_nt"
+            };
+            has(testament, book).then(|| book.to_owned())
+        })
+        .collect();
+    (!books.is_empty()).then_some(books)
+}
 
 /// Load the top-level manifest from `cache_dir/manifest.json`, fetching
 /// via HTTP when the cache is stale. Returns the parsed value so the UI
@@ -1416,5 +1524,56 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn catalogue_books_follow_each_testament() {
+        let mut order: Vec<String> = (0..39).map(|i| format!("ot{i}")).collect();
+        order.extend(["mat".to_owned(), "mrk".to_owned()]);
+        let catalogue = json!({
+            "books_ordered": order,
+            "bibles": {
+                "eng_bsb": { "books_ot": true, "books_nt": true },
+                "aab_wft": { "books_ot": [], "books_nt": ["mrk"] }
+            }
+        });
+        assert_eq!(books_listed(&catalogue, "eng_bsb").unwrap().len(), 41);
+        assert_eq!(books_listed(&catalogue, "aab_wft").unwrap(), ["mrk"]);
+        assert!(books_listed(&catalogue, "missing").is_none());
+    }
+
+    /// Downloads from fetch.bible: `cargo test -p notin-bible --all-features -- --ignored fetch_bible`.
+    #[test]
+    #[ignore = "network"]
+    fn fetch_bible_books_install_with_their_layout() {
+        let db = Db::in_memory().unwrap();
+        let cache = std::env::temp_dir().join(format!("notin-bible-fetch-{}", std::process::id()));
+        let client = Client::builder()
+            .user_agent("notin-bible/test")
+            .build()
+            .unwrap();
+        let meta = BibleMeta::default();
+        let report = Install {
+            db: &db,
+            client: &client,
+            bible_id: "eng_bsb",
+            cache_dir: &cache,
+            books: Books::Listed(vec!["psa".into()]),
+            books_url_template: FETCH_BIBLE_BOOK_URL,
+            cache_ttl: Duration::from_secs(60),
+            meta: &meta,
+            refresh: None,
+        }
+        .run(|_| {})
+        .expect("install");
+        assert!(report.inserted > 2000 && report.headings && report.notes);
+        let chapter = db.load_chapter("eng_bsb", "psa", 23).unwrap();
+        assert!(
+            chapter.headers.iter().any(|h| h.level == 3),
+            "the psalm title"
+        );
+        assert!(chapter.verses.iter().any(|v| !v.line_breaks.is_empty()));
+        assert_eq!(db.list_books("eng_bsb").unwrap()[0].name, "Psalm");
+        let _ = std::fs::remove_dir_all(cache);
     }
 }
