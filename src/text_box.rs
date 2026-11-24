@@ -115,9 +115,31 @@ impl TextFrame {
     }
 }
 
-/// [`TextBox::color`] that follows the theme instead of naming a colour.
+/// [`TextBox::color`] that follows the paper instead of naming a colour:
+/// [`auto_text_color`].
 /// Fully transparent text would never be readable, so the value is free.
 pub const AUTO_TEXT_COLOR: [u8; 4] = [0; 4];
+
+/// Whether `paper` (RGBA) is dark enough for light text.
+#[must_use]
+pub fn on_dark([r, g, b, a]: [u8; 4]) -> bool {
+    let luma = 0.0722f32.mul_add(
+        f32::from(b),
+        0.2126f32.mul_add(f32::from(r), 0.7152 * f32::from(g)),
+    );
+    a > 0 && luma < 128.0
+}
+
+/// Colour of text that follows the paper: the light editor theme's on
+/// light paper, the dark one's on dark paper. Exports pick the same.
+#[must_use]
+pub fn auto_text_color(paper: [u8; 4]) -> freya::prelude::Color {
+    if on_dark(paper) {
+        freya_markdown_editor::EditorTheme::dark().colors.text
+    } else {
+        freya_markdown_editor::EditorTheme::light().colors.text
+    }
+}
 
 /// Markdown text laid out on the canvas.
 #[istmo::message]

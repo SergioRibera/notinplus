@@ -160,7 +160,7 @@ impl LaidText {
     /// lightness picks the text colour of boxes that follow the theme.
     #[sismo::function("flatten::lay_text")]
     fn new(text: &TextBox, paper: [u8; 4]) -> Self {
-        let base = if on_dark(paper) {
+        let base = if crate::text_box::on_dark(paper) {
             EditorTheme::dark()
         } else {
             EditorTheme::light()
@@ -198,13 +198,6 @@ impl LaidText {
 
 /// Whether `paper` (RGBA) is dark enough to need light text. Transparent
 /// paper is read as white, the page most exports land on.
-fn on_dark([r, g, b, a]: [u8; 4]) -> bool {
-    let luma = 0.0722f32.mul_add(
-        f32::from(b),
-        0.2126f32.mul_add(f32::from(r), 0.7152 * f32::from(g)),
-    );
-    a > 0 && luma < 128.0
-}
 
 #[sismo::function("flatten::load_image")]
 fn load_image(item: ItemId, image: &ImageBox) -> Option<SkImage> {

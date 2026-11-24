@@ -74,23 +74,37 @@ impl Prefs {
     }
 }
 
-/// Per-doc view state (pan + zoom). Primitive fields so the encoded shape
-/// is independent of [`Viewport`]'s derive stance.
+/// Per-doc view state: pan, zoom and the colour new text boxes start
+/// with. Primitive fields so the encoded shape is independent of
+/// [`Viewport`]'s derive stance. Fields only ever go at the end: older
+/// builds read the leading ones and ignore the rest.
 #[istmo::message]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DocView {
     pub tx: f32,
     pub ty: f32,
     pub scale: f32,
+    /// Last text colour picked on this canvas; `None` follows the paper.
+    pub text_color: Option<[u8; 4]>,
+}
+
+/// [`DocView`] as written before it carried a text colour.
+#[istmo::message]
+#[derive(Clone, Copy, Debug)]
+struct LegacyDocView {
+    tx: f32,
+    ty: f32,
+    scale: f32,
 }
 
 impl DocView {
     #[must_use]
-    pub const fn from_viewport(v: Viewport) -> Self {
+    pub const fn from_viewport(v: Viewport, text_color: Option<[u8; 4]>) -> Self {
         Self {
             tx: v.tx,
             ty: v.ty,
             scale: v.scale,
+            text_color,
         }
     }
 
@@ -147,7 +161,20 @@ pub fn save_prefs(prefs: &Prefs) -> io::Result<()> {
 #[sismo::function("prefs::load_view")]
 pub fn load_view(key: ViewKey) -> Option<DocView> {
     let bytes = fs::read(view_path(key)).ok()?;
-    notin_plugin::decode::<DocView>(&bytes).ok()
+    decode_view(&bytes)
+}
+
+/// A view sidecar, current or from before the text colour.
+fn decode_view(bytes: &[u8]) -> Option<DocView> {
+    notin_plugin::decode::<DocView>(bytes).ok().or_else(|| {
+        let old = notin_plugin::decode::<LegacyDocView>(bytes).ok()?;
+        Some(DocView {
+            tx: old.tx,
+            ty: old.ty,
+            scale: old.scale,
+            text_color: None,
+        })
+    })
 }
 
 /// Atomically overwrite the view sidecar for `key`.
@@ -176,4 +203,35 @@ fn write_atomic(dest: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
     tmp.set_file_name(with_ext);
     fs::write(&tmp, bytes)?;
     fs::rename(&tmp, dest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn views_saved_before_the_text_colour_still_load() {
+        let old = notin_plugin::encode(&LegacyDocView {
+            tx: 1.0,
+            ty: 2.0,
+            scale: 3.0,
+        })
+        .expect("encode");
+        let view = decode_view(&old).expect("legacy view");
+        assert_eq!((view.tx, view.ty, view.scale), (1.0, 2.0, 3.0));
+        assert_eq!(view.text_color, None);
+
+        let new = notin_plugin::encode(&DocView {
+            text_color: Some([1, 2, 3, 255]),
+            ..view
+        })
+        .expect("encode");
+        assert_eq!(
+            decode_view(&new).expect("view").text_color,
+            Some([1, 2, 3, 255])
+        );
+        // Older builds read the leading fields and ignore the colour.
+        let read_by_old = notin_plugin::decode::<LegacyDocView>(&new).expect("old reader");
+        assert_eq!(read_by_old.scale, 3.0);
+    }
 }

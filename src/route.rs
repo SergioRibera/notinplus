@@ -194,6 +194,7 @@ fn load_doc_into_board(mount: CanvasMount, board: Arc<Mutex<Board>>) {
                 })
                 .unwrap_or_default();
             guard.set_viewport(next_view);
+            guard.set_text_color(saved_view.and_then(|v| v.text_color));
             if let Some(id) = id {
                 let (tx, rx) = flume::unbounded::<()>();
                 let (view_tx, view_rx) = flume::unbounded::<()>();
@@ -375,7 +376,7 @@ fn spawn_view_worker(key: prefs::ViewKey, board: Arc<Mutex<Board>>, rx: flume::R
                 if let Some((wx, wy)) = guard.world_center() {
                     presence.publish(encode_view(wx, wy, guard.viewport().scale));
                 }
-                prefs::DocView::from_viewport(guard.viewport())
+                prefs::DocView::from_viewport(guard.viewport(), guard.text_color())
             };
             if let Err(err) = prefs::save_view(key, view) {
                 tracing::error!("save_view item={:?}: {err}", key.item);

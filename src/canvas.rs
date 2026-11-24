@@ -231,6 +231,9 @@ pub struct Board {
     /// by a per-doc worker that writes the view sidecar. Separate from
     /// `commit_tx` so pan/zoom churn does not rewrite the whole doc.
     view_tx: Option<flume::Sender<()>>,
+    /// Colour new text boxes start with: the last one picked on this
+    /// canvas, kept with its view. `None` follows the paper.
+    text_color: Option<[u8; 4]>,
     /// Live pointer position in surface pixels — pen hover, pen
     /// contact, or mouse move. Drives the overlay disc rendered in the
     /// paint pass so the user can gauge brush / eraser radius against
@@ -478,6 +481,7 @@ impl Default for Board {
             commit_tx: None,
             prefs_tx: None,
             view_tx: None,
+            text_color: None,
             pointer: None,
             input_mode: InputMode::Draw,
             viewport: Viewport::default(),
@@ -537,6 +541,8 @@ impl Board {
     pub fn set_background(&mut self, background: Arc<dyn CanvasBackground>) {
         self.background = background;
         self.ink_rev += 1;
+        // Boxes that follow the paper change colour with it.
+        self.touch_text_scene();
         self.notify();
     }
 

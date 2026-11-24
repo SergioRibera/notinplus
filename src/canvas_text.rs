@@ -103,15 +103,25 @@ impl TextEditorSlot {
 /// Theme for a box whose body colour is `color` (RGBA, `None` for the
 /// theme's own) at viewport `scale`.
 #[sismo::function("canvas_text::theme")]
-fn canvas_theme(color: Option<[u8; 4]>, scale: f32) -> EditorTheme {
+fn canvas_theme(color: Option<[u8; 4]>, scale: f32, paper: Option<[u8; 4]>) -> EditorTheme {
     let base = crate::editor::theme(&notin_ui_kit::palette());
     let mut theme = base.clone().zoomed(TEXT_BASE_SIZE / base.body_size * scale);
     if let Some([r, g, b, a]) = color {
         theme = theme.tinted(Color::from_argb(a, r, g, b));
+    } else if let Some(paper) = paper {
+        // Black or white by the paper, not the app theme: a dark app over
+        // white paper still writes dark text.
+        theme = theme.tinted(crate::text_box::auto_text_color(paper));
     }
     theme.colors.surface = Color::TRANSPARENT;
     theme.fonts.insert(0, FONT_FAMILY.into());
     theme
+}
+
+/// The paper colour of `board`, when its background has a plain one.
+fn paper_of(board: &Board) -> Option<[u8; 4]> {
+    let color = board.background().viewport_backdrop()?;
+    Some([color.r(), color.g(), color.b(), color.a()])
 }
 
 /// Canvas passes plus the text boxes between them. Fills the drawing
@@ -149,6 +159,8 @@ struct View {
     ty: f32,
     scale: f32,
     origin: (f32, f32),
+    /// Canvas paper (RGBA), which picks the colour of boxes that follow it.
+    paper: Option<[u8; 4]>,
 }
 
 impl View {
@@ -191,6 +203,7 @@ impl Component for CanvasLayers {
             ty: vp.ty,
             scale: vp.scale,
             origin: *origin.read(),
+            paper: paper_of(&lock(&board)),
         };
         let passes = PaintPass::split(scene.paint_passes());
         let text_layers: Vec<&TextLayerView> = scene.text_layers().collect();
@@ -481,7 +494,7 @@ impl Component for CanvasTextBox {
         let view = self.view;
         let frame = text.frame;
         let (left, top) = view.to_screen(frame.x, frame.y);
-        let theme = canvas_theme(text.custom_color(), view.scale);
+        let theme = canvas_theme(text.custom_color(), view.scale, view.paper);
         let id = text.id;
         let board = Arc::clone(&self.board);
         let body = if self.editing {
@@ -1298,10 +1311,12 @@ impl Component for SideScroll {
 /// Swatch of the edited box's text colour; opens the palette, whose
 /// "default" entry makes the box follow the theme again.
 fn box_color(board: &Arc<Mutex<Board>>, theme: &EditorTheme) -> Element {
-    let current = lock(board).session_text_color();
-    let shown = current.map_or(theme.colors.text, |[r, g, b, a]| {
-        Color::from_argb(a, r, g, b)
-    });
+    let (current, paper) = {
+        let guard = lock(board);
+        (guard.session_text_color(), paper_of(&guard))
+    };
+    let auto = paper.map_or(theme.colors.text, crate::text_box::auto_text_color);
+    let shown = current.map_or(auto, |[r, g, b, a]| Color::from_argb(a, r, g, b));
     let board = Arc::clone(board);
     let theme = theme.clone();
     rect()
@@ -1373,6 +1388,7 @@ mod tests {
             ty: 0.0,
             scale: 1.0,
             origin: (0.0, 0.0),
+            paper: None,
         };
         let drag = HandleDrag {
             handle: Handle::Right,
@@ -1400,6 +1416,7 @@ mod tests {
             ty: 0.0,
             scale: 1.0,
             origin: (0.0, 0.0),
+            paper: None,
         };
         let frame = TextFrame {
             x: 0.0,

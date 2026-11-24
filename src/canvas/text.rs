@@ -285,7 +285,7 @@ impl Board {
             id: TextBoxId::new_v4(),
             frame: TextFrame::at(wx, TEXT_FALLBACK_HEIGHT.mul_add(-0.5, wy)),
             markdown: String::new(),
-            color: crate::text_box::AUTO_TEXT_COLOR,
+            color: self.text_color.unwrap_or(crate::text_box::AUTO_TEXT_COLOR),
         };
         self.text_session = Some(TextSession {
             original: None,
@@ -317,8 +317,26 @@ impl Board {
             return;
         }
         session.current.color = color;
+        // The next box on this canvas starts with it too.
+        let remembered = (color != crate::text_box::AUTO_TEXT_COLOR).then_some(color);
+        if self.text_color != remembered {
+            self.text_color = remembered;
+            self.ping_view();
+        }
         self.touch_text_scene();
         self.notify();
+    }
+
+    /// Colour new boxes on this canvas start with, `None` to follow the
+    /// paper.
+    #[must_use]
+    pub const fn text_color(&self) -> Option<[u8; 4]> {
+        self.text_color
+    }
+
+    /// Restore the colour new boxes start with, from the saved view.
+    pub const fn set_text_color(&mut self, color: Option<[u8; 4]>) {
+        self.text_color = color;
     }
 
     /// Text colour of the edited box, `None` while it follows the theme
@@ -703,6 +721,21 @@ mod tests {
         );
         assert!(board.undo(), "the colour is one undo step");
         assert_eq!(board.doc().text(id).and_then(TextBox::custom_color), None);
+    }
+
+    #[test]
+    fn the_next_box_starts_with_the_last_colour_picked() {
+        let (mut board, id) = board_with_text("hola");
+        board.begin_text_edit(id);
+        board.set_session_text_color(Some([0, 90, 200, 255]));
+        board.end_text_session();
+        assert_eq!(board.text_color(), Some([0, 90, 200, 255]));
+
+        board.begin_text_draft(10.0, 10.0);
+        assert_eq!(board.session_text_color(), Some([0, 90, 200, 255]));
+        // "Default" goes back to following the paper, for later boxes too.
+        board.set_session_text_color(None);
+        assert_eq!(board.text_color(), None);
     }
 
     #[test]
