@@ -5284,6 +5284,7 @@ dependencies = [
  "freya-core",
  "freya-engine",
  "freya-icons 0.5.0-rc.13",
+ "freya-testing",
  "istmo-core",
  "notin-align",
  "notin-i18n",

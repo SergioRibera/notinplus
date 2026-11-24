@@ -20,7 +20,7 @@ use notin_ui_kit::theme::palette;
 
 use crate::state::{BibleBookmark, u32_to_rgba};
 
-use super::chapter::{Block, ChapterPlan, ParagraphSpan};
+use super::chapter::{Block, ChapterPlan, Heading, ParagraphSpan};
 use super::typography;
 
 /// Context the host installs so verse-level widgets can scroll the
@@ -104,6 +104,13 @@ impl std::fmt::Debug for VerseScrollCtx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VerseScrollCtx").finish_non_exhaustive()
     }
+}
+
+/// One passage of a parallel heading: its text and where it jumps.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PassageView {
+    pub label: String,
+    pub target: Option<(String, u16, u16)>,
 }
 
 /// UI-side projection of a publisher footnote. `caller` is the display
@@ -447,6 +454,8 @@ pub struct Other {
 pub struct Reading {
     pub cross_refs: Rc<HashMap<u16, Vec<CrossRefView>>>,
     pub footnotes: Rc<HashMap<u16, Vec<FootnoteView>>>,
+    /// The passages each parallel heading names, by its text.
+    pub passages: Rc<HashMap<String, Vec<PassageView>>>,
     pub on_jump: OnJump,
     /// Show the cross-references of a verse.
     pub on_refs: OnRefs,
@@ -615,8 +624,8 @@ fn all_blocks(
                     starts_chapter: starts_chapter.then_some(plan.chapter),
                 });
             }
-            Block::Header(text) => {
-                root = root.child(section_header(text));
+            Block::Header(heading) => {
+                root = root.child(section_header(heading, reading));
             }
         }
     }
@@ -757,7 +766,13 @@ impl VerseParagraph {
             });
             utf16_offset += 1; // placeholder for the marker child
 
-            let text = format!("{} ", span.text);
+            // A space closes the verse unless the next one starts a line:
+            // that break comes after the verse's markers, below.
+            let text = if span.ends_line {
+                span.text.clone()
+            } else {
+                format!("{} ", span.text)
+            };
             let text_units = text.encode_utf16().count();
             let start = utf16_offset;
             p = p.span(Span::new(text).font_size(font_size));
@@ -796,6 +811,10 @@ impl VerseParagraph {
                     on_press: self.reading.on_refs.clone(),
                     font_size,
                 });
+                utf16_offset += 1;
+            }
+            if span.ends_line {
+                p = p.span(Span::new("\n").font_size(font_size));
                 utf16_offset += 1;
             }
         }
@@ -1444,18 +1463,95 @@ fn note_icon(font_size: f32) -> impl IntoElement {
         )
 }
 
-fn section_header(text: &str) -> impl IntoElement {
+/// A heading between paragraphs, by level: a major division (`LIBRO I`)
+/// small and spaced out, a section heading, then psalm titles and passage
+/// ranges smaller and quieter. A list of parallel passages jumps to each.
+fn section_header(heading: &Heading, reading: &Reading) -> Element {
+    let p = palette();
+    let base = typography::SECTION_HEADER_PX;
+    if let Some(passages) = reading.passages.get(&heading.text) {
+        return passage_links(passages, base * 0.78, &reading.on_jump).into_element();
+    }
+    let (text, size, color, slant, padding) = match heading.level {
+        1 => (
+            heading.text.to_uppercase(),
+            base * 0.72,
+            p.t2,
+            FontSlant::Upright,
+            (24., 0., 2., 0.),
+        ),
+        2 => (
+            heading.text.clone(),
+            base,
+            p.t1,
+            FontSlant::Upright,
+            (12., 0., 4., 0.),
+        ),
+        _ => (
+            heading.text.clone(),
+            base * 0.8,
+            p.t2,
+            FontSlant::Italic,
+            (0., 0., 2., 0.),
+        ),
+    };
     rect()
         .width(Size::fill())
-        .center()
-        .padding((12., 0., 4., 0.))
+        .padding(padding)
         .child(
             label()
+                .width(Size::fill())
                 .font_family(typography::FAMILY)
-                .font_size(typography::SECTION_HEADER_PX)
-                .color(palette().t1)
-                .text(text.to_string()),
+                .font_size(size)
+                .font_slant(slant)
+                .text_align(TextAlign::Center)
+                .color(color)
+                .text(text),
         )
+        .into_element()
+}
+
+/// `(Mt. 5.1-12; Lc. 6.20-23)` with each passage a link to it; one the
+/// translation has no book for stays plain text.
+fn passage_links(passages: &[PassageView], size: f32, on_jump: &OnJump) -> impl IntoElement {
+    let p = palette();
+    let last = passages.len().saturating_sub(1);
+    let items = passages.iter().enumerate().map(|(index, passage)| {
+        let mut text = passage.label.clone();
+        if index == 0 {
+            text.insert(0, '(');
+        }
+        text.push_str(if index == last { ")" } else { ";" });
+        let link = rect().child(
+            label()
+                .font_family(typography::FAMILY)
+                .font_size(size)
+                .color(if passage.target.is_some() {
+                    p.accent_text
+                } else {
+                    p.t2
+                })
+                .text(text),
+        );
+        match passage.target.clone() {
+            Some(target) => {
+                let on_jump = on_jump.clone();
+                link.cursor(CursorIcon::Pointer)
+                    .a11y_role(AccessibilityRole::Link)
+                    .on_pointer_down(|e: Event<PointerEventData>| e.stop_propagation())
+                    .on_tap(move |_: Event<PressEventData>| on_jump.call(target.clone()))
+                    .into_element()
+            }
+            None => link.into_element(),
+        }
+    });
+    rect()
+        .width(Size::fill())
+        .horizontal()
+        .center()
+        .spacing(4.0)
+        .padding((0., 0., 2., 0.))
+        .children(items)
 }
 
 fn spacer(height: f32) -> impl IntoElement {
@@ -1481,4 +1577,208 @@ fn name_tag(name: &str, color: Color, left: f32, top: f32) -> Rect {
                 .max_lines(1)
                 .text(name.to_owned()),
         )
+}
+
+#[cfg(test)]
+mod snapshot {
+    use std::path::PathBuf;
+
+    use freya_testing::prelude::*;
+
+    use super::*;
+    use crate::db::{ChapterRow, HeaderRow, VerseRow};
+    use crate::import::layout::lay_out;
+    use crate::ui::chapter::plan_chapter;
+
+    fn verse(verse: u16, pieces: &[&str], paragraph: bool, line: bool) -> VerseRow {
+        let laid = lay_out(pieces.iter().copied());
+        VerseRow {
+            verse,
+            text: laid.text,
+            paragraph_break: paragraph,
+            line_start: line,
+            line_breaks: laid.breaks,
+        }
+    }
+
+    fn header(before_verse: u16, text: &str, level: u8) -> HeaderRow {
+        HeaderRow {
+            before_verse,
+            text: text.to_owned(),
+            level,
+        }
+    }
+
+    fn psalm() -> ChapterRow {
+        ChapterRow {
+            bible_id: "spa_rv1960".into(),
+            book_id: "psa".into(),
+            book_name: "Salmos".into(),
+            chapter: 23,
+            verses: vec![
+                verse(1, &["Jehová es mi pastor; nada me faltará."], true, false),
+                verse(
+                    2,
+                    &[
+                        "En lugares de delicados pastos me hará descansar;\nJunto a aguas de reposo me pastoreará.",
+                    ],
+                    false,
+                    true,
+                ),
+                verse(
+                    3,
+                    &[
+                        "Confortará mi alma;\nMe guiará por sendas de justicia por amor de su nombre.",
+                    ],
+                    false,
+                    true,
+                ),
+                verse(
+                    4,
+                    &[
+                        "Aunque ande en valle de sombra de muerte,\nNo temeré mal alguno, porque tú estarás conmigo;\nTu vara y tu cayado me infundirán aliento.",
+                    ],
+                    true,
+                    false,
+                ),
+                verse(
+                    5,
+                    &[
+                        "Aderezas mesa delante de mí en presencia de mis angustiadores;\nUnges mi cabeza con aceite; mi copa está rebosando.",
+                    ],
+                    false,
+                    true,
+                ),
+                verse(
+                    6,
+                    &[
+                        "Ciertamente el bien y la misericordia me seguirán todos los días de mi vida,\nY en la casa de Jehová moraré por largos días.",
+                    ],
+                    false,
+                    true,
+                ),
+            ],
+            headers: vec![
+                header(1, "Jehová es mi pastor", 2),
+                header(1, "Salmo de David.", 3),
+            ],
+        }
+    }
+
+    fn sermon() -> ChapterRow {
+        ChapterRow {
+            bible_id: "spa_rv1960".into(),
+            book_id: "mat".into(),
+            book_name: "Mateo".into(),
+            chapter: 5,
+            verses: vec![
+                verse(
+                    1,
+                    &[
+                        "Viendo la multitud, subió al monte; y sentándose, vinieron a él sus discípulos.",
+                    ],
+                    true,
+                    false,
+                ),
+                verse(
+                    2,
+                    &["Y abriendo su boca les enseñaba, diciendo:"],
+                    false,
+                    false,
+                ),
+                verse(
+                    3,
+                    &[
+                        "Bienaventurados los pobres en espíritu, porque de ellos es el reino de los cielos.",
+                    ],
+                    true,
+                    false,
+                ),
+                verse(
+                    4,
+                    &["Bienaventurados los que lloran, porque ellos recibirán consolación."],
+                    true,
+                    false,
+                ),
+            ],
+            headers: vec![
+                header(1, "LIBRO I", 1),
+                header(1, "El Sermón del monte: Las bienaventuranzas", 2),
+                header(1, "(Lc. 6.20-23; Mr. 3.13)", 3),
+            ],
+        }
+    }
+
+    fn reading(data: &ChapterRow) -> Reading {
+        let passages: HashMap<String, Vec<PassageView>> = data
+            .headers
+            .iter()
+            .filter_map(|h| {
+                let refs = crate::reference::passages(&h.text)?;
+                Some((
+                    h.text.clone(),
+                    refs.into_iter()
+                        .map(|(label, parsed)| PassageView {
+                            label,
+                            target: Some((parsed.book_token, parsed.chapter, 1)),
+                        })
+                        .collect(),
+                ))
+            })
+            .collect();
+        Reading {
+            cross_refs: Rc::default(),
+            footnotes: Rc::default(),
+            passages: Rc::new(passages),
+            on_jump: EventHandler::new(|_| {}),
+            on_refs: EventHandler::new(|_| {}),
+            refs_open: None,
+            on_highlight: EventHandler::new(|_| {}),
+            on_tap: EventHandler::new(|_| {}),
+            preview: None,
+            selected: Rc::default(),
+            others: Rc::default(),
+            font_size: 22.0,
+            line_height: 1.65,
+        }
+    }
+
+    fn render(name: &str, data: fn() -> ChapterRow) {
+        fn app_for(data: fn() -> ChapterRow) -> impl Fn() -> Element {
+            move || {
+                let data = data();
+                rect()
+                    .expanded()
+                    .background(palette().bg)
+                    .padding(16.)
+                    .child(chapter_view(
+                        &plan_chapter(&data),
+                        &[],
+                        &reading(&data),
+                        None,
+                        None,
+                    ))
+                    .into_element()
+            }
+        }
+        let app = app_for(data);
+        let mut runner = TestingRunner::new(app, (420., 760.).into(), |_| {}, 1.0).0;
+        runner.poll_n(std::time::Duration::from_millis(16), 4);
+        runner.sync_and_update();
+        runner.render_to_file(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target/tmp")
+                .join(format!("{name}.png")),
+        );
+    }
+
+    #[test]
+    fn psalm_23_snapshot() {
+        render("bible_psalm_23", psalm);
+    }
+
+    #[test]
+    fn sermon_snapshot() {
+        render("bible_matthew_5", sermon);
+    }
 }

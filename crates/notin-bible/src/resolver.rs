@@ -8,7 +8,9 @@
 //!
 //! 1. The translation's book name or abbreviation.
 //! 2. The OSIS id (`"EPH"`, `"1co"`), the same in every translation.
-//! 3. The start of exactly one of the translation's book names
+//! 3. The abbreviations the translation's language writes in notes and
+//!    parallel passages (`"Lc."`, `"1 R."` in a Spanish one).
+//! 4. The start of exactly one of the translation's book names
 //!    (`"Efe"`, `"1 Cor"`); an ambiguous start matches nothing.
 //!
 //! Comparison ignores case, accents, spaces, dots and dashes. The
@@ -67,6 +69,13 @@ pub fn resolve_book_token(db: &Db, bible_id: &str, token: &str) -> Option<String
     if let Some(book) = exact {
         return Some(book.book_id.clone());
     }
+    if let Some(id) = conventional_abbreviation(bible_id, &wanted)
+        && let Some(book) = books
+            .iter()
+            .find(|book| book.book_id.eq_ignore_ascii_case(id))
+    {
+        return Some(book.book_id.clone());
+    }
     let mut starts = books
         .iter()
         .filter(|book| book_key(&book.name).starts_with(&wanted));
@@ -74,6 +83,89 @@ pub fn resolve_book_token(db: &Db, bible_id: &str, token: &str) -> Option<String
         (Some(book), None) => Some(book.book_id.clone()),
         _ => None,
     }
+}
+
+/// The book id `key` ([`book_key`] of an abbreviation) stands for in the
+/// notes of a translation in the language of `bible_id` (its id starts
+/// with the ISO 639-3 code).
+fn conventional_abbreviation(bible_id: &str, key: &str) -> Option<&'static str> {
+    // Reina-Valera usage, shared by most Spanish editions.
+    const SPANISH: &[(&str, &str)] = &[
+        ("gn", "gen"),
+        ("ex", "exo"),
+        ("lv", "lev"),
+        ("nm", "num"),
+        ("dt", "deu"),
+        ("jos", "jos"),
+        ("jue", "jdg"),
+        ("rt", "rut"),
+        ("1s", "1sa"),
+        ("2s", "2sa"),
+        ("1r", "1ki"),
+        ("2r", "2ki"),
+        ("1cr", "1ch"),
+        ("2cr", "2ch"),
+        ("esd", "ezr"),
+        ("neh", "neh"),
+        ("est", "est"),
+        ("job", "job"),
+        ("sal", "psa"),
+        ("pr", "pro"),
+        ("ec", "ecc"),
+        ("cnt", "sng"),
+        ("is", "isa"),
+        ("jer", "jer"),
+        ("lm", "lam"),
+        ("ez", "ezk"),
+        ("dn", "dan"),
+        ("os", "hos"),
+        ("jl", "jol"),
+        ("am", "amo"),
+        ("abd", "oba"),
+        ("jon", "jon"),
+        ("mi", "mic"),
+        ("nah", "nam"),
+        ("hab", "hab"),
+        ("sof", "zep"),
+        ("hag", "hag"),
+        ("zac", "zec"),
+        ("mal", "mal"),
+        ("mt", "mat"),
+        ("mr", "mrk"),
+        ("lc", "luk"),
+        ("jn", "jhn"),
+        ("hch", "act"),
+        ("ro", "rom"),
+        ("1co", "1co"),
+        ("2co", "2co"),
+        ("ga", "gal"),
+        ("ef", "eph"),
+        ("fil", "php"),
+        ("col", "col"),
+        ("1ts", "1th"),
+        ("2ts", "2th"),
+        ("1ti", "1ti"),
+        ("2ti", "2ti"),
+        ("tit", "tit"),
+        ("flm", "phm"),
+        ("he", "heb"),
+        ("stg", "jas"),
+        ("1p", "1pe"),
+        ("2p", "2pe"),
+        ("1jn", "1jn"),
+        ("2jn", "2jn"),
+        ("3jn", "3jn"),
+        ("jud", "jud"),
+        ("ap", "rev"),
+    ];
+    let table = match bible_id.split('_').next()? {
+        "spa" => SPANISH,
+        _ => return None,
+    };
+    table
+        .iter()
+        .find(|(abbreviation, _)| *abbreviation == key)
+        .map(|(_, id)| *id)
 }
 
 /// `text` folded for comparing book names: lower case, no accents,
@@ -134,6 +226,24 @@ mod tests {
         assert_eq!(a.start_verse, 16);
         assert_eq!(a.end_verse, 16);
         assert_eq!(resolve(&db, "eng_kjv", "John 3:16").unwrap().book_id, "jhn");
+    }
+
+    #[test]
+    fn abbreviations_of_the_translations_language() {
+        let db = seeded_db();
+        let a = resolve(&db, "spa_rv1960", "Jn. 3.16").unwrap();
+        assert_eq!(
+            (a.book_id.as_str(), a.start_chapter, a.start_verse),
+            ("jhn", 3, 16)
+        );
+        assert_eq!(
+            resolve(&db, "spa_rv1960", "1 Co. 13.4").unwrap().book_id,
+            "1co"
+        );
+        assert!(
+            resolve(&db, "eng_kjv", "Jn. 3.16").is_none(),
+            "Spanish usage only"
+        );
     }
 
     #[test]

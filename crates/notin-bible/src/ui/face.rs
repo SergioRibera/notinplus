@@ -682,6 +682,7 @@ fn chapter_body(
     let reading = reader::Reading {
         cross_refs: annotations.cross_refs,
         footnotes: annotations.footnotes,
+        passages: annotations.passages,
         on_jump: EventHandler::new({
             let reader = reader.clone();
             move |(book, chapter, verse): (String, u16, u16)| reader.go(&book, chapter, verse)
@@ -738,6 +739,31 @@ fn footnotes(db: &Db, data: &ChapterRow) -> Vec<FootnoteView> {
         .collect()
 }
 
+/// Parallel passages under the chapter's headings (`(Mt. 5.1-12; Lc. 6.20-23)`),
+/// each with where it jumps, read with the book names and abbreviations of
+/// the translation.
+#[cfg_attr(feature = "sismo", sismo::function("bible::passages_load"))]
+fn passages(
+    db: &Db,
+    data: &ChapterRow,
+) -> std::collections::HashMap<String, Vec<reader::PassageView>> {
+    data.headers
+        .iter()
+        .filter(|header| header.level >= 3)
+        .filter_map(|header| {
+            let passages = crate::reference::passages(&header.text)?
+                .into_iter()
+                .map(|(label, parsed)| reader::PassageView {
+                    label,
+                    target: crate::resolver::resolve_parsed(db, &data.bible_id, &parsed)
+                        .map(|anchor| (anchor.book_id, anchor.start_chapter, anchor.start_verse)),
+                })
+                .collect();
+            Some((header.text.clone(), passages))
+        })
+        .collect()
+}
+
 /// Cross-references of the chapter; the panel reads their text.
 #[cfg_attr(feature = "sismo", sismo::function("bible::cross_refs_load"))]
 fn cross_refs(db: &Db, data: &ChapterRow) -> Vec<CrossRefView> {
@@ -774,6 +800,8 @@ struct AnnotationKey {
 struct Annotations {
     cross_refs: Rc<std::collections::HashMap<u16, Vec<CrossRefView>>>,
     footnotes: Rc<std::collections::HashMap<u16, Vec<FootnoteView>>>,
+    /// The passages each parallel heading of the chapter names, by its text.
+    passages: Rc<std::collections::HashMap<String, Vec<reader::PassageView>>>,
 }
 
 impl Reader {
@@ -805,6 +833,7 @@ impl Reader {
         let annotations = Annotations {
             cross_refs: Rc::new(cross_refs_by_verse(&cross_refs)),
             footnotes: Rc::new(footnotes_by_verse(&footnotes(&self.db, data))),
+            passages: Rc::new(passages(&self.db, data)),
         };
         *self.annotations.borrow_mut() = Some((key, annotations.clone()));
         annotations

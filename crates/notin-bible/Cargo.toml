@@ -94,5 +94,8 @@ async-io = { version = "2", optional = true }
 notin-ui-kit = { version = "0.1.0-alpha.5", path = "../notin-ui-kit", optional = true }
 tracing = "0.1"
 
+[dev-dependencies]
+freya-testing = "=0.5.0-rc.13"
+
 [build-dependencies]
 notin-i18n = { version = "0.1.0-alpha.5", path = "../notin-i18n", features = ["build"] }

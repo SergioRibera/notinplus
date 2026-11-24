@@ -74,9 +74,53 @@ pub fn parse(input: &str) -> Option<ParsedRef> {
     })
 }
 
+/// The passages a heading names, when it is a list of parallels.
+///
+/// `(Mt. 26.59-66; Mr. 14.55-64)`, `(Lc. 3.1-9,15-17)`,
+/// `(Nm. 28.16—29.40)`. Each comes back with its text, for showing,
+/// and where it starts. `None` unless every entry reads as a reference,
+/// so a psalm title such as `Salmo de David.` stays plain text.
+#[must_use]
+pub fn passages(heading: &str) -> Option<Vec<(String, ParsedRef)>> {
+    let inner = heading.trim().strip_prefix('(')?.strip_suffix(')')?;
+    let mut out = Vec::new();
+    for entry in inner.split(';') {
+        let entry = entry.trim();
+        // Where it starts is enough to jump: drop further ranges and the
+        // end of a range that crosses chapters.
+        let start = entry
+            .split(',')
+            .next()?
+            .split(['\u{2014}', '\u{2013}'])
+            .next()?
+            .trim();
+        out.push((entry.to_owned(), parse(start)?));
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallels_under_a_heading() {
+        let refs = passages("(Mt. 26.59-66; Mr. 14.55-64; 1 R. 3.3-15)").expect("parallels");
+        let labels: Vec<_> = refs.iter().map(|(label, _)| label.as_str()).collect();
+        assert_eq!(labels, ["Mt. 26.59-66", "Mr. 14.55-64", "1 R. 3.3-15"]);
+        assert_eq!(refs[1].1.book_token, "mr");
+        assert_eq!((refs[1].1.chapter, refs[1].1.start_verse), (14, Some(55)));
+        assert_eq!(refs[2].1.book_token, "1r");
+        let crossing = passages("(Nm. 28.16\u{2014}29.40)").expect("one");
+        assert_eq!(
+            (crossing[0].1.chapter, crossing[0].1.start_verse),
+            (28, Some(16))
+        );
+        let listed = passages("(Lc. 3.1-9,15-17)").expect("one");
+        assert_eq!(listed[0].1.end_verse, Some(9));
+        assert!(passages("Salmo de David.").is_none());
+        assert!(passages("(al músico principal)").is_none());
+    }
 
     #[test]
     fn single_verse() {
