@@ -1037,7 +1037,12 @@ fn testament_for(book_id: &str) -> &'static str {
         "2TH", "1TI", "2TI", "TIT", "PHM", "HEB", "JAS", "1PE", "2PE", "1JN", "2JN", "3JN", "JUD",
         "REV",
     ];
-    if NT.contains(&book_id) { "NT" } else { "OT" }
+    // Ids come lowercase from biblionlabs and fetch.bible.
+    if NT.iter().any(|nt| nt.eq_ignore_ascii_case(book_id)) {
+        "NT"
+    } else {
+        "OT"
+    }
 }
 
 // ─── Catalogue extras ────────────────────────────────────────────
