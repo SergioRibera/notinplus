@@ -22,6 +22,7 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
+use crate::import::layout;
 use crate::plugin_config::CrossRefLevel;
 
 /// Default endpoints used by `install_bible` when the caller doesn't
@@ -147,6 +148,10 @@ struct BibleDesc {
     name_english: Option<String>,
     #[serde(default)]
     abbrev: Option<String>,
+    /// Bumped by the source whenever the text or its layout changes;
+    /// absent counts as 1.
+    #[serde(default)]
+    revision: Option<u32>,
 }
 
 /// Book names keyed by book id, in the order the manifest lists them:
@@ -263,6 +268,10 @@ enum ContentItem {
         r#type: String,
         #[serde(default)]
         contents: String,
+        /// Heading level: 1 a major division, 2 a section, 3 a psalm
+        /// title or a range.
+        #[serde(default)]
+        level: Option<u8>,
     },
     Raw(String),
 }
@@ -299,19 +308,56 @@ pub struct Install<'a> {
     pub books_url_template: &'a str,
     pub cache_ttl: Duration,
     pub meta: &'a BibleMeta,
+    /// `Some(stored revision)` refreshes an installed translation instead:
+    /// the manifest and books download again, the translation stays
+    /// listed meanwhile, and nothing changes unless the source's revision
+    /// is newer.
+    pub refresh: Option<u32>,
+}
+
+/// What an install stored.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Report {
+    pub inserted: usize,
+    /// Revision of the source (1 when it gives none).
+    pub revision: u32,
+    /// The source brings its own headings / footnotes.
+    pub headings: bool,
+    pub notes: bool,
+    /// A refresh found nothing newer and stored nothing.
+    pub unchanged: bool,
+    /// Books that could not be fetched or read, and were skipped.
+    pub missing: usize,
 }
 
 impl Install<'_> {
+    /// How old a cached file may be; a refresh downloads everything again.
+    const fn ttl(&self) -> Duration {
+        if self.refresh.is_some() {
+            Duration::ZERO
+        } else {
+            self.cache_ttl
+        }
+    }
+
     /// Download and store the translation; returns how many verses
     /// were inserted.
     #[cfg_attr(feature = "sismo", sismo::function("bible::import_run"))]
-    pub fn run(&self, mut on_progress: impl FnMut(Progress)) -> Result<usize> {
+    pub fn run(&self, mut on_progress: impl FnMut(Progress)) -> Result<Report> {
         let bible_id = self.bible_id;
         on_progress(Progress::Started {
             bible_id: bible_id.into(),
         });
         let bible_dir = self.cache_dir.join("bibles").join(bible_id);
         let desc = self.manifest(&bible_dir)?;
+        let revision = desc.revision.unwrap_or(1);
+        if self.refresh.is_some_and(|stored| revision <= stored) {
+            return Ok(Report {
+                revision,
+                unchanged: true,
+                ..Report::default()
+            });
+        }
         let books_dir = bible_dir.join("books");
         std::fs::create_dir_all(&books_dir)?;
         on_progress(Progress::ManifestFetched {
@@ -321,14 +367,20 @@ impl Install<'_> {
         let book_ids = desc.book_names.ids();
         self.register_books(&desc, &book_ids)?;
 
-        let mut inserted = 0usize;
+        let mut report = Report {
+            revision,
+            ..Report::default()
+        };
         for book_id in &book_ids {
-            let Some(verses) = self.install_book(&books_dir, book_id, &desc)? else {
+            let Some((verses, extras)) = self.install_book(&books_dir, book_id, &desc)? else {
+                report.missing += 1;
                 continue;
             };
-            inserted += verses;
+            report.inserted += verses;
+            report.headings |= extras.headings;
+            report.notes |= extras.notes;
             #[cfg(feature = "sismo")]
-            sismo::counter!("bible.import_verses", inserted);
+            sismo::counter!("bible.import_verses", report.inserted);
             on_progress(Progress::BookDone {
                 book_id: (**book_id).clone(),
                 verses,
@@ -336,9 +388,9 @@ impl Install<'_> {
         }
         on_progress(Progress::Finished {
             bible_id: bible_id.into(),
-            inserted_verses: inserted,
+            inserted_verses: report.inserted,
         });
-        Ok(inserted)
+        Ok(report)
     }
 
     /// The per-Bible manifest, with the catalogue's name, language and
@@ -347,7 +399,7 @@ impl Install<'_> {
     fn manifest(&self, bible_dir: &Path) -> Result<BibleDesc> {
         std::fs::create_dir_all(bible_dir)?;
         let desc_path = bible_dir.join("manifest.json");
-        fetch_if_stale(self.client, self.desc_url, &desc_path, self.cache_ttl)?;
+        fetch_if_stale(self.client, self.desc_url, &desc_path, self.ttl())?;
         let desc_bytes = std::fs::read(&desc_path)?;
         let mut desc: BibleDesc =
             serde_json::from_slice(&desc_bytes).map_err(|e| ImportError::Json {
@@ -379,11 +431,14 @@ impl Install<'_> {
     fn register_books(&self, desc: &BibleDesc, book_ids: &[&String]) -> Result<()> {
         self.db.with_conn_mut(|conn| {
             upsert_bible(conn, self.bible_id, desc).map_err(crate::db::DbError::from)?;
-            conn.execute(
-                "INSERT OR IGNORE INTO installs_pending (bible_id) VALUES (?1)",
-                [self.bible_id],
-            )
-            .map_err(crate::db::DbError::from)?;
+            // A refresh keeps the translation listed while it runs.
+            if self.refresh.is_none() {
+                conn.execute(
+                    "INSERT OR IGNORE INTO installs_pending (bible_id) VALUES (?1)",
+                    [self.bible_id],
+                )
+                .map_err(crate::db::DbError::from)?;
+            }
             let tx = conn.transaction().map_err(crate::db::DbError::from)?;
             for (order_num, book_id) in book_ids.iter().enumerate() {
                 let order_num = u16::try_from(order_num).unwrap_or(u16::MAX);
@@ -405,13 +460,13 @@ impl Install<'_> {
         books_dir: &Path,
         book_id: &str,
         desc: &BibleDesc,
-    ) -> Result<Option<usize>> {
+    ) -> Result<Option<(usize, BookExtras)>> {
         let book_path = books_dir.join(format!("{book_id}.json"));
         let url = self
             .books_url_template
             .replace("{bible_id}", self.bible_id)
             .replace("{book}", book_id);
-        if let Err(e) = fetch_if_stale(self.client, &url, &book_path, self.cache_ttl) {
+        if let Err(e) = fetch_if_stale(self.client, &url, &book_path, self.ttl()) {
             tracing::warn!("biblionlabs: skipping {book_id}: {e}");
             return Ok(None);
         }
@@ -429,11 +484,11 @@ impl Install<'_> {
         };
         let verses = self.db.with_conn_mut(|conn| {
             let tx = conn.transaction().map_err(crate::db::DbError::from)?;
-            let n = insert_book_contents(&tx, self.bible_id, book_id, &book_doc)
+            let (n, extras) = insert_book_contents(&tx, self.bible_id, book_id, &book_doc)
                 .map_err(crate::db::DbError::from)?;
             insert_headers(&tx, self.bible_id, book_id, desc).map_err(crate::db::DbError::from)?;
             tx.commit().map_err(crate::db::DbError::from)?;
-            Ok(n)
+            Ok((n, extras))
         })?;
         Ok(Some(verses))
     }
@@ -685,31 +740,58 @@ fn upsert_book(
     Ok(())
 }
 
-/// Walk the 3-level `contents` array + emit one row per raw string.
-/// Inline headings carried as `ContentItem::Typed { type = "heading" }`
-/// also materialise as `headers` rows attached to the verse they
-/// precede.
+/// What a book brought besides its verses, so the installer knows not to
+/// borrow headings or notes from another translation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct BookExtras {
+    pub headings: bool,
+    pub notes: bool,
+}
+
+/// Walk the 3-level `contents` array + emit one row per verse.
+///
+/// Every row of the book from an earlier import (headings, footnotes) goes
+/// first, so a refresh replaces them. Each verse keeps its line layout
+/// ([`layout`]): a `\n\n` before it marks `paragraph_break`, a `\n` marks
+/// `line_start`, breaks inside it land in `line_breaks`. Inline headings
+/// (`type: "heading"`, with an optional `level`) become `headers` rows in
+/// order before the verse they precede; notes (`type: "note"`) become
+/// `footnotes` rows.
 #[cfg_attr(feature = "sismo", sismo::function("bible::import_insert_verses"))]
 fn insert_book_contents(
     conn: &rusqlite::Connection,
     bible_id: &str,
     book_id: &str,
     book: &BookDoc,
-) -> rusqlite::Result<usize> {
+) -> rusqlite::Result<(usize, BookExtras)> {
+    for table in ["headers", "footnotes"] {
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE bible_id = ?1 AND book_id = ?2"),
+            params![bible_id, book_id],
+        )?;
+    }
     let mut insert = conn.prepare_cached(
-        "INSERT INTO verses (bible_id, book_id, chapter, verse, text, paragraph_break)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO verses
+             (bible_id, book_id, chapter, verse, text, paragraph_break, line_start, line_breaks)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(bible_id, book_id, chapter, verse) DO UPDATE SET
              text = excluded.text,
-             paragraph_break = excluded.paragraph_break",
+             paragraph_break = excluded.paragraph_break,
+             line_start = excluded.line_start,
+             line_breaks = excluded.line_breaks",
     )?;
-
     let mut insert_header = conn.prepare_cached(
-        "INSERT INTO headers (bible_id, book_id, chapter, before_verse, text)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO headers (bible_id, book_id, chapter, before_verse, text, level)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?;
+    let mut insert_note = conn.prepare_cached(
+        "INSERT OR REPLACE INTO footnotes
+             (bible_id, book_id, chapter, verse, note_id, caller, text)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
 
     let mut count = 0usize;
+    let mut extras = BookExtras::default();
 
     for (chapter_idx, chapter) in book.contents.iter().enumerate() {
         // biblionlabs uses 1-based indexing on `contents` — index 0 is
@@ -717,62 +799,116 @@ fn insert_book_contents(
         if chapter_idx == 0 {
             continue;
         }
-        let chapter_num = u16::try_from(chapter_idx).unwrap_or(u16::MAX);
-        let mut pending_header: Option<String> = None;
+        let chapter_num = i64::try_from(chapter_idx).unwrap_or(i64::MAX);
+        let mut pending_headers: Vec<(String, i64)> = Vec::new();
+        let mut previous_end: Option<layout::Break> = None;
+        let mut notes = 0i64;
         for (verse_idx, verse_contents) in chapter.iter().enumerate() {
             if verse_idx == 0 {
                 // Same 1-based convention for verses.
                 continue;
             }
-            let verse_num = u16::try_from(verse_idx).unwrap_or(u16::MAX);
-            let mut text = String::new();
-            let mut paragraph_break = false;
+            let verse_num = i64::try_from(verse_idx).unwrap_or(i64::MAX);
+            let mut typed_paragraph = false;
+            let mut verse_notes = Vec::new();
             for item in verse_contents {
-                match item {
-                    ContentItem::Raw(s) => {
-                        if !text.is_empty() && !text.ends_with(' ') {
-                            text.push(' ');
-                        }
-                        text.push_str(s.trim());
-                    }
-                    ContentItem::Typed { r#type, contents } => match r#type.as_str() {
+                if let ContentItem::Typed {
+                    r#type,
+                    contents,
+                    level,
+                } = item
+                {
+                    match r#type.as_str() {
                         "heading" => {
-                            pending_header = Some(contents.trim().to_string());
+                            let text = contents.trim();
+                            if !text.is_empty() {
+                                pending_headers.push((
+                                    text.to_owned(),
+                                    i64::from(level.unwrap_or(DEFAULT_HEADING_LEVEL)),
+                                ));
+                            }
                         }
-                        "paragraph" | "p" => {
-                            paragraph_break = true;
+                        "paragraph" | "p" => typed_paragraph = true,
+                        "note" => {
+                            let text = layout::note_text(contents);
+                            if !text.is_empty() {
+                                verse_notes.push(text.to_owned());
+                            }
                         }
-                        // "note" footnotes drop out — they're reader
-                        // apparatus, not verse text.
                         _ => {}
-                    },
+                    }
                 }
             }
-
-            if text.is_empty() {
+            let laid = layout::lay_out(verse_contents.iter().filter_map(|item| match item {
+                ContentItem::Raw(text) => Some(text.as_str()),
+                ContentItem::Typed { .. } => None,
+            }));
+            if laid.text.is_empty() {
+                // A verse the source leaves out: its headings wait for
+                // the next one.
                 continue;
             }
-            if let Some(h) = pending_header.take() {
+            let opens = previous_end.or(laid.starts);
+            previous_end = laid.ends;
+            let headed = !pending_headers.is_empty();
+            for (text, level) in std::mem::take(&mut pending_headers) {
+                extras.headings = true;
                 insert_header.execute(params![
                     bible_id,
                     book_id,
-                    i64::from(chapter_num),
-                    i64::from(verse_num),
-                    h
+                    chapter_num,
+                    verse_num,
+                    text,
+                    level
                 ])?;
             }
+            for text in verse_notes {
+                extras.notes = true;
+                notes += 1;
+                insert_note.execute(params![
+                    bible_id,
+                    book_id,
+                    chapter_num,
+                    verse_num,
+                    notes,
+                    note_caller(notes),
+                    text
+                ])?;
+            }
+            let paragraph = typed_paragraph || headed || opens == Some(layout::Break::Paragraph);
             insert.execute(params![
                 bible_id,
                 book_id,
-                i64::from(chapter_num),
-                i64::from(verse_num),
-                text,
-                i64::from(paragraph_break),
+                chapter_num,
+                verse_num,
+                laid.text,
+                i64::from(paragraph),
+                i64::from(opens == Some(layout::Break::Line)),
+                layout::encode_breaks(&laid.breaks),
             ])?;
             count += 1;
         }
     }
-    Ok(count)
+    Ok((count, extras))
+}
+
+/// Level of a heading the source gives none for: a section heading.
+const DEFAULT_HEADING_LEVEL: u8 = 2;
+
+/// `a` … `z`, then `aa`, `ab` …: the mark of the `n`th note of a chapter.
+fn note_caller(n: i64) -> String {
+    let mut n = n.max(1) - 1;
+    let mut caller = Vec::new();
+    loop {
+        caller.push(b'a' + u8::try_from(n % 26).unwrap_or(0));
+        n /= 26;
+        if n == 0 {
+            break;
+        }
+        n -= 1;
+    }
+    caller.reverse();
+    String::from_utf8(caller).unwrap_or_default()
 }
 
 /// Insert chapter-level headings (`chapter_headings`) + fine-grained
@@ -867,6 +1003,9 @@ fn testament_for(book_id: &str) -> &'static str {
 #[derive(Debug, Clone)]
 pub struct ExtraBible {
     pub id: &'static str,
+    /// Revision of its published files this build expects; an install
+    /// at an older one refreshes in the background.
+    pub revision: u32,
     pub name_local: &'static str,
     pub name_english: &'static str,
     pub local_abbrev: &'static str,
@@ -875,6 +1014,8 @@ pub struct ExtraBible {
 
 pub const EXTRAS: &[ExtraBible] = &[ExtraBible {
     id: "spa_rv1960",
+    // 2: text, headings, poetry lines and footnotes from the official USX.
+    revision: 2,
     name_local: "Reina Valera 1960",
     name_english: "Reina-Valera 1960",
     local_abbrev: "RVR1960",
@@ -1087,7 +1228,7 @@ pub(crate) fn populate_from_fixtures(
             })?;
         let n = db.with_conn_mut(|conn| {
             let tx = conn.transaction().map_err(crate::db::DbError::from)?;
-            let n = insert_book_contents(&tx, bible_id, book_id, &book_doc)
+            let (n, _) = insert_book_contents(&tx, bible_id, book_id, &book_doc)
                 .map_err(crate::db::DbError::from)?;
             insert_headers(&tx, bible_id, book_id, &desc_parsed)
                 .map_err(crate::db::DbError::from)?;
@@ -1217,5 +1358,63 @@ mod tests {
         let hits = db.search(Some("spa_rv1960"), "senor", 10).unwrap();
         assert!(!hits.is_empty());
         assert_eq!(hits[0].book_id, "EPH");
+    }
+
+    #[test]
+    fn layout_levels_and_notes_from_a_rich_source() {
+        let db = Db::in_memory().unwrap();
+        let desc = json!({ "book_names": { "PSA": { "normal": "Salmos", "long": "Salmos", "abbrev": "Sal" } } });
+        let mut chapters = vec![json!([])];
+        for _ in 1..23 {
+            chapters.push(json!([[], ["x"]]));
+        }
+        chapters.push(json!([
+            [],
+            [
+                { "type": "heading", "contents": "Jehová es mi pastor", "level": 2 },
+                { "type": "heading", "contents": "Salmo de David.", "level": 3 },
+                "Jehová es mi pastor; nada me faltará.\n"
+            ],
+            ["En lugares de delicados pastos me hará descansar;\nJunto a aguas de reposo me pastoreará.", { "type": "note", "contents": "23.2 O, reposar." }, "\n"],
+            ["Confortará mi alma;\nMe guiará por sendas de justicia por amor de su nombre.\n\n"],
+            ["Aunque ande en valle de sombra de muerte,\nNo temeré mal alguno"]
+        ]));
+        let book = json!({ "book": "psa", "contents": chapters });
+        populate_from_fixtures(&db, "spa_rv1960", &desc, &[("PSA".into(), book.clone())])
+            .expect("populate");
+
+        let chap = db.load_chapter("spa_rv1960", "PSA", 23).unwrap();
+        let levels: Vec<_> = chap
+            .headers
+            .iter()
+            .map(|h| (h.text.as_str(), h.level))
+            .collect();
+        assert_eq!(
+            levels,
+            [("Jehová es mi pastor", 2), ("Salmo de David.", 3)],
+            "both, in order"
+        );
+        let v2 = &chap.verses[1];
+        assert_eq!(
+            v2.text,
+            "En lugares de delicados pastos me hará descansar; Junto a aguas de reposo me pastoreará."
+        );
+        assert!(v2.line_start, "a poetry line after verse 1");
+        assert_eq!(v2.line_breaks.len(), 1);
+        assert_eq!(&v2.text[v2.line_breaks[0].at + 1..][..5], "Junto");
+        assert!(chap.verses[3].paragraph_break, "a stanza after verse 3");
+        let notes = db.footnotes_for_chapter("spa_rv1960", "PSA", 23).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].text, "O, reposar.");
+
+        // Importing again replaces, never piles up.
+        populate_from_fixtures(&db, "spa_rv1960", &desc, &[("PSA".into(), book)]).expect("again");
+        assert_eq!(
+            db.load_chapter("spa_rv1960", "PSA", 23)
+                .unwrap()
+                .headers
+                .len(),
+            2
+        );
     }
 }

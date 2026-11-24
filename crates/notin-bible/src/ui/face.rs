@@ -418,6 +418,22 @@ fn use_reader(ctx: &FaceContext<BibleKind>, db: &Db) -> Reader {
         move || save_place(&store, &state.read())
     });
     use_follow_content(ctx, db, state);
+    // A background refresh rewrote the translation: read the chapter again.
+    use_hook({
+        let (mut count, mut state, db) = (reader.footnotes_landed, state, db.clone());
+        move || {
+            let changes = crate::install_background::content_changes();
+            spawn(async move {
+                while changes.recv_async().await.is_ok() {
+                    state.write().reload_chapters(|held| {
+                        db.load_chapter(&held.bible_id, &held.book_id, held.chapter)
+                            .ok()
+                    });
+                    *count.write() += 1;
+                }
+            });
+        }
+    });
     // Footnotes arrive lazily per chapter; headings came with the
     // install. The fetch returns at once when the rows exist.
     use_side_effect({

@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS verses (
     verse            INTEGER NOT NULL,
     text             TEXT NOT NULL,
     paragraph_break  INTEGER NOT NULL DEFAULT 0,
+    -- Starts a new line (poetry); `line_breaks` lists the byte offsets of
+    -- the spaces inside `text` that start one too (`12,40p`, `p` a new
+    -- paragraph or stanza). See `import::layout`.
+    line_start       INTEGER NOT NULL DEFAULT 0,
+    line_breaks      TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (bible_id, book_id, chapter, verse),
     FOREIGN KEY (bible_id, book_id) REFERENCES books(bible_id, book_id) ON DELETE CASCADE
 );
@@ -58,7 +63,9 @@ CREATE TABLE IF NOT EXISTS headers (
     book_id       TEXT NOT NULL,
     chapter       INTEGER NOT NULL,
     before_verse  INTEGER NOT NULL,
-    text          TEXT NOT NULL
+    text          TEXT NOT NULL,
+    -- 1 a major division, 2 a section, 3 a psalm title or a passage range.
+    level         INTEGER NOT NULL DEFAULT 2
 );
 CREATE INDEX IF NOT EXISTS idx_headers_loc
     ON headers(bible_id, book_id, chapter, before_verse);
@@ -168,7 +175,7 @@ CREATE INDEX IF NOT EXISTS idx_xref_src
 ";
 
 /// Bumped by each one-off data fix below.
-const VERSION: i64 = 3;
+const VERSION: i64 = 4;
 
 #[cfg_attr(feature = "sismo", sismo::function("bible::db_migrate"))]
 pub(crate) fn migrate(db: &Db) -> Result<()> {
@@ -191,6 +198,12 @@ pub(crate) fn migrate(db: &Db) -> Result<()> {
             // Cross-references used to be stored once per translation; the
             // shared set downloads again at the level in the settings.
             conn.execute_batch("DROP TABLE IF EXISTS cross_refs;")?;
+        }
+        if version < 4 {
+            // Line layout and heading levels, on databases made before them.
+            add_column(conn, "verses", "line_start", "INTEGER NOT NULL DEFAULT 0")?;
+            add_column(conn, "verses", "line_breaks", "TEXT NOT NULL DEFAULT ''")?;
+            add_column(conn, "headers", "level", "INTEGER NOT NULL DEFAULT 2")?;
         }
         conn.execute_batch(CROSS_REFS_SQL)?;
         conn.pragma_update(None, "user_version", VERSION)?;
@@ -218,6 +231,28 @@ fn repair_book_order(conn: &rusqlite::Connection) -> Result<()> {
         let repaired = crate::canon::protestant_position(&book_id)
             .unwrap_or_else(|| crate::canon::PROTESTANT_LEN.saturating_add(order_num));
         update.execute(rusqlite::params![i64::from(repaired), bible_id, book_id])?;
+    }
+    Ok(())
+}
+
+/// `ALTER TABLE … ADD COLUMN` unless `table` already has `column` (a
+/// database created with the current schema does).
+fn add_column(
+    conn: &rusqlite::Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> rusqlite::Result<()> {
+    let exists = conn
+        .prepare(&format!("PRAGMA table_info({table})"))?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .iter()
+        .any(|name| name == column);
+    if !exists {
+        conn.execute_batch(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+        ))?;
     }
     Ok(())
 }

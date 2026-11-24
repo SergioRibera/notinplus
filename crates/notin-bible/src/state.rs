@@ -247,6 +247,16 @@ impl BibleViewerState {
     /// for the same (book, chapter) already exists it is replaced in
     /// place rather than duplicated.
     #[cfg_attr(feature = "sismo", sismo::function("bible::push_chapter"))]
+    /// Read every cached chapter again with `load` (the text under it
+    /// changed); one that no longer loads stays as it was.
+    pub fn reload_chapters(&mut self, load: impl Fn(&ChapterRow) -> Option<ChapterRow>) {
+        for chapter in &mut self.chapter_cache {
+            if let Some(fresh) = load(chapter) {
+                *chapter = fresh;
+            }
+        }
+    }
+
     pub fn push_chapter(&mut self, chapter: ChapterRow) {
         if let Some(pos) = self
             .chapter_cache

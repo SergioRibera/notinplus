@@ -669,4 +669,39 @@ pub(crate) mod test_support {
         })
         .unwrap();
     }
+
+    #[test]
+    fn databases_from_before_the_layout_gain_its_columns() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE verses (bible_id TEXT NOT NULL, book_id TEXT NOT NULL,
+                 chapter INTEGER NOT NULL, verse INTEGER NOT NULL, text TEXT NOT NULL,
+                 paragraph_break INTEGER NOT NULL DEFAULT 0,
+                 PRIMARY KEY (bible_id, book_id, chapter, verse));
+             CREATE TABLE headers (id INTEGER PRIMARY KEY AUTOINCREMENT, bible_id TEXT NOT NULL,
+                 book_id TEXT NOT NULL, chapter INTEGER NOT NULL, before_verse INTEGER NOT NULL,
+                 text TEXT NOT NULL);
+             INSERT INTO verses VALUES ('spa_rv1960', 'PSA', 23, 1, 'Jehová es mi pastor', 0);
+             INSERT INTO headers (bible_id, book_id, chapter, before_verse, text)
+                 VALUES ('spa_rv1960', 'PSA', 23, 1, 'Salmo');
+             PRAGMA user_version = 3;",
+        )
+        .unwrap();
+        let db = Db {
+            conn: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+            read: None,
+        };
+        super::schema::migrate(&db).expect("migrate");
+        super::schema::migrate(&db).expect("again is a no-op");
+        let (line_start, breaks, level): (i64, String, i64) = db
+            .with_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT v.line_start, v.line_breaks, h.level FROM verses v, headers h",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )?)
+            })
+            .unwrap();
+        assert_eq!((line_start, breaks.as_str(), level), (0, "", 2));
+    }
 }

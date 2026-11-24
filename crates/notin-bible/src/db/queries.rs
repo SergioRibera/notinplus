@@ -43,6 +43,10 @@ pub struct VerseRow {
     /// typography. UI respects it when grouping verses inside the
     /// flowing paragraph nodes.
     pub paragraph_break: bool,
+    /// Starts a new line (poetry) without starting a paragraph.
+    pub line_start: bool,
+    /// Spaces inside `text` that start a new line or stanza.
+    pub line_breaks: Vec<crate::import::layout::LineBreak>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +55,9 @@ pub struct HeaderRow {
     /// chapter-level header rendered at the very top.
     pub before_verse: u16,
     pub text: String,
+    /// 1 a major division (`LIBRO I`), 2 a section heading, 3 a psalm
+    /// title or a passage range (`(Lc. 6.20-23)`).
+    pub level: u8,
 }
 
 /// Full chapter payload loaded in one DB round-trip. The UI assembles
@@ -176,7 +183,7 @@ pub(crate) fn load_chapter(
             #[cfg(feature = "sismo")]
             sismo::scope!("bible::db_chapter_verses");
             let mut verses_stmt = conn.prepare_cached(
-                "SELECT verse, text, paragraph_break
+                "SELECT verse, text, paragraph_break, line_start, line_breaks
                  FROM verses
                  WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3
                  ORDER BY verse",
@@ -187,6 +194,8 @@ pub(crate) fn load_chapter(
                         verse: r.get::<_, u16>(0)?,
                         text: r.get(1)?,
                         paragraph_break: r.get::<_, i64>(2)? != 0,
+                        line_start: r.get::<_, i64>(3)? != 0,
+                        line_breaks: crate::import::layout::decode_breaks(&r.get::<_, String>(4)?),
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?
@@ -196,16 +205,17 @@ pub(crate) fn load_chapter(
             #[cfg(feature = "sismo")]
             sismo::scope!("bible::db_chapter_headers");
             let mut headers_stmt = conn.prepare_cached(
-                "SELECT before_verse, text
+                "SELECT before_verse, text, level
                  FROM headers
                  WHERE bible_id = ?1 AND book_id = ?2 AND chapter = ?3
-                 ORDER BY before_verse",
+                 ORDER BY before_verse, id",
             )?;
             headers_stmt
                 .query_map(params![bible_id, book_id, i64::from(chapter)], |r| {
                     Ok(HeaderRow {
                         before_verse: r.get::<_, u16>(0)?,
                         text: r.get(1)?,
+                        level: r.get::<_, u8>(2)?,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?

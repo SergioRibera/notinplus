@@ -235,6 +235,7 @@ impl Installer {
             Ok(pending) => pending.iter().for_each(|id| self.enqueue(id)),
             Err(e) => tracing::warn!("bible installer: pending downloads: {e}"),
         }
+        install_background::spawn_refresh_outdated(self.db.clone(), self.config.clone());
     }
 
     /// Every download that ends from now on.

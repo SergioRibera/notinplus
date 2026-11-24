@@ -210,6 +210,9 @@ pub fn spawn_fetch_footnotes(
         .spawn(move || {
             #[cfg(feature = "sismo")]
             sismo::scope!("bible::fetch_footnotes");
+            if brings_own(&db, OWN_NOTES, &bible_id) {
+                return;
+            }
             if db
                 .has_footnotes_for_chapter(&bible_id, &book_id, chapter)
                 .unwrap_or(false)
@@ -260,6 +263,9 @@ pub fn spawn_fetch_headings(db: Db, bible_id: String, book_id: String, chapter: 
         .spawn(move || {
             #[cfg(feature = "sismo")]
             sismo::scope!("bible::fetch_headings");
+            if brings_own(&db, OWN_HEADINGS, &bible_id) {
+                return;
+            }
             if db
                 .has_headers_for_chapter(&bible_id, &book_id, chapter)
                 .unwrap_or(false)
@@ -348,6 +354,7 @@ pub(crate) fn run(
         books_url_template: &books_template,
         cache_ttl: CACHE_TTL,
         meta: &meta,
+        refresh: None,
     };
     let on_progress = |event: biblionlabs::Progress| {
         edit(progress, |p| match event {
@@ -364,7 +371,9 @@ pub(crate) fn run(
     };
 
     match install.run(&on_progress) {
-        Ok(verses) => {
+        Ok(report) => {
+            let verses = report.inserted;
+            store_source_meta(db, bible_id, &report);
             // The shared cross-reference set, when this is the first
             // translation or the level changed since.
             if let Err(e) = ensure_cross_refs(db, &client, &cache_dir, config, &on_progress) {
@@ -516,6 +525,9 @@ fn prefetch_all_headings(
     bible_id: &str,
     progress: &SharedInstallProgress,
 ) {
+    if brings_own(db, OWN_HEADINGS, bible_id) {
+        return;
+    }
     let Some(source) = helloao::helloao_headings_id_for_bible(bible_id) else {
         tracing::debug!("headings prefetch: no sibling id for {bible_id}; skipping");
         return;
@@ -571,5 +583,160 @@ mod tests {
             reason: "non-JSON response".to_owned(),
         });
         assert!(!garbled.user_message().contains("non-JSON"));
+    }
+}
+
+/// `meta` keys about each translation's source, suffixed with its id:
+/// the revision installed, and whether it brought its own headings and
+/// footnotes (then none are borrowed from a sibling translation).
+const REVISION: &str = "revision:";
+const OWN_HEADINGS: &str = "own_headings:";
+const OWN_NOTES: &str = "own_notes:";
+
+fn brings_own(db: &Db, key: &str, bible_id: &str) -> bool {
+    db.meta(&format!("{key}{bible_id}"))
+        .ok()
+        .flatten()
+        .is_some_and(|value| value == "1")
+}
+
+/// Remember what the source of `bible_id` was when it was stored.
+fn store_source_meta(db: &Db, bible_id: &str, report: &biblionlabs::Report) {
+    let flag = |own: bool| if own { "1" } else { "0" };
+    let entries = [
+        (REVISION, report.revision.to_string()),
+        (OWN_HEADINGS, flag(report.headings).to_owned()),
+        (OWN_NOTES, flag(report.notes).to_owned()),
+    ];
+    for (key, value) in entries {
+        if let Err(e) = db.set_meta(&format!("{key}{bible_id}"), &value) {
+            tracing::warn!("bible install: {key}{bible_id}: {e}");
+        }
+    }
+}
+
+/// Revision of `bible_id` installed here: 1 for installs from before
+/// revisions were kept.
+fn stored_revision(db: &Db, bible_id: &str) -> u32 {
+    db.meta(&format!("{REVISION}{bible_id}"))
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1)
+}
+
+/// Readers of a chapter learn here that the installed text changed.
+static CONTENT_CHANGED: std::sync::Mutex<Vec<flume::Sender<()>>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Fires each time a refresh rewrote a translation.
+#[must_use]
+pub fn content_changes() -> flume::Receiver<()> {
+    let (tx, rx) = flume::unbounded();
+    CONTENT_CHANGED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(tx);
+    rx
+}
+
+fn announce_content_changed() {
+    CONTENT_CHANGED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .retain(|tx| tx.send(()).is_ok());
+}
+
+/// Bring installed translations whose source published a newer revision
+/// up to date, in the background, one after the other.
+///
+/// Only sources the app knows ship revisions are checked
+/// ([`biblionlabs::EXTRAS`]); each check downloads its manifest alone, and
+/// the books only when the revision there is newer. The translation stays
+/// readable throughout: verses are rewritten in place, keyed by verse, so
+/// bookmarks and highlights keep pointing at the same verses.
+pub fn spawn_refresh_outdated(db: Db, config: SharedConfig) {
+    let installed = match db.list_bibles() {
+        Ok(bibles) => bibles,
+        Err(e) => {
+            tracing::debug!("bible refresh: translations: {e}");
+            return;
+        }
+    };
+    let outdated: Vec<(String, u32)> = installed
+        .into_iter()
+        .filter_map(|bible| {
+            let extra = biblionlabs::find_extra(&bible.id)?;
+            let stored = stored_revision(&db, &bible.id);
+            (extra.revision > stored).then_some((bible.id, stored))
+        })
+        .collect();
+    if outdated.is_empty() {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("bible-refresh".to_owned())
+        .spawn(move || {
+            for (bible_id, stored) in outdated {
+                refresh(&db, &config, &bible_id, stored);
+            }
+        });
+    if let Err(e) = spawned {
+        tracing::warn!("bible refresh thread: {e}");
+    }
+}
+
+#[cfg_attr(feature = "sismo", sismo::function("bible::refresh"))]
+fn refresh(db: &Db, config: &SharedConfig, bible_id: &str, stored: u32) {
+    let client = match http_client() {
+        Ok(c) => c,
+        Err(e) => return tracing::debug!("bible refresh: client: {e}"),
+    };
+    let cache_dir = plugin_config::platform_cache_dir();
+    let desc_url = format!("{BIBLIONLABS_BASE}/bibles/{bible_id}/manifest.json");
+    let books_template = format!("{BIBLIONLABS_BASE}/bibles/{{bible_id}}/books/{{book}}.json");
+    let meta = catalogue_meta(&client, &cache_dir, bible_id);
+    let install = biblionlabs::Install {
+        db,
+        client: &client,
+        bible_id,
+        cache_dir: &cache_dir,
+        desc_url: &desc_url,
+        books_url_template: &books_template,
+        cache_ttl: CACHE_TTL,
+        meta: &meta,
+        refresh: Some(stored),
+    };
+    match install.run(|_| {}) {
+        Ok(report) if report.unchanged => {
+            tracing::debug!(
+                "bible refresh: {bible_id} still at revision {}",
+                report.revision
+            );
+        }
+        Ok(report) => {
+            // A book that did not come down keeps its old rows: try again
+            // next time instead of calling the translation current.
+            if report.missing == 0 {
+                store_source_meta(db, bible_id, &report);
+            }
+            // The words changed: pair them with the original languages
+            // again.
+            if let Err(e) = db.set_meta(&format!("originals_align:{bible_id}"), "") {
+                tracing::warn!("bible refresh: {bible_id}: {e}");
+            }
+            if plugin_config::effective_originals(config) {
+                if let Some(originals) = crate::originals::service() {
+                    originals.spawn_align_missing();
+                }
+            }
+            announce_content_changed();
+            tracing::info!(
+                "bible refresh: {bible_id} now at revision {}, {} verses",
+                report.revision,
+                report.inserted
+            );
+        }
+        Err(e) => tracing::debug!("bible refresh: {bible_id}: {e}"),
     }
 }
