@@ -374,6 +374,168 @@ impl DragSelect {
     }
 }
 
+/// No-break spaces opening a wrapped line of poetry: its hanging indent.
+/// They cannot be split from the word after them, so they always move to
+/// the start of the line with it.
+const HANG: usize = 6;
+
+/// Passes allowed to settle the indents: each one can push words to the
+/// next line and so move where later lines wrap.
+const HANG_PASSES: u8 = 4;
+
+/// Where a line of poetry wraps: the span, and the byte of its text the
+/// new line starts at.
+type Wrap = (usize, usize);
+
+/// A composed paragraph: the element, each verse's UTF-16 ranges, the
+/// ranges to tint, and the spans as shown.
+type Composed = (
+    Paragraph,
+    Vec<VerseRange>,
+    Vec<(usize, usize, Color)>,
+    Vec<ShownSpan>,
+);
+
+/// A span's text as composed: where it starts in the paragraph (UTF-16)
+/// and, per UTF-16 unit, the byte of the span's own text it shows (`None`
+/// for an inserted indent).
+#[derive(Clone, Debug, Default)]
+struct ShownSpan {
+    start: usize,
+    text: String,
+    units: Vec<Option<usize>>,
+}
+
+/// `text` of span `index` with an indent before every wrap of `wraps`.
+fn hung_text(text: &str, index: usize, wraps: &[Wrap]) -> (String, Vec<Option<usize>>) {
+    let mut shown = String::with_capacity(text.len());
+    let mut units = Vec::with_capacity(text.len());
+    for (byte, ch) in text.char_indices() {
+        if wraps.contains(&(index, byte)) {
+            for _ in 0..HANG {
+                shown.push('\u{a0}');
+                units.push(None);
+            }
+        }
+        shown.push(ch);
+        units.extend(std::iter::repeat_n(Some(byte), ch.len_utf16()));
+    }
+    (shown, units)
+}
+
+/// `start..end` of a span without its inserted indents (`units` of
+/// [`ShownSpan`]); the end keeps whatever follows the text (its space).
+fn text_pieces(start: usize, end: usize, units: &[Option<usize>]) -> Vec<(usize, usize)> {
+    let mut pieces = Vec::new();
+    let mut from = start;
+    for (unit, byte) in units.iter().enumerate() {
+        if byte.is_none() {
+            if start + unit > from {
+                pieces.push((from, start + unit));
+            }
+            from = start + unit + 1;
+        }
+    }
+    if end > from {
+        pieces.push((from, end));
+    }
+    pieces
+}
+
+/// Where a paragraph of poetry wraps, worked out from its own layout.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct WrapState {
+    width: f32,
+    at: Vec<Wrap>,
+    passes: u8,
+}
+
+/// The indents a paragraph composes with, and what it composed last, so
+/// the next render can read where that layout wrapped.
+struct Wraps {
+    hang: bool,
+    state: State<WrapState>,
+    shown: Rc<std::cell::RefCell<Vec<ShownSpan>>>,
+}
+
+impl Wraps {
+    fn applied(&self) -> Vec<Wrap> {
+        if self.hang {
+            self.state.read().at.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn record(&self, shown: Vec<ShownSpan>) {
+        *self.shown.borrow_mut() = shown;
+    }
+}
+
+/// Read where the last layout of a poetry paragraph wrapped, and indent
+/// those lines on the next render. A width change starts over; a few
+/// passes at most, since each indent can move the wraps after it.
+fn use_wraps(hang: bool, holder: &ParagraphHolder, (width, _): (f32, f32)) -> Wraps {
+    let state = use_state(WrapState::default);
+    let shown = use_hook(|| Rc::new(std::cell::RefCell::new(Vec::<ShownSpan>::new())));
+    if hang && width > 0.0 {
+        let current = state.peek().clone();
+        let next = if (current.width - width).abs() > 0.5 {
+            Some(WrapState {
+                width,
+                ..WrapState::default()
+            })
+        } else if current.passes < HANG_PASSES {
+            soft_wraps(holder, &shown.borrow())
+                .filter(|found| *found != current.at)
+                .map(|at| WrapState {
+                    width,
+                    at,
+                    passes: current.passes + 1,
+                })
+        } else {
+            None
+        };
+        if let Some(next) = next {
+            let mut state = state;
+            spawn(async move { state.set(next) });
+        }
+    }
+    Wraps { hang, state, shown }
+}
+
+/// Lines of the laid-out paragraph that start because the text wrapped,
+/// not at a line break of the poem: the span and byte each starts at.
+fn soft_wraps(holder: &ParagraphHolder, shown: &[ShownSpan]) -> Option<Vec<Wrap>> {
+    let inner = holder.0.borrow();
+    let data = inner.as_ref()?;
+    let mut wraps = Vec::new();
+    for line in data.paragraph.get_line_metrics().iter().skip(1) {
+        let at = line.start_index;
+        let Some((index, span)) = shown
+            .iter()
+            .enumerate()
+            .find(|(_, s)| at > s.start && at < s.start + s.units.len())
+        else {
+            // At a verse number or a marker: nothing to indent there.
+            continue;
+        };
+        let unit = at - span.start;
+        let before = span.text.encode_utf16().nth(unit - 1);
+        // Only after a space: a line the poem breaks itself starts after
+        // `\n`, and a word cut in two has no space to hang from.
+        if !matches!(before, Some(0x20 | 0xa0)) {
+            continue;
+        }
+        if let Some(byte) = span.units[unit..].iter().flatten().next() {
+            wraps.push((index, *byte));
+        }
+    }
+    wraps.sort_unstable();
+    wraps.dedup();
+    Some(wraps)
+}
+
 /// Re-render a few times right after mount, so highlight rects computed
 /// from the laid-out paragraph appear even when `on_sized` fired before
 /// the handler was attached. At most three renders in the first 150 ms.
@@ -617,11 +779,14 @@ fn all_blocks(
         match block {
             Block::Paragraph(spans) => {
                 let starts_chapter = spans.first().is_some_and(|s| s.verse == 1);
+                // A stanza: its wrapped lines hang under the line they continue.
+                let hang = spans.iter().any(|s| s.ends_line || s.text.contains('\n'));
                 root = root.child(VerseParagraph {
                     spans: spans.clone(),
                     styles: styles.clone(),
                     reading: reading.clone(),
                     starts_chapter: starts_chapter.then_some(plan.chapter),
+                    hang,
                 });
             }
             Block::Header(heading) => {
@@ -646,6 +811,9 @@ pub(super) struct VerseParagraph {
     pub(super) styles: HashMap<u16, VerseStyle>,
     pub(super) reading: Reading,
     pub(super) starts_chapter: Option<u16>,
+    /// Poetry: a line that wraps continues indented ([`HANG`]), so a new
+    /// line of the poem and the rest of a long one look different.
+    pub(super) hang: bool,
 }
 
 impl std::fmt::Debug for VerseParagraph {
@@ -728,10 +896,7 @@ impl VerseParagraph {
     /// Add the verses to `p`; returns it with each verse's UTF-16 range
     /// and the ranges to tint.
     #[cfg_attr(feature = "sismo", sismo::function("bible::verse_compose"))]
-    fn compose(
-        &self,
-        mut p: Paragraph,
-    ) -> (Paragraph, Vec<VerseRange>, Vec<(usize, usize, Color)>) {
+    fn compose(&self, mut p: Paragraph, wraps: &[Wrap]) -> Composed {
         let on_jump = &self.reading.on_jump;
         let font_size = self.reading.font_size;
         // UTF-16 offsets drive both pointer hit-testing and the
@@ -746,8 +911,9 @@ impl VerseParagraph {
         // layout. Preserves stored colours (the single-colour
         // `paragraph.highlights` paint path couldn't).
         let mut highlight_items: Vec<(usize, usize, Color)> = Vec::new();
+        let mut shown = Vec::with_capacity(self.spans.len());
 
-        for span in &self.spans {
+        for (index, span) in self.spans.iter().enumerate() {
             let style = self.styles.get(&span.verse);
             let preview_color = self
                 .reading
@@ -768,24 +934,31 @@ impl VerseParagraph {
 
             // A space closes the verse unless the next one starts a line:
             // that break comes after the verse's markers, below.
-            let text = if span.ends_line {
-                span.text.clone()
-            } else {
-                format!("{} ", span.text)
-            };
+            let (mut text, units) = hung_text(&span.text, index, wraps);
+            if !span.ends_line {
+                text.push(' ');
+            }
             let text_units = text.encode_utf16().count();
             let start = utf16_offset;
+            shown.push(ShownSpan {
+                start,
+                text: text.clone(),
+                units,
+            });
             p = p.span(Span::new(text).font_size(font_size));
             utf16_offset += text_units;
             let end = utf16_offset;
 
-            verse_ranges.push((start, end, span.verse));
+            // The indent of a wrapped line belongs to no verse: it is not
+            // tinted, underlined or tapped.
+            let pieces = text_pieces(start, end, &shown[shown.len() - 1].units);
+            verse_ranges.extend(pieces.iter().map(|&(from, to)| (from, to, span.verse)));
             // Preview wins over the stored tint for the targeted verse
             // so the live wheel feedback stays on top; non-targeted
             // bookmarks keep their own colour.
             let paint_color = preview_color.or_else(|| style.and_then(|s| s.tint));
             if let Some(c) = paint_color {
-                highlight_items.push((start, end, c));
+                highlight_items.extend(pieces.iter().map(|&(from, to)| (from, to, c)));
             }
 
             if style.is_some_and(|s| s.has_note) {
@@ -818,7 +991,7 @@ impl VerseParagraph {
                 utf16_offset += 1;
             }
         }
-        (p, verse_ranges, highlight_items)
+        (p, verse_ranges, highlight_items, shown)
     }
 
     /// Text ranges of other people's selections, with their color; the
@@ -893,7 +1066,9 @@ impl Component for VerseParagraph {
                     laid_out.set_if_modified((area.width(), area.height()));
                 }
             });
-        let (p, verse_ranges, highlight_items) = self.compose(p);
+        let wraps = use_wraps(self.hang, &holder, *laid_out.peek());
+        let (p, verse_ranges, highlight_items, shown) = self.compose(p, &wraps.applied());
+        wraps.record(shown);
 
         let _ = *laid_out.read();
         let underlined = self.underlined(&verse_ranges, *drag.held.read());
@@ -1763,8 +1938,11 @@ mod snapshot {
         }
         let app = app_for(data);
         let mut runner = TestingRunner::new(app, (420., 760.).into(), |_| {}, 1.0).0;
-        runner.poll_n(std::time::Duration::from_millis(16), 4);
-        runner.sync_and_update();
+        // The indents of wrapped poetry settle over a few renders.
+        for _ in 0..12 {
+            runner.poll_n(std::time::Duration::from_millis(16), 2);
+            runner.sync_and_update();
+        }
         runner.render_to_file(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../target/tmp")
