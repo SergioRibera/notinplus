@@ -408,7 +408,10 @@ mod tests {
     fn only_changed_parts_get_a_new_stamp() {
         let mut file = SettingsFile::default();
         let mut settings = Settings::default();
-        assert!(file.split(&settings, 10), "first store, at 0 since all defaults");
+        assert!(
+            file.split(&settings, 10),
+            "first store, at 0 since all defaults"
+        );
         settings.pen.palm_rejection = !settings.pen.palm_rejection;
         settings.library.sort = SortOrder::default();
         assert!(file.split(&settings, 20));
