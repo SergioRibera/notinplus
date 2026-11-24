@@ -14,7 +14,7 @@ use typst::{Library, LibraryExt, World};
 use typst_layout::PagedDocument;
 
 /// Typst sources defining what `MiTeX`'s output calls, by path.
-const SCOPE: &[(&str, &str)] = &[
+pub(crate) const SCOPE: &[(&str, &str)] = &[
     ("mitex/mod.typ", include_str!("../assets/mitex/mod.typ")),
     (
         "mitex/prelude.typ",
@@ -27,7 +27,7 @@ const SCOPE: &[(&str, &str)] = &[
 ];
 
 /// A math font and a text font for `\text{}`; nothing else is embedded.
-const FONTS: [&[u8]; 2] = [
+pub(crate) const FONTS: [&[u8]; 2] = [
     include_bytes!("../assets/fonts/NewCMMath-Regular.otf"),
     include_bytes!("../assets/fonts/LibertinusSerif-Regular.otf"),
 ];

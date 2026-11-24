@@ -6,13 +6,14 @@ use std::sync::{Arc, OnceLock, RwLockReadGuard};
 use freya::icons::lucide;
 use freya_markdown_editor::document::{Document, HeadingRef};
 use notin_sdk::bookmark::SourceRef;
+use notin_sdk::config::{ConfigEnumOption, ConfigField, ConfigValue};
 use notin_sdk::create::{
     Created, CreationEntry, CreationError, CreationRequest, ImportPreview, ImportedFile,
 };
 use notin_sdk::doc::{DocId, DocMeta};
 use notin_sdk::kind::{
-    ActionEffect, ChipView, DocumentKind, ExportFile, Hit, IndexReport, KindAction, KindColor,
-    KindInfo, OutlineIcon, OutlineNode, Quote, SearchQuery,
+    ActionEffect, ChipView, DocumentKind, ExportError, ExportFile, ExportValues, Hit, IndexReport,
+    KindAction, KindColor, KindInfo, OutlineIcon, OutlineNode, Quote, SearchQuery,
 };
 use notin_sdk::services::Host;
 use notin_sdk::text::Folded;
@@ -474,6 +475,66 @@ impl DocumentKind for NotesKind {
         true
     }
 
+    fn export_fields(
+        &self,
+        _doc: DocMeta<'_>,
+        _content: &NoteContent,
+        _attachment: Option<&[u8]>,
+    ) -> Vec<ConfigField> {
+        vec![
+            ConfigField::choice(
+                export::FORMAT,
+                &tr!("notes-export-format"),
+                [
+                    ConfigEnumOption::new(export::PDF, tr!("notes-export-pdf")),
+                    ConfigEnumOption::new(export::MARKDOWN, tr!("notes-export-markdown")),
+                ],
+                export::PDF,
+            ),
+            ConfigField::choice(
+                export::PAPER,
+                &tr!("notes-export-paper"),
+                [
+                    ConfigEnumOption::new(export::A4, tr!("notes-export-paper-a4")),
+                    ConfigEnumOption::new(export::LETTER, tr!("notes-export-paper-letter")),
+                ],
+                export::A4,
+            )
+            .only_when(export::FORMAT, [ConfigValue::String(export::PDF.into())]),
+        ]
+    }
+
+    #[cfg_attr(feature = "sismo", sismo::function("notes::kind_export_with"))]
+    fn export_with(
+        &self,
+        doc: DocMeta<'_>,
+        content: &NoteContent,
+        _attachment: Option<&[u8]>,
+        values: &ExportValues,
+    ) -> Result<Vec<ExportFile>, ExportError> {
+        if values.str_or(export::FORMAT, export::PDF) == export::MARKDOWN {
+            return Ok(vec![ExportFile::new(
+                "md",
+                "text/markdown",
+                content.markdown.clone().into_bytes(),
+            )]);
+        }
+        let setup = freya_markdown_math::document::PdfSetup {
+            paper: match values.str_or(export::PAPER, export::A4) {
+                export::LETTER => freya_markdown_math::document::Paper::Letter,
+                _ => freya_markdown_math::document::Paper::A4,
+            },
+            title: (!doc.name.is_empty()).then(|| doc.name.to_owned()),
+            lang: None,
+        };
+        // Images of the note come from its own folder, through the host.
+        let host = self.host.get();
+        let resource = |path: &str| host.and_then(|host| host.asset(doc.id, path));
+        let pdf = freya_markdown_math::document::markdown_pdf(&content.markdown, &setup, &resource)
+            .map_err(|err| ExportError::Failed(err.to_string()))?;
+        Ok(vec![ExportFile::new("pdf", "application/pdf", pdf)])
+    }
+
     /// Fix the anchor of the cited heading, so the link survives the
     /// heading being renamed: in the open editor when the note is on
     /// screen, in its body otherwise.
@@ -598,4 +659,14 @@ mod tests {
         );
         assert_eq!(name_from_body("   \n"), None);
     }
+}
+
+/// Keys and values of the export sheet's options.
+mod export {
+    pub(super) const FORMAT: &str = "format";
+    pub(super) const PDF: &str = "pdf";
+    pub(super) const MARKDOWN: &str = "md";
+    pub(super) const PAPER: &str = "paper";
+    pub(super) const A4: &str = "a4";
+    pub(super) const LETTER: &str = "letter";
 }

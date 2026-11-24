@@ -13,6 +13,9 @@ categories = ["gui", "mathematics"]
 
 [features]
 sismo = ["dep:sismo"]
+# Whole notes as PDF documents (`document::markdown_pdf`), with the text
+# fonts that takes (Libertinus Serif in four styles, DejaVu Sans Mono).
+pdf = ["dep:typst-pdf"]
 
 [dependencies]
 # Spans for the sismo profiler; off unless an app turns it on.
@@ -23,6 +26,7 @@ mitex = "0.2.4"
 typst = "0.15.1"
 typst-layout = "0.15.1"
 typst-svg = "0.15.1"
+typst-pdf = { version = "0.15.1", optional = true }
 
 [lints.rust]
 missing_debug_implementations = "warn"

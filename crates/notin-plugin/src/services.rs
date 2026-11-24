@@ -244,6 +244,15 @@ pub trait HostServices: Send + Sync + std::fmt::Debug {
         let _ = (doc, pane);
         flume::unbounded().1
     }
+
+    /// Bytes of a file stored with `doc`, named by the relative path its
+    /// content links it with (`assets/1a2b.png` for an image of a note):
+    /// for exports that embed what the document shows. `None` for a path
+    /// outside the document or a file that is not there.
+    fn asset(&self, doc: DocId, path: &str) -> Option<Vec<u8>> {
+        let _ = (doc, path);
+        None
+    }
 }
 
 /// Something dropped on a document whose face takes drops.

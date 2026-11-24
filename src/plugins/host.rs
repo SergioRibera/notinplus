@@ -294,6 +294,23 @@ impl HostServices for ShellHost {
     fn presence(&self, doc: DocId) -> Arc<dyn notin_plugin::Presence> {
         crate::sync::presence::open(crate::library::ItemId(doc.0))
     }
+
+    #[sismo::function("plugins::host_asset")]
+    fn asset(&self, doc: DocId, path: &str) -> Option<Vec<u8>> {
+        // Inside the item only: a shared note must not reach other files
+        // of this device.
+        let relative = std::path::Path::new(path);
+        if !relative
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)))
+        {
+            return None;
+        }
+        std::fs::read(
+            crate::library::bodies::item_root(crate::library::ItemId(doc.0)).join(relative),
+        )
+        .ok()
+    }
 }
 
 /// How long a finished job's toast stays.

@@ -30,6 +30,8 @@ sismo = ["dep:sismo"]
 sismo = { version = "0.1.1", default-features = false, optional = true }
 notin-sdk = { version = "0.1.0-alpha.5", path = "../notin-sdk" }
 freya-markdown-editor = { version = "0.1.0-alpha.5", path = "../freya-markdown-editor", default-features = false, features = ["toolbar"] }
+# Notes exported as PDF, typeset by Typst.
+freya-markdown-math = { version = "0.1.0-alpha.5", path = "../freya-markdown-math", features = ["pdf"] }
 notin-ui-kit = { version = "0.1.0-alpha.5", path = "../notin-ui-kit" }
 async-io = "2"
 freya = { version = "=0.5.0-rc.13", features = ["icons", "icons-lucide"] }

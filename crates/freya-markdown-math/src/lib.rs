@@ -6,6 +6,8 @@
 //! installation; fonts are embedded, so it works offline on every
 //! platform.
 
+#[cfg(feature = "pdf")]
+pub mod document;
 mod typeset;
 
 use freya::prelude::*;
