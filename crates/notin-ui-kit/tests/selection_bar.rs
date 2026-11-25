@@ -20,7 +20,7 @@ fn items() -> Vec<BarItem> {
     ]
 }
 
-fn bar(room: f32) -> impl Fn() -> Element {
+fn bar(room: f32) -> impl Fn() -> Element + Clone {
     move || {
         rect()
             .expanded()

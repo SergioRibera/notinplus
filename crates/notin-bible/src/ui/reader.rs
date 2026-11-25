@@ -1965,7 +1965,7 @@ mod snapshot {
     }
 
     fn render(name: &str, data: fn() -> ChapterRow) {
-        fn app_for(data: fn() -> ChapterRow) -> impl Fn() -> Element {
+        fn app_for(data: fn() -> ChapterRow) -> impl Fn() -> Element + Clone {
             move || {
                 let data = data();
                 rect()

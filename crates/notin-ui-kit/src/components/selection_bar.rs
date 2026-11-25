@@ -185,7 +185,7 @@ impl BarItem {
                 // Icon alone once labels do not fit; an action without an
                 // icon keeps its label.
                 let labelled = level == Fit::Labels || icon.is_none();
-                rect()
+                let action = rect()
                     .key(index)
                     .height(Size::px(40.0))
                     .padding((0.0, if labelled { 10.0 } else { 8.0 }))
@@ -208,8 +208,16 @@ impl BarItem {
                             .font_size(text::META)
                             .font_weight(FontWeight::MEDIUM)
                             .color(p.inv_text)
-                    }))
-                    .into_element()
+                    }));
+                // An icon alone names its action on hover.
+                match text_value.clone().filter(|_| !labelled) {
+                    Some(name) => TooltipContainer::new(Tooltip::new_text(name))
+                        .key(index)
+                        .position(AttachedPosition::Top)
+                        .child(action)
+                        .into_element(),
+                    None => action.into_element(),
+                }
             }
             Self::Swatches {
                 colors,
