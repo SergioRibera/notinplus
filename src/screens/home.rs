@@ -17,7 +17,7 @@ use freya::router::RouterContext;
 use notin_i18n::tr;
 use notin_plugin::UserMessage;
 use notin_ui_kit::theme::palette;
-use notin_ui_kit::{Button, EmptyState, Skeleton, WidthClass, tokens, width_class};
+use notin_ui_kit::{Button, EmptyState, Lazy, Skeleton, WidthClass, tokens, width_class};
 
 use self::app_bar::AppBar;
 use self::fab::Fab;
@@ -478,21 +478,51 @@ impl Component for Loaded {
             pinned_card: if class.is_compact() { 132.0 } else { 148.0 },
             bottom: insets.bottom,
         };
-        let heights: Vec<f32> = body.blocks.iter().map(|b| body.height(*b)).collect();
-        let length = heights.len();
-        sismo::counter!("home.blocks", length);
+        sismo::counter!("home.blocks", body.blocks.len());
+        let scroll_controller = use_scroll_controller(ScrollConfig::default);
+        let anchor = notin_ui_kit::use_scroll_anchor(scroll_controller);
+        // The row of pinned cards, when it appears while the list shows
+        // something further down: it starts flat and grows as it mounts,
+        // and the anchor scrolls by as much, so what is in view stays put.
+        // It stays flat until it mounts: a later render must not hand it its
+        // full height while it is still a strut above the view.
+        let pinned_seen = use_hook(|| std::rc::Rc::new(std::cell::Cell::new(None::<bool>)));
+        let pinned_flat = use_hook(|| std::rc::Rc::new(std::cell::Cell::new(false)));
+        let has_pinned = body.blocks.contains(&Block::Pinned);
+        if pinned_seen.replace(Some(has_pinned)) == Some(false) && has_pinned {
+            pinned_flat.set(true);
+        }
+        if !has_pinned {
+            pinned_flat.set(false);
+        }
+        let pinned_appeared = pinned_flat.get();
+        // Every block's height is known: each holds it as a strut until it
+        // nears the view, so the scroll length is exact and only what is
+        // about to show is built.
+        let blocks: Vec<Element> = body
+            .blocks
+            .iter()
+            .map(|block| {
+                let height = body.height(*block);
+                let hint = if *block == Block::Pinned && pinned_appeared {
+                    0.0
+                } else {
+                    height
+                };
+                Lazy::new(body.build(*block, height))
+                    .key(format!("{block:?}"))
+                    .height_hint(hint)
+                    .recycle(true)
+                    .into_element()
+            })
+            .collect();
         // Only the body scrolls: the bar with search, sync state and the
         // trash stays in reach.
-        let scroll = VirtualScrollView::new_with_data(body, |item, body: &Body| {
-            body.blocks.get(item.index).map_or_else(
-                || rect().into_element(),
-                |block| body.build(*block, item.size),
-            )
-        })
-        .length(length)
-        .item_size(move |index: usize| heights.get(index).copied().unwrap_or_default())
-        .width(Size::fill())
-        .height(Size::fill());
+        let scroll = ScrollView::new_controlled(scroll_controller)
+            .width(Size::fill())
+            .height(Size::fill())
+            .on_sized(move |e: Event<SizedEventData>| anchor.view(e.area))
+            .children(blocks);
         rect()
             .expanded()
             .content(Content::Flex)
