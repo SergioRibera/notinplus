@@ -61,7 +61,9 @@ pub(crate) fn document(item: ItemId) {
                     .map(|client| pollster::block_on(client.start_drag(request)));
                 match outcome {
                     Ok(Ok(result)) => tracing::debug!("drag out: {result:?}"),
-                    Ok(Err(err)) => tracing::debug!("drag out: {err}"),
+                    Ok(Err(err)) => {
+                        tracing::debug!("drag out: {}", istmo_dnd::DndError::from(err));
+                    }
                     Err(err) => tracing::warn!("drag out: {err}"),
                 }
             });

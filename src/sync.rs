@@ -2013,7 +2013,7 @@ fn remember_announced(service: &Service) {
 }
 
 /// Show `snapshot` as the current state, for headless previews.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "hotreload")))]
 pub(crate) fn publish_preview(snapshot: SyncSnapshot) {
     publish(snapshot);
 }
