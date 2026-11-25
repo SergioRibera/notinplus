@@ -49,7 +49,7 @@ istmo-share = "0.1.1-alpha.6"
 istmo-camera = "0.1.1-alpha.6"
 rqrr = "0.10"
 istmo-opener = "0.1.1-alpha.6"
-istmo-drop = "0.1.1-alpha.6"
+istmo-dnd = "0.1.1-alpha.6"
 freya = { version = "=0.5.0-rc.13", features = ["router", "icons", "icons-lucide"] }
 freya-engine = "=0.5.0-rc.13"
 freya-components = "=0.5.0-rc.13"
@@ -142,7 +142,7 @@ istmo-plugins-schema = { path = "../istmo/crates/plugins-schema" }
 istmo-window = { path = "../istmo/crates/window" }
 istmo-camera = { path = "../istmo/plugins/camera" }
 istmo-data-store = { path = "../istmo/plugins/data-store" }
-istmo-drop = { path = "../istmo/plugins/drop" }
+istmo-dnd = { path = "../istmo/plugins/dnd" }
 istmo-file-picker = { path = "../istmo/plugins/file-picker" }
 istmo-pen = { path = "../istmo/plugins/istmo-pen" }
 istmo-opener = { path = "../istmo/plugins/opener" }

@@ -45,6 +45,7 @@ pub mod deferred;
 pub mod diagnostics;
 pub mod doc;
 pub mod doc_op;
+pub mod drag_out;
 pub mod dropped_files;
 pub mod editor;
 pub mod external;
@@ -126,7 +127,7 @@ notin_i18n::catalog!();
 use istmo::plugins::{DeepLinks, Documents, SafeArea, SystemInfoClient};
 use istmo_camera::CameraClient;
 use istmo_data_store::DataStoreClient;
-use istmo_drop::FileDropClient;
+use istmo_dnd::DragAndDropClient;
 use istmo_file_picker::FilePickerClient;
 use istmo_installer::InstallerClient;
 use istmo_opener::OpenerClient;
@@ -134,7 +135,7 @@ use istmo_pen::PenClient;
 use istmo_share::ShareClient;
 
 istmo::runtime!(
-    plugins: [PenClient, SafeArea, DeepLinks, Documents, SystemInfoClient, FilePickerClient, DataStoreClient, ShareClient, CameraClient, OpenerClient, InstallerClient, FileDropClient],
+    plugins: [PenClient, SafeArea, DeepLinks, Documents, SystemInfoClient, FilePickerClient, DataStoreClient, ShareClient, CameraClient, OpenerClient, InstallerClient, DragAndDropClient],
 );
 
 #[cfg(any(

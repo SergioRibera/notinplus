@@ -233,6 +233,8 @@ fn cover_badge(icon: Bytes, color: Color) -> Rect {
 pub struct CardActions {
     pub on_open: EventHandler<()>,
     pub on_menu: EventHandler<CursorPoint>,
+    /// Dragged out of the app with a mouse; `None` when it cannot leave.
+    pub on_drag: Option<EventHandler<()>>,
 }
 
 impl std::fmt::Debug for CardActions {
@@ -407,6 +409,11 @@ impl Component for DocCard {
         let mut hovering = use_state(|| false);
         let open = self.actions.on_open.clone();
         let menu = self.actions.on_menu.clone();
+        let drag = self
+            .actions
+            .on_drag
+            .clone()
+            .map(|drag| move || drag.call(()));
         let card = rect()
             .width(Size::px(self.width))
             .spacing(CAPTION_GAP)
@@ -418,7 +425,7 @@ impl Component for DocCard {
             .on_pointer_leave(move |_| hovering.set(false))
             .child(self.cover(hovering()))
             .child(caption(&self.data));
-        gesture.apply(card, move || open.call(()), move |at| menu.call(at))
+        gesture.apply_with_drag(card, move || open.call(()), move |at| menu.call(at), drag)
     }
 }
 

@@ -629,6 +629,10 @@ mod tests {
                 failed.push(format!("{}: {err}", path.display()));
             }
         }
-        assert!(failed.is_empty(), "{count} notes, failed:\n{}", failed.join("\n"));
+        assert!(
+            failed.is_empty(),
+            "{count} notes, failed:\n{}",
+            failed.join("\n")
+        );
     }
 }

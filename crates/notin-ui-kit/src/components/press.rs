@@ -40,6 +40,8 @@ pub struct PressGesture {
     token: State<u64>,
     held: State<bool>,
     start: State<Option<CursorPoint>>,
+    /// The press in progress comes from a mouse (or trackpad, or pen).
+    mouse_down: State<bool>,
     /// Plain cell: layout moves it every scrolled frame, which must not
     /// render the element again.
     placement: Rc<Cell<Placement>>,
@@ -59,6 +61,7 @@ pub fn use_press_gesture() -> PressGesture {
         token: use_state(|| 0),
         held: use_state(|| false),
         start: use_state(|| None),
+        mouse_down: use_state(|| false),
         placement: use_hook(|| Rc::new(Cell::new(Placement::default()))),
     }
 }
@@ -74,10 +77,30 @@ impl PressGesture {
         on_tap: impl Fn() + 'static,
         on_menu: impl Fn(CursorPoint) + Clone + 'static,
     ) -> Rect {
+        self.apply_with_drag(rect, on_tap, on_menu, None::<fn()>)
+    }
+
+    /// [`Self::apply`], and `on_drag` when a mouse (a trackpad, a pen
+    /// hovering) presses and moves past the slop: the element is dragged
+    /// out, and neither taps nor asks for its menu. Fingers keep scrolling.
+    /// On iOS the system starts drags itself, so `on_drag` runs when such
+    /// a press lands, to arm the drag.
+    #[must_use]
+    #[cfg_attr(feature = "sismo", sismo::function("kit::press_apply_drag"))]
+    pub fn apply_with_drag(
+        self,
+        rect: Rect,
+        on_tap: impl Fn() + 'static,
+        on_menu: impl Fn(CursorPoint) + Clone + 'static,
+        on_drag: Option<impl Fn() + 'static>,
+    ) -> Rect {
+        let on_drag: Option<Rc<dyn Fn()>> = on_drag.map(|drag| Rc::new(drag) as Rc<dyn Fn()>);
+        let drag_at_down = on_drag.clone();
         let Self {
             mut token,
             mut held,
             mut start,
+            mut mouse_down,
             placement,
         } = self;
         let (sized, down, timer, pressed) = (
@@ -107,6 +130,13 @@ impl PressGesture {
             held.set(false);
             let at = e.global_location();
             start.set(Some(at));
+            mouse_down.set(matches!(e.data(), PointerEventData::Mouse(_)));
+            if cfg!(target_os = "ios")
+                && *mouse_down.peek()
+                && let Some(drag) = &drag_at_down
+            {
+                drag();
+            }
             let mut now = down.get();
             now.at_down = now.now;
             down.set(now);
@@ -130,6 +160,12 @@ impl PressGesture {
             if (now.x - origin.x).hypot(now.y - origin.y) >= SLOP_PX {
                 token.set(0);
                 start.set(None);
+                if !cfg!(target_os = "ios")
+                    && *mouse_down.peek()
+                    && let Some(drag) = &on_drag
+                {
+                    drag();
+                }
             }
         })
         .on_tap(move |e: Event<PressEventData>| {

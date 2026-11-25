@@ -397,11 +397,18 @@ impl Component for AppShell {
         rect()
             .expanded()
             .background(notin_ui_kit::palette().bg)
-            .on_global_file_hover(move |_| dragging.set(true))
+            .on_global_file_hover(move |_| {
+                if !crate::dropped_files::dragging_out() {
+                    dragging.set(true);
+                }
+            })
             .on_global_file_hover_cancelled(move |_| dragging.set(false))
             .on_file_drop(move |e: Event<FileEventData>| {
                 dragging.set(false);
-                crate::dropped_files::dropped(e.file_paths.clone());
+                // The app's own document, dragged out and let go on itself.
+                if !crate::dropped_files::dragging_out() {
+                    crate::dropped_files::dropped(e.file_paths.clone());
+                }
             })
             .on_sized({
                 let mut area = area;

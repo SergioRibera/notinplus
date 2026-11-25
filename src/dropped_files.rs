@@ -174,10 +174,10 @@ impl Component for DropOverlay {
 )))]
 #[sismo::function("dropped_files::listen_system")]
 pub(crate) fn listen_system(mut dragging: State<bool>) {
-    use istmo_drop::{DragState, DropInbox, DropOptions, FileDropClient};
+    use istmo_dnd::{DragAndDropClient, DragState, DropInbox, DropOptions};
 
     spawn_in_window(async move {
-        let listening = match FileDropClient::acquire() {
+        let listening = match DragAndDropClient::acquire() {
             Ok(client) => client.listen(DropOptions::any().with_folders()).await,
             Err(err) => Err(err),
         };
@@ -211,4 +211,31 @@ pub(crate) fn listen_system(mut dragging: State<bool>) {
             );
         }
     });
+}
+
+/// Whether the app is dragging one of its documents out (or just did):
+/// a drop arriving now is that drag let go on the app's own window.
+pub(crate) fn dragging_out() -> bool {
+    #[cfg(not(any(
+        target_os = "android",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+        target_os = "visionos",
+    )))]
+    {
+        crate::desktop::DROP_PUBLISHER
+            .get()
+            .is_some_and(|publisher| publisher.dragging_out())
+    }
+    #[cfg(any(
+        target_os = "android",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+        target_os = "visionos",
+    ))]
+    {
+        false
+    }
 }

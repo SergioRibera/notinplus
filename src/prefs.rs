@@ -74,8 +74,9 @@ impl Prefs {
     }
 }
 
-/// Per-doc view state: pan, zoom and the colour new text boxes start
-/// with. Primitive fields so the encoded shape is independent of
+/// Per-doc view state: pan, zoom and the colour new text boxes start with.
+///
+/// Primitive fields so the encoded shape is independent of
 /// [`Viewport`]'s derive stance. Fields only ever go at the end: older
 /// builds read the leading ones and ignore the rest.
 #[istmo::message]
@@ -232,6 +233,6 @@ mod tests {
         );
         // Older builds read the leading fields and ignore the colour.
         let read_by_old = notin_plugin::decode::<LegacyDocView>(&new).expect("old reader");
-        assert_eq!(read_by_old.scale, 3.0);
+        assert!((read_by_old.scale - 3.0).abs() < f32::EPSILON);
     }
 }

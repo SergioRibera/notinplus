@@ -25,7 +25,7 @@ pub(crate) static PEN_PUBLISHER: OnceLock<Arc<PenPublisher>> = OnceLock::new();
 
 /// Desktop side of `istmo.drop`. Kept for the whole run: dropping it
 /// closes the Wayland connection that receives drops there.
-pub(crate) static DROP_PUBLISHER: OnceLock<Arc<istmo_drop::DropPublisher>> = OnceLock::new();
+pub(crate) static DROP_PUBLISHER: OnceLock<Arc<istmo_dnd::DndPublisher>> = OnceLock::new();
 
 /// Install the process-global runtime and the pen backend. Idempotent
 /// callers should still invoke this exactly once — a second call fails
@@ -71,7 +71,7 @@ pub fn install() -> Result<Option<DocumentsPublisher>, Box<dyn std::error::Error
     // winit delivers no drops on Wayland: this takes them from the
     // compositor for the window registered with `istmo-window`. On X11,
     // Windows and macOS it stays idle and Freya's `on_file_drop` does it.
-    let drops = istmo_drop::register_desktop(&runtime);
+    let drops = istmo_dnd::register_desktop(&runtime);
     if let Err(err) = drops.follow_registry(istmo_window::WindowRegistry::global()) {
         tracing::warn!("drop backend unavailable: {err}");
     }

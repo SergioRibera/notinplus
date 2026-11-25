@@ -312,6 +312,13 @@ impl Columns {
     }
 }
 
+/// Drag the document out of the app, unless cards are being selected.
+fn drag_item(selection: State<Selection>, id: ItemId) {
+    if !selection.peek().active {
+        crate::drag_out::document(id);
+    }
+}
+
 #[sismo::function("home::open_item")]
 fn open_item(selection: State<Selection>, id: ItemId) {
     let mut selection = selection;
@@ -402,6 +409,7 @@ impl GridRow {
             drop_target: false,
             actions: CardActions {
                 on_open: EventHandler::new(move |()| open_folder(selection, id)),
+                on_drag: None,
                 on_menu: EventHandler::new(move |at| {
                     if selection.peek().active {
                         let mut selection = selection;
@@ -425,6 +433,7 @@ impl GridRow {
             actions: CardActions {
                 on_open: EventHandler::new(move |()| open_item(selection, id)),
                 on_menu: EventHandler::new(doc_menu(&self.data, selection, id)),
+                on_drag: Some(EventHandler::new(move |()| drag_item(selection, id))),
             },
         }
         .into_element()
@@ -676,6 +685,7 @@ impl Component for PinnedRow {
                     selecting: state.of_item(id),
                     actions: CardActions {
                         on_open: EventHandler::new(move |()| open_item(selection, id)),
+                        on_drag: Some(EventHandler::new(move |()| drag_item(selection, id))),
                         on_menu: EventHandler::new(move |at| {
                             if selection.peek().active {
                                 base_menu(at);
