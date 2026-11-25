@@ -1,6 +1,6 @@
 [package]
 name = "notin-plugin"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -31,7 +31,7 @@ pack = ["dep:zip"]
 [dependencies]
 # Spans for the sismo profiler; off unless an app turns it on.
 sismo = { version = "0.1.1", default-features = false, optional = true }
-notin-i18n = { version = "0.1.0-alpha.5", path = "../notin-i18n" }
+notin-i18n = { version = "0.1.0-alpha.6", path = "../notin-i18n" }
 uuid = { version = "1", features = ["v4"] }
 libloading = "0.8"
 flume = { version = "0.11", features = ["async"] }
@@ -40,7 +40,7 @@ wincode = { version = "0.6", default-features = false, features = ["derive", "st
 istmo-core = "0.1.1-alpha.7"
 bytes = "1"
 freya-core = "=0.5.0-rc.13"
-freya-markdown-editor = { version = "0.1.0-alpha.5", path = "../freya-markdown-editor", default-features = false }
+freya-markdown-editor = { version = "0.1.0-alpha.6", path = "../freya-markdown-editor", default-features = false }
 tracing = "0.1"
 # Library checksums in the manifest, checked before a library loads.
 sha2 = "0.10"
@@ -52,4 +52,4 @@ name = "notin-pack"
 required-features = ["pack"]
 
 [build-dependencies]
-notin-i18n = { version = "0.1.0-alpha.5", path = "../notin-i18n", features = ["build"] }
+notin-i18n = { version = "0.1.0-alpha.6", path = "../notin-i18n", features = ["build"] }

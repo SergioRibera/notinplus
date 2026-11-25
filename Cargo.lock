@@ -2585,7 +2585,7 @@ dependencies = [
 
 [[package]]
 name = "freya-canvas-bg"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "freya-engine",
  "sismo",
@@ -2709,7 +2709,7 @@ dependencies = [
 
 [[package]]
 name = "freya-markdown-diagrams"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "freya",
  "freya-markdown-editor",
@@ -2721,7 +2721,7 @@ dependencies = [
 
 [[package]]
 name = "freya-markdown-editor"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "comrak",
  "freya",
@@ -2736,7 +2736,7 @@ dependencies = [
 
 [[package]]
 name = "freya-markdown-math"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "freya",
  "freya-markdown-editor",
@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "freya-pdf"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "flume",
  "freya-canvas-bg",
@@ -4215,7 +4215,7 @@ dependencies = [
 
 [[package]]
 name = "istmo-installer"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "istmo-build",
  "istmo-core",
@@ -5379,11 +5379,11 @@ checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 
 [[package]]
 name = "notin-align"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 
 [[package]]
 name = "notin-beautify"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "sismo",
  "wincode",
@@ -5391,7 +5391,7 @@ dependencies = [
 
 [[package]]
 name = "notin-bible"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "async-io",
  "flate2",
@@ -5424,7 +5424,7 @@ dependencies = [
 
 [[package]]
 name = "notin-i18n"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "fluent",
  "fluent-syntax",
@@ -5434,7 +5434,7 @@ dependencies = [
 
 [[package]]
 name = "notin-notes"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "async-io",
  "freya",
@@ -5452,7 +5452,7 @@ dependencies = [
 
 [[package]]
 name = "notin-plugin"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "bytes",
  "flume",
@@ -5471,7 +5471,7 @@ dependencies = [
 
 [[package]]
 name = "notin-relay"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "notin-sync",
  "tracing",
@@ -5480,14 +5480,14 @@ dependencies = [
 
 [[package]]
 name = "notin-sdk"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "notin-plugin",
 ]
 
 [[package]]
 name = "notin-sync"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "blake2",
  "chacha20poly1305",
@@ -5507,7 +5507,7 @@ dependencies = [
 
 [[package]]
 name = "notin-ui-kit"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "async-io",
  "freya",
@@ -5521,7 +5521,7 @@ dependencies = [
 
 [[package]]
 name = "notinplus"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "async-io",
  "async-lock",

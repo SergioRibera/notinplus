@@ -7742,7 +7742,7 @@ rec {
       };
       "freya-canvas-bg" = rec {
         crateName = "freya-canvas-bg";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/freya-canvas-bg; };
         libName = "freya_canvas_bg";
@@ -8192,7 +8192,7 @@ rec {
       };
       "freya-markdown-diagrams" = rec {
         crateName = "freya-markdown-diagrams";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/freya-markdown-diagrams; };
         libName = "freya_markdown_diagrams";
@@ -8238,7 +8238,7 @@ rec {
       };
       "freya-markdown-editor" = rec {
         crateName = "freya-markdown-editor";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/freya-markdown-editor; };
         libName = "freya_markdown_editor";
@@ -8306,7 +8306,7 @@ rec {
       };
       "freya-markdown-math" = rec {
         crateName = "freya-markdown-math";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/freya-markdown-math; };
         libName = "freya_markdown_math";
@@ -8399,7 +8399,7 @@ rec {
       };
       "freya-pdf" = rec {
         crateName = "freya-pdf";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/freya-pdf; };
         libName = "freya_pdf";
@@ -13449,7 +13449,7 @@ rec {
       };
       "istmo-installer" = rec {
         crateName = "istmo-installer";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         links = "istmo_installer";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/istmo-installer; };
@@ -17002,7 +17002,7 @@ rec {
       };
       "notin-align" = rec {
         crateName = "notin-align";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/notin-align; };
         libName = "notin_align";
@@ -17013,7 +17013,7 @@ rec {
       };
       "notin-beautify" = rec {
         crateName = "notin-beautify";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/notin-beautify; };
         libName = "notin_beautify";
@@ -17041,7 +17041,7 @@ rec {
       };
       "notin-bible" = rec {
         crateName = "notin-bible";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/notin-bible; };
         libName = "notin_bible";type = [ "cdylib" "rlib" ];
@@ -17198,7 +17198,7 @@ rec {
       };
       "notin-i18n" = rec {
         crateName = "notin-i18n";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/notin-i18n; };
         libName = "notin_i18n";
@@ -17233,7 +17233,7 @@ rec {
       };
       "notin-notes" = rec {
         crateName = "notin-notes";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/notin-notes; };
         libName = "notin_notes";
@@ -17315,7 +17315,7 @@ rec {
       };
       "notin-plugin" = rec {
         crateName = "notin-plugin";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         crateBin = [
           {
@@ -17408,7 +17408,7 @@ rec {
       };
       "notin-relay" = rec {
         crateName = "notin-relay";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         crateBin = [
           {
@@ -17440,7 +17440,7 @@ rec {
       };
       "notin-sdk" = rec {
         crateName = "notin-sdk";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/notin-sdk; };
         libName = "notin_sdk";
@@ -17457,7 +17457,7 @@ rec {
       };
       "notin-sync" = rec {
         crateName = "notin-sync";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/notin-sync; };
         libName = "notin_sync";
@@ -17544,7 +17544,7 @@ rec {
       };
       "notin-ui-kit" = rec {
         crateName = "notin-ui-kit";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ../crates/notin-ui-kit; };
         libName = "notin_ui_kit";
@@ -17604,7 +17604,7 @@ rec {
       };
       "notinplus" = rec {
         crateName = "notinplus";
-        version = "0.1.0-alpha.5";
+        version = "0.1.0-alpha.6";
         edition = "2024";
         crateBin = [
           {
