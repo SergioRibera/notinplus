@@ -7106,12 +7106,20 @@ rec {
         authors = [
           "Mike Dilger <mike@mikedilger.com>"
         ];
+        dependencies = [
+          {
+            name = "num-traits";
+            packageId = "num-traits";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+        ];
         features = {
           "default" = [ "ratio" ];
           "num-traits" = [ "dep:num-traits" ];
           "ratio" = [ "num-traits" ];
         };
-        resolvedDefaultFeatures = [ "std" ];
+        resolvedDefaultFeatures = [ "default" "num-traits" "ratio" "std" ];
       };
       "fluent" = rec {
         crateName = "fluent";
@@ -7354,6 +7362,24 @@ rec {
         };
         resolvedDefaultFeatures = [ "bytemuck" "std" ];
       };
+      "fontconfig-parser" = rec {
+        crateName = "fontconfig-parser";
+        version = "0.5.8";
+        edition = "2018";
+        sha256 = "0ijnbzg31sl6v49g7q2l7sl76hjj8z0hvlsz77cdvm029vi77ixv";
+        libName = "fontconfig_parser";
+        dependencies = [
+          {
+            name = "roxmltree";
+            packageId = "roxmltree 0.20.0";
+          }
+        ];
+        features = {
+          "log" = [ "dep:log" ];
+          "serde" = [ "dep:serde" ];
+          "serialize" = [ "serde" ];
+        };
+      };
       "fontdb" = rec {
         crateName = "fontdb";
         version = "0.23.0";
@@ -7364,8 +7390,20 @@ rec {
         ];
         dependencies = [
           {
+            name = "fontconfig-parser";
+            packageId = "fontconfig-parser";
+            optional = true;
+            usesDefaultFeatures = false;
+            target = { target, features }: ((target."unix" or false) && (!(("macos" == target."os" or null) || ("android" == target."os" or null))));
+          }
+          {
             name = "log";
             packageId = "log";
+          }
+          {
+            name = "memmap2";
+            packageId = "memmap2";
+            optional = true;
           }
           {
             name = "slotmap";
@@ -7393,6 +7431,7 @@ rec {
           "memmap2" = [ "dep:memmap2" ];
           "std" = [ "ttf-parser/std" ];
         };
+        resolvedDefaultFeatures = [ "default" "fontconfig" "fontconfig-parser" "fs" "memmap" "memmap2" "std" ];
       };
       "foreign-types 0.3.2" = rec {
         crateName = "foreign-types";
@@ -8302,6 +8341,11 @@ rec {
             packageId = "typst-layout";
           }
           {
+            name = "typst-pdf";
+            packageId = "typst-pdf";
+            optional = true;
+          }
+          {
             name = "typst-svg";
             packageId = "typst-svg";
           }
@@ -8313,9 +8357,10 @@ rec {
           }
         ];
         features = {
+          "pdf" = [ "dep:typst-pdf" ];
           "sismo" = [ "dep:sismo" ];
         };
-        resolvedDefaultFeatures = [ "sismo" ];
+        resolvedDefaultFeatures = [ "pdf" "sismo" ];
       };
       "freya-metrics-plugin" = rec {
         crateName = "freya-metrics-plugin";
@@ -10908,6 +10953,35 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "images" "std" "unsafe" ];
       };
+      "hayro-write" = rec {
+        crateName = "hayro-write";
+        version = "0.7.0";
+        edition = "2024";
+        sha256 = "0fkjsbhq3y7g6jpf3bi7igl9ll57m49i9mihzwjasyliqj9dpcx0";
+        libName = "hayro_write";
+        authors = [
+          "Laurenz Stampfl <laurenz.stampfl@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "flate2";
+            packageId = "flate2";
+          }
+          {
+            name = "hayro-syntax";
+            packageId = "hayro-syntax";
+            usesDefaultFeatures = false;
+            features = [ "std" "unsafe" ];
+          }
+          {
+            name = "pdf-writer";
+            packageId = "pdf-writer";
+          }
+        ];
+        features = {
+          "logging" = [ "dep:log" "hayro-syntax/logging" ];
+        };
+      };
       "heapless 0.7.17" = rec {
         crateName = "heapless";
         version = "0.7.17";
@@ -12716,6 +12790,20 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "rayon" "serde" "std" ];
       };
+      "infer" = rec {
+        crateName = "infer";
+        version = "0.19.0";
+        edition = "2018";
+        sha256 = "1xzwzzg7s3i9jhcd304rb7b7838zkcysd67gmhffg4pxzmmr3255";
+        authors = [
+          "Bojan <dbojan@gmail.com>"
+        ];
+        features = {
+          "cfb" = [ "dep:cfb" ];
+          "default" = [ "std" ];
+          "std" = [ "alloc" "cfb" ];
+        };
+      };
       "inout" = rec {
         crateName = "inout";
         version = "0.1.4";
@@ -12869,9 +12957,9 @@ rec {
       };
       "istmo" = rec {
         crateName = "istmo";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
-        sha256 = "1xkji9nc45dlm6278c14s5hsbxrqsck8bz9vxhnpqry6pd4jvka8";
+        sha256 = "1c5y7inpr6abvn9pfmyc73hpd0gl93vp31ys87xyh3xkij6xmxfw";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
           "istmo contributors"
@@ -12911,9 +12999,9 @@ rec {
       };
       "istmo-android" = rec {
         crateName = "istmo-android";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
-        sha256 = "0vk4pwwzqbdi3ghr7ipc91m9d4n5dldnzx20jlqawk6v9ngl9xkh";
+        sha256 = "0pblzf6dswkckg29pxwpg131f2wvwsvriwqln7il5wnz3n7av1d4";
         libName = "istmo_android";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -12968,10 +13056,10 @@ rec {
       };
       "istmo-build" = rec {
         crateName = "istmo-build";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
         crateBin = [];
-        sha256 = "0nh4fllf35jj9a59p860pkl7f8vw8qaaj0y4g7mhdqhl31m2qaww";
+        sha256 = "0l9imqd8a2r7r1wrkwp1l0mxnjgg489aj5svi7azddn2hvwffp0l";
         libName = "istmo_build";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13044,10 +13132,10 @@ rec {
       };
       "istmo-camera" = rec {
         crateName = "istmo-camera";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
         links = "istmo_camera";
-        sha256 = "17c6d56rj4cgp2bfglrpbbs9kmpacrvwcbhh8bcrhdjmjb2w2kqh";
+        sha256 = "0xhhdfqra388bnh8rkvpdh5bv51s57mncfgxxg15mwk5fqchc1kv";
         libName = "istmo_camera";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13109,9 +13197,9 @@ rec {
       };
       "istmo-core" = rec {
         crateName = "istmo-core";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
-        sha256 = "017bvg0rzbprxg9hx5kmkflyz631dgsnyf009x11macsbgg9a1ik";
+        sha256 = "0jxjgxqfd1kr6nh1y5nd35v5r9ps2m1y91n7b0arpg6lxlxf7qsb";
         libName = "istmo_core";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13156,10 +13244,10 @@ rec {
       };
       "istmo-data-store" = rec {
         crateName = "istmo-data-store";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
         links = "istmo_data_store";
-        sha256 = "17sh9c479s6a33a354zw7f8wzw908da645ljygas53yggixr8570";
+        sha256 = "19h1x6jcbr1xwfzazy0py02wfb4knpxvqmma5c1dzqda845aldw7";
         libName = "istmo_data_store";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13205,12 +13293,124 @@ rec {
         ];
 
       };
+      "istmo-dnd" = rec {
+        crateName = "istmo-dnd";
+        version = "0.1.1-alpha.7";
+        edition = "2024";
+        links = "istmo_dnd";
+        sha256 = "182p489s6dxgiqi4k908v21w8dzqpy8h8aqq3hqqiypkrk3drzs1";
+        libName = "istmo_dnd";
+        authors = [
+          "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
+          "istmo contributors"
+        ];
+        dependencies = [
+          {
+            name = "dispatch2";
+            packageId = "dispatch2";
+            usesDefaultFeatures = false;
+            target = { target, features }: ("macos" == target."os" or null);
+            features = [ "std" "objc2" ];
+          }
+          {
+            name = "flume";
+            packageId = "flume";
+            usesDefaultFeatures = false;
+            features = [ "async" "select" ];
+          }
+          {
+            name = "istmo-core";
+            packageId = "istmo-core";
+          }
+          {
+            name = "istmo-macros";
+            packageId = "istmo-macros";
+          }
+          {
+            name = "istmo-window";
+            packageId = "istmo-window";
+            target = { target, features }: (!(("android" == target."os" or null) || ("ios" == target."os" or null)));
+          }
+          {
+            name = "objc2";
+            packageId = "objc2 0.6.5";
+            target = { target, features }: ("macos" == target."os" or null);
+          }
+          {
+            name = "objc2-app-kit";
+            packageId = "objc2-app-kit 0.3.2";
+            usesDefaultFeatures = false;
+            target = { target, features }: ("macos" == target."os" or null);
+            features = [ "std" "NSApplication" "NSDragging" "NSDraggingItem" "NSDraggingSession" "NSEvent" "NSImage" "NSPasteboard" "NSResponder" "NSView" "NSWorkspace" "objc2-core-foundation" ];
+          }
+          {
+            name = "objc2-foundation";
+            packageId = "objc2-foundation 0.3.2";
+            usesDefaultFeatures = false;
+            target = { target, features }: ("macos" == target."os" or null);
+            features = [ "std" "NSArray" "NSData" "NSGeometry" "NSObject" "NSString" "NSURL" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+          {
+            name = "wayland-backend";
+            packageId = "wayland-backend";
+            target = { target, features }: ("linux" == target."os" or null);
+            features = [ "client_system" ];
+          }
+          {
+            name = "wayland-client";
+            packageId = "wayland-client";
+            target = { target, features }: ("linux" == target."os" or null);
+          }
+          {
+            name = "windows";
+            packageId = "windows";
+            target = { target, features }: ("windows" == target."os" or null);
+            features = [ "Win32_Foundation" "Win32_Graphics_Gdi" "Win32_System_Com" "Win32_System_Com_StructuredStorage" "Win32_System_Memory" "Win32_System_Ole" "Win32_System_SystemServices" "Win32_UI_Input_KeyboardAndMouse" "Win32_UI_Shell" "Win32_UI_Shell_Common" "Win32_UI_WindowsAndMessaging" ];
+          }
+          {
+            name = "x11rb";
+            packageId = "x11rb";
+            target = { target, features }: ("linux" == target."os" or null);
+          }
+          {
+            name = "zbus";
+            packageId = "zbus";
+            usesDefaultFeatures = false;
+            target = { target, features }: ("linux" == target."os" or null);
+            features = [ "blocking-api" "async-io" ];
+          }
+        ];
+        buildDependencies = [
+          {
+            name = "istmo-build";
+            packageId = "istmo-build";
+          }
+        ];
+        devDependencies = [
+          {
+            name = "istmo-build";
+            packageId = "istmo-build";
+          }
+          {
+            name = "istmo-window";
+            packageId = "istmo-window";
+            target = { target, features }: (!(("android" == target."os" or null) || ("ios" == target."os" or null)));
+          }
+        ];
+
+      };
       "istmo-file-picker" = rec {
         crateName = "istmo-file-picker";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
         links = "istmo_file_picker";
-        sha256 = "1m95hq8h9y68cgl614iqp1jlwqvaaxndi8pc1px3j54srxznnnbi";
+        sha256 = "1a585qnxd4y295apk3764pklwlp0aa3l27il0wy5g4yl700zh55a";
         libName = "istmo_file_picker";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13283,9 +13483,9 @@ rec {
       };
       "istmo-ios" = rec {
         crateName = "istmo-ios";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
-        sha256 = "01vz48rxq2kay175scgd21kww4z454mp81ah21x2p83fpxbbn33d";
+        sha256 = "1bx5qhnzldqmrzza9d5r2ni34hz5n1ykhfqwbhyg1ki8l9vqzyga";
         libName = "istmo_ios";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13325,9 +13525,9 @@ rec {
       };
       "istmo-macros" = rec {
         crateName = "istmo-macros";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
-        sha256 = "08bb33hvzpjkaa181v2wv4sirwh353g071fpymlwmxba8cxxr288";
+        sha256 = "05rfs5f5lha8hl05kqjml3qqcdqb9ikmf19qxks0ssc35cy4c1vw";
         procMacro = true;
         libName = "istmo_macros";
         authors = [
@@ -13356,10 +13556,10 @@ rec {
       };
       "istmo-opener" = rec {
         crateName = "istmo-opener";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
         links = "istmo_opener";
-        sha256 = "0ay6hp83g800g6j0kbs8d7cb913hfs5lski7w2zc6r6an1988nfl";
+        sha256 = "1l2g8jicxhd4n1gjh6lwpkxzafw5wyqn7krrczs8jhkbm3fpvflp";
         libName = "istmo_opener";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13391,10 +13591,10 @@ rec {
       };
       "istmo-pen" = rec {
         crateName = "istmo-pen";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
         links = "istmo_pen";
-        sha256 = "1q978rq5v2p06dhsingxxk8wicwxwd5vxngnb343sr43ylnazz9y";
+        sha256 = "1v5imqzpdkycmyqr3m34nm485r994ggy2x3x0gd7zdzjzhc6vxkb";
         libName = "istmo_pen";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13501,9 +13701,9 @@ rec {
       };
       "istmo-plugins" = rec {
         crateName = "istmo-plugins";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
-        sha256 = "0988270jckara84494lfbx7jm27rsdfpqlgdmyh5ppaj5wsaidyq";
+        sha256 = "0kgial69kk1v01w0iw1h86b92cf1jd54dnw8mjnxc2png7h8h5a2";
         libName = "istmo_plugins";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13601,9 +13801,9 @@ rec {
       };
       "istmo-plugins-schema" = rec {
         crateName = "istmo-plugins-schema";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
-        sha256 = "1v2i4mdg733yc9i050qx4v2krb4wdh6cllmf4scslby7q8l95c0w";
+        sha256 = "131crj3lz5g63yr1a6zybngdamzbymxj4qzxqm3h2cbxn73hrdsk";
         libName = "istmo_plugins_schema";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13619,10 +13819,10 @@ rec {
       };
       "istmo-share" = rec {
         crateName = "istmo-share";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
         links = "istmo_share";
-        sha256 = "0n118navz90rp3zgwh8z7v245n6wfm7b5zv8c378y7nfvjgny360";
+        sha256 = "1ar1pfn28nin1in3fg9laz9fjs113m2yjgk42v6yvc637xigqm8i";
         libName = "istmo_share";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -13728,9 +13928,9 @@ rec {
       };
       "istmo-window" = rec {
         crateName = "istmo-window";
-        version = "0.1.1-alpha.6";
+        version = "0.1.1-alpha.7";
         edition = "2024";
-        sha256 = "1x9wlvgfmhc49plsvs9g0f7k7dzz90b6wxgx9q8w6h7dljd67msl";
+        sha256 = "1q9jmhhxw3lzd41qxh3myw0z2q731la12in3vxa4n6dxjlrc552m";
         libName = "istmo_window";
         authors = [
           "Sergio Ribera <sergioalejandroriberacosta@gmail.com>"
@@ -14205,6 +14405,177 @@ rec {
         features = {
         };
         resolvedDefaultFeatures = [ "rust_1_51" "rust_1_55" "rust_1_56" "rust_1_57" "rust_1_61" ];
+      };
+      "krilla" = rec {
+        crateName = "krilla";
+        version = "0.8.2";
+        edition = "2021";
+        sha256 = "0csyrr7irs1c66c9hm7s12mm6gpcpqmkrdxfbjkfn3mjk0qmkni7";
+        authors = [
+          "Laurenz Stampfl <laurenz.stampfl@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "base64";
+            packageId = "base64 0.22.1";
+          }
+          {
+            name = "bumpalo";
+            packageId = "bumpalo";
+          }
+          {
+            name = "comemo";
+            packageId = "comemo";
+            optional = true;
+          }
+          {
+            name = "flate2";
+            packageId = "flate2";
+          }
+          {
+            name = "float-cmp";
+            packageId = "float-cmp";
+          }
+          {
+            name = "gif";
+            packageId = "gif";
+            optional = true;
+          }
+          {
+            name = "hayro-write";
+            packageId = "hayro-write";
+            optional = true;
+          }
+          {
+            name = "image-webp";
+            packageId = "image-webp";
+            optional = true;
+          }
+          {
+            name = "imagesize";
+            packageId = "imagesize";
+            optional = true;
+          }
+          {
+            name = "indexmap";
+            packageId = "indexmap";
+          }
+          {
+            name = "pdf-writer";
+            packageId = "pdf-writer";
+          }
+          {
+            name = "png";
+            packageId = "png";
+            optional = true;
+          }
+          {
+            name = "rayon";
+            packageId = "rayon";
+            optional = true;
+          }
+          {
+            name = "rustc-hash";
+            packageId = "rustc-hash 2.1.3";
+          }
+          {
+            name = "rustybuzz";
+            packageId = "rustybuzz";
+            optional = true;
+          }
+          {
+            name = "siphasher";
+            packageId = "siphasher";
+          }
+          {
+            name = "skrifa";
+            packageId = "skrifa";
+          }
+          {
+            name = "smallvec";
+            packageId = "smallvec";
+            features = [ "union" "const_new" "write" ];
+          }
+          {
+            name = "subsetter";
+            packageId = "subsetter";
+            features = [ "variable-fonts" ];
+          }
+          {
+            name = "tiny-skia-path";
+            packageId = "tiny-skia-path 0.12.0";
+          }
+          {
+            name = "xmp-writer";
+            packageId = "xmp-writer";
+          }
+          {
+            name = "yoke";
+            packageId = "yoke";
+            features = [ "derive" ];
+          }
+          {
+            name = "zune-jpeg";
+            packageId = "zune-jpeg 0.5.15";
+            optional = true;
+          }
+        ];
+        features = {
+          "comemo" = [ "dep:comemo" ];
+          "default" = [ "raster-images" "simple-text" ];
+          "pdf" = [ "dep:hayro-write" ];
+          "raster-images" = [ "dep:png" "dep:zune-jpeg" "dep:gif" "dep:image-webp" "dep:imagesize" ];
+          "rayon" = [ "dep:rayon" ];
+          "simple-text" = [ "dep:rustybuzz" ];
+        };
+        resolvedDefaultFeatures = [ "comemo" "default" "pdf" "raster-images" "rayon" "simple-text" ];
+      };
+      "krilla-svg" = rec {
+        crateName = "krilla-svg";
+        version = "0.8.1";
+        edition = "2021";
+        sha256 = "05nfqyzl62mwcb03bvnf9ajgj8fk20xf3pbj5sy9zjhngg1xfdqj";
+        libName = "krilla_svg";
+        authors = [
+          "Laurenz Stampfl <laurenz.stampfl@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "flate2";
+            packageId = "flate2";
+          }
+          {
+            name = "fontdb";
+            packageId = "fontdb";
+          }
+          {
+            name = "krilla";
+            packageId = "krilla";
+            features = [ "raster-images" ];
+          }
+          {
+            name = "resvg";
+            packageId = "resvg";
+          }
+          {
+            name = "skrifa";
+            packageId = "skrifa";
+          }
+          {
+            name = "smallvec";
+            packageId = "smallvec";
+            features = [ "union" "const_new" "write" ];
+          }
+          {
+            name = "tiny-skia";
+            packageId = "tiny-skia 0.12.0";
+          }
+          {
+            name = "usvg";
+            packageId = "usvg";
+          }
+        ];
+
       };
       "kurbo" = rec {
         crateName = "kurbo";
@@ -16812,6 +17183,12 @@ rec {
             features = [ "build" ];
           }
         ];
+        devDependencies = [
+          {
+            name = "freya-testing";
+            packageId = "freya-testing";
+          }
+        ];
         features = {
           "importer" = [ "dep:reqwest" "dep:serde" "dep:serde_json" "dep:flate2" "dep:sha2" ];
           "sismo" = [ "dep:sismo" ];
@@ -16883,6 +17260,11 @@ rec {
             packageId = "freya-markdown-editor";
             usesDefaultFeatures = false;
             features = [ "toolbar" ];
+          }
+          {
+            name = "freya-markdown-math";
+            packageId = "freya-markdown-math";
+            features = [ "pdf" ];
           }
           {
             name = "notin-sdk";
@@ -17338,6 +17720,10 @@ rec {
           {
             name = "istmo-data-store";
             packageId = "istmo-data-store";
+          }
+          {
+            name = "istmo-dnd";
+            packageId = "istmo-dnd";
           }
           {
             name = "istmo-file-picker";
@@ -21478,6 +21864,36 @@ rec {
         ];
 
       };
+      "pdf-writer" = rec {
+        crateName = "pdf-writer";
+        version = "0.15.0";
+        edition = "2021";
+        sha256 = "0lzplynwmkid1fjhpm3mcjavsqmidzf7fjgqpx3l0c3s9a35dr7m";
+        libName = "pdf_writer";
+        authors = [
+          "Laurenz <laurmaedje@gmail.com>"
+          "Martin Haug <mhaug@live.de>"
+        ];
+        dependencies = [
+          {
+            name = "bitflags";
+            packageId = "bitflags 2.13.2";
+          }
+          {
+            name = "itoa";
+            packageId = "itoa";
+          }
+          {
+            name = "memchr";
+            packageId = "memchr";
+          }
+          {
+            name = "ryu";
+            packageId = "ryu";
+          }
+        ];
+
+      };
       "pdfium-render" = rec {
         crateName = "pdfium-render";
         version = "0.9.5";
@@ -24248,7 +24664,7 @@ rec {
           "serde" = [ "dep:serde" "font-types/serde" ];
           "std" = [ "font-types/std" ];
         };
-        resolvedDefaultFeatures = [ "std" ];
+        resolvedDefaultFeatures = [ "default" "std" ];
       };
       "reborrow" = rec {
         crateName = "reborrow";
@@ -24790,6 +25206,16 @@ rec {
         sha256 = "10cfzm1ldb2vmwcrsdfjdzmb7f4814xh7j746dpsjsi1danq7qcv";
         dependencies = [
           {
+            name = "gif";
+            packageId = "gif";
+            optional = true;
+          }
+          {
+            name = "image-webp";
+            packageId = "image-webp";
+            optional = true;
+          }
+          {
             name = "log";
             packageId = "log";
           }
@@ -24815,6 +25241,11 @@ rec {
             packageId = "usvg";
             usesDefaultFeatures = false;
           }
+          {
+            name = "zune-jpeg";
+            packageId = "zune-jpeg 0.5.15";
+            optional = true;
+          }
         ];
         features = {
           "default" = [ "text" "system-fonts" "memmap-fonts" "raster-images" ];
@@ -24825,7 +25256,7 @@ rec {
           "system-fonts" = [ "usvg/system-fonts" ];
           "text" = [ "usvg/text" ];
         };
-        resolvedDefaultFeatures = [ "text" ];
+        resolvedDefaultFeatures = [ "default" "gif" "image-webp" "memmap-fonts" "raster-images" "system-fonts" "text" ];
       };
       "rfd" = rec {
         crateName = "rfd";
@@ -25238,7 +25669,20 @@ rec {
           "serde1" = [ "serde" "text-size/serde" ];
         };
       };
-      "roxmltree" = rec {
+      "roxmltree 0.20.0" = rec {
+        crateName = "roxmltree";
+        version = "0.20.0";
+        edition = "2021";
+        sha256 = "15vw91ps91wkmmgy62khf9zb63bdinvm80957dascbsw7dwvc83c";
+        authors = [
+          "Yevhenii Reizner <razrfalcon@gmail.com>"
+        ];
+        features = {
+          "default" = [ "std" "positions" ];
+        };
+        resolvedDefaultFeatures = [ "default" "positions" "std" ];
+      };
+      "roxmltree 0.21.2" = rec {
         crateName = "roxmltree";
         version = "0.21.2";
         edition = "2021";
@@ -27017,7 +27461,7 @@ rec {
           "serde" = [ "dep:serde" ];
           "unty" = [ "dep:unty" ];
         };
-        resolvedDefaultFeatures = [ "const_generics" "const_new" "serde" "union" ];
+        resolvedDefaultFeatures = [ "const_generics" "const_new" "serde" "union" "write" ];
       };
       "smithay-client-toolkit 0.19.2" = rec {
         crateName = "smithay-client-toolkit";
@@ -27897,6 +28341,48 @@ rec {
           }
         ];
 
+      };
+      "subsetter" = rec {
+        crateName = "subsetter";
+        version = "0.2.6";
+        edition = "2021";
+        sha256 = "1mkafnbw4j14yy5gi74hrh8ygbyjllwm8ifbxg2nccf2s60k501q";
+        authors = [
+          "Laurenz Mädje <laurmaedje@gmail.com>"
+          "Laurenz Stampfl <laurenz.stampfl@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "kurbo";
+            packageId = "kurbo";
+            optional = true;
+          }
+          {
+            name = "rustc-hash";
+            packageId = "rustc-hash 2.1.3";
+          }
+          {
+            name = "skrifa";
+            packageId = "skrifa";
+            optional = true;
+          }
+          {
+            name = "write-fonts";
+            packageId = "write-fonts";
+            optional = true;
+          }
+        ];
+        devDependencies = [
+          {
+            name = "skrifa";
+            packageId = "skrifa";
+          }
+        ];
+        features = {
+          "default" = [ "variable-fonts" ];
+          "variable-fonts" = [ "dep:skrifa" "dep:write-fonts" "dep:kurbo" ];
+        };
+        resolvedDefaultFeatures = [ "default" "variable-fonts" ];
       };
       "subtle" = rec {
         crateName = "subtle";
@@ -30628,7 +31114,7 @@ rec {
           }
           {
             name = "roxmltree";
-            packageId = "roxmltree";
+            packageId = "roxmltree 0.21.2";
           }
           {
             name = "rust_decimal";
@@ -30783,6 +31269,113 @@ rec {
             name = "syn";
             packageId = "syn 2.0.119";
             features = [ "full" "extra-traits" ];
+          }
+        ];
+
+      };
+      "typst-pdf" = rec {
+        crateName = "typst-pdf";
+        version = "0.15.1";
+        edition = "2024";
+        sha256 = "0zrvidbch3n03slx83p076j56k96zz85vkjp60pm81p6ycgq9vrs";
+        libName = "typst_pdf";
+        authors = [
+          "The Typst Project Developers"
+        ];
+        dependencies = [
+          {
+            name = "az";
+            packageId = "az";
+          }
+          {
+            name = "bytemuck";
+            packageId = "bytemuck";
+          }
+          {
+            name = "codex";
+            packageId = "codex";
+          }
+          {
+            name = "comemo";
+            packageId = "comemo";
+          }
+          {
+            name = "ecow";
+            packageId = "ecow";
+            features = [ "serde" ];
+          }
+          {
+            name = "flate2";
+            packageId = "flate2";
+            features = [ "zlib-rs" ];
+          }
+          {
+            name = "image";
+            packageId = "image";
+            usesDefaultFeatures = false;
+            features = [ "png" "jpeg" "gif" "webp" ];
+          }
+          {
+            name = "indexmap";
+            packageId = "indexmap";
+            features = [ "serde" "rayon" ];
+          }
+          {
+            name = "infer";
+            packageId = "infer";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "krilla";
+            packageId = "krilla";
+            usesDefaultFeatures = false;
+            features = [ "raster-images" "comemo" "rayon" "pdf" ];
+          }
+          {
+            name = "krilla-svg";
+            packageId = "krilla-svg";
+          }
+          {
+            name = "rustc-hash";
+            packageId = "rustc-hash 2.1.3";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "smallvec";
+            packageId = "smallvec";
+            features = [ "union" "const_generics" "const_new" ];
+          }
+          {
+            name = "typst-assets";
+            packageId = "typst-assets";
+          }
+          {
+            name = "typst-layout";
+            packageId = "typst-layout";
+          }
+          {
+            name = "typst-library";
+            packageId = "typst-library";
+          }
+          {
+            name = "typst-macros";
+            packageId = "typst-macros";
+          }
+          {
+            name = "typst-syntax";
+            packageId = "typst-syntax";
+          }
+          {
+            name = "typst-timing";
+            packageId = "typst-timing";
+          }
+          {
+            name = "typst-utils";
+            packageId = "typst-utils";
           }
         ];
 
@@ -31611,7 +32204,7 @@ rec {
           }
           {
             name = "roxmltree";
-            packageId = "roxmltree";
+            packageId = "roxmltree 0.21.2";
           }
           {
             name = "rustybuzz";
@@ -31676,7 +32269,7 @@ rec {
           "unicode-script" = [ "dep:unicode-script" ];
           "unicode-vo" = [ "dep:unicode-vo" ];
         };
-        resolvedDefaultFeatures = [ "fontdb" "rustybuzz" "text" "ttf-parser" "unicode-bidi" "unicode-script" "unicode-vo" ];
+        resolvedDefaultFeatures = [ "default" "fontdb" "memmap-fonts" "rustybuzz" "system-fonts" "text" "ttf-parser" "unicode-bidi" "unicode-script" "unicode-vo" ];
       };
       "utf-8" = rec {
         crateName = "utf-8";
@@ -34422,7 +35015,7 @@ rec {
           "default" = [ "std" ];
           "std" = [ "windows-collections/std" "windows-core/std" "windows-future/std" "windows-numerics/std" ];
         };
-        resolvedDefaultFeatures = [ "ApplicationModel" "ApplicationModel_Activation" "ApplicationModel_DataTransfer" "ApplicationModel_DataTransfer_ShareTarget" "Foundation" "Foundation_Collections" "Foundation_Metadata" "Storage" "Storage_Search" "Storage_Streams" "UI" "UI_ViewManagement" "Win32" "Win32_Foundation" "Win32_Globalization" "Win32_Graphics" "Win32_Graphics_Gdi" "Win32_Media" "Win32_Media_DirectShow" "Win32_Media_KernelStreaming" "Win32_Media_MediaFoundation" "Win32_Storage" "Win32_Storage_Packaging" "Win32_Storage_Packaging_Appx" "Win32_System" "Win32_System_Com" "Win32_System_LibraryLoader" "Win32_System_Ole" "Win32_System_Threading" "Win32_System_Variant" "Win32_System_WinRT" "Win32_UI" "Win32_UI_Accessibility" "Win32_UI_Input" "Win32_UI_Input_KeyboardAndMouse" "Win32_UI_Shell" "Win32_UI_WindowsAndMessaging" "default" "std" ];
+        resolvedDefaultFeatures = [ "ApplicationModel" "ApplicationModel_Activation" "ApplicationModel_DataTransfer" "ApplicationModel_DataTransfer_ShareTarget" "Foundation" "Foundation_Collections" "Foundation_Metadata" "Storage" "Storage_Search" "Storage_Streams" "UI" "UI_ViewManagement" "Win32" "Win32_Foundation" "Win32_Globalization" "Win32_Graphics" "Win32_Graphics_Gdi" "Win32_Media" "Win32_Media_DirectShow" "Win32_Media_KernelStreaming" "Win32_Media_MediaFoundation" "Win32_Storage" "Win32_Storage_Packaging" "Win32_Storage_Packaging_Appx" "Win32_System" "Win32_System_Com" "Win32_System_Com_StructuredStorage" "Win32_System_LibraryLoader" "Win32_System_Memory" "Win32_System_Ole" "Win32_System_SystemServices" "Win32_System_Threading" "Win32_System_Variant" "Win32_System_WinRT" "Win32_UI" "Win32_UI_Accessibility" "Win32_UI_Input" "Win32_UI_Input_KeyboardAndMouse" "Win32_UI_Shell" "Win32_UI_Shell_Common" "Win32_UI_WindowsAndMessaging" "default" "std" ];
       };
       "windows-collections" = rec {
         crateName = "windows-collections";
@@ -37173,6 +37766,49 @@ rec {
           "rustc-dep-of-std" = [ "dep:core" "dep:alloc" ];
         };
       };
+      "write-fonts" = rec {
+        crateName = "write-fonts";
+        version = "0.48.1";
+        edition = "2021";
+        sha256 = "1n6864s8vq7vr9xjcf1l9a7ak22pj07jfbxdl5lwrslk9m61swyb";
+        libName = "write_fonts";
+        dependencies = [
+          {
+            name = "font-types";
+            packageId = "font-types";
+          }
+          {
+            name = "indexmap";
+            packageId = "indexmap";
+          }
+          {
+            name = "kurbo";
+            packageId = "kurbo";
+          }
+          {
+            name = "log";
+            packageId = "log";
+          }
+          {
+            name = "read-fonts";
+            packageId = "read-fonts";
+          }
+        ];
+        devDependencies = [
+          {
+            name = "read-fonts";
+            packageId = "read-fonts";
+            usesDefaultFeatures = false;
+            features = [ "codegen_test" "experimental_traverse" ];
+          }
+        ];
+        features = {
+          "dot2" = [ "dep:dot2" ];
+          "ift" = [ "read-fonts/ift" ];
+          "serde" = [ "dep:serde" "font-types/serde" "read-fonts/serde" ];
+        };
+        resolvedDefaultFeatures = [ "default" ];
+      };
       "write16" = rec {
         crateName = "write16";
         version = "1.0.0";
@@ -37498,6 +38134,20 @@ rec {
           "Evgeniy Reizner <razrfalcon@gmail.com>"
         ];
 
+      };
+      "xmp-writer" = rec {
+        crateName = "xmp-writer";
+        version = "0.3.3";
+        edition = "2021";
+        sha256 = "1vmcigiyl5zl30sciknhrlw541klaa1sy3gp7b30mfzab8zflh4l";
+        libName = "xmp_writer";
+        authors = [
+          "Martin Haug <mhaug@live.de>"
+        ];
+        features = {
+          "default" = [ "pdfa" ];
+        };
+        resolvedDefaultFeatures = [ "default" "pdfa" ];
       };
       "xxhash-rust" = rec {
         crateName = "xxhash-rust";

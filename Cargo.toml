@@ -39,17 +39,17 @@ path = "src/main.rs"
 # The istmo facade's default feature enables `native-activity`; the pen
 # plugin needs Kotlin-side `MotionEvent` interception, which only fires
 # under `GameActivity`. Switch the activity flavor at the facade level.
-istmo = { version = "0.1.1-alpha.6", default-features = false, features = [
+istmo = { version = "0.1.1-alpha.7", default-features = false, features = [
     "game-activity",
 ] }
-istmo-pen = "0.1.1-alpha.6"
-istmo-file-picker = "0.1.1-alpha.6"
-istmo-data-store = "0.1.1-alpha.6"
-istmo-share = "0.1.1-alpha.6"
-istmo-camera = "0.1.1-alpha.6"
+istmo-pen = "0.1.1-alpha.7"
+istmo-file-picker = "0.1.1-alpha.7"
+istmo-data-store = "0.1.1-alpha.7"
+istmo-share = "0.1.1-alpha.7"
+istmo-camera = "0.1.1-alpha.7"
 rqrr = "0.10"
-istmo-opener = "0.1.1-alpha.6"
-istmo-dnd = "0.1.1-alpha.6"
+istmo-opener = "0.1.1-alpha.7"
+istmo-dnd = "0.1.1-alpha.7"
 freya = { version = "=0.5.0-rc.13", features = ["router", "icons", "icons-lucide"] }
 freya-engine = "=0.5.0-rc.13"
 freya-components = "=0.5.0-rc.13"
@@ -111,9 +111,9 @@ winit = { version = "0.30", features = ["android-game-activity"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos")))'.dependencies]
 # Samples the desktop locale for the interface language.
-istmo-plugins = "0.1.1-alpha.6"
-istmo-window = "0.1.1-alpha.6"
-istmo-camera = { version = "0.1.1-alpha.6", features = ["desktop"] }
+istmo-plugins = "0.1.1-alpha.7"
+istmo-window = "0.1.1-alpha.7"
+istmo-camera = { version = "0.1.1-alpha.7", features = ["desktop"] }
 
 [target."cfg(unix)".dependencies]
 # `O_NONBLOCK` / `O_NOCTTY` for opening files the system hands over.
@@ -125,28 +125,10 @@ log = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
 
 [build-dependencies]
-istmo-build = "0.1.1-alpha.6"
+istmo-build = "0.1.1-alpha.7"
 notin-i18n = { version = "0.1.0-alpha.5", path = "crates/notin-i18n", features = ["build"] }
 
 [patch.crates-io]
-# istmo from the sibling checkout until the release that carries
-# istmo-drop (Wayland drops) and the desktop deep links is published.
-istmo = { path = "../istmo" }
-istmo-android = { path = "../istmo/crates/android" }
-istmo-build = { path = "../istmo/crates/build" }
-istmo-core = { path = "../istmo/crates/core" }
-istmo-ios = { path = "../istmo/crates/ios" }
-istmo-macros = { path = "../istmo/crates/macros" }
-istmo-plugins = { path = "../istmo/crates/plugins" }
-istmo-plugins-schema = { path = "../istmo/crates/plugins-schema" }
-istmo-window = { path = "../istmo/crates/window" }
-istmo-camera = { path = "../istmo/plugins/camera" }
-istmo-data-store = { path = "../istmo/plugins/data-store" }
-istmo-dnd = { path = "../istmo/plugins/dnd" }
-istmo-file-picker = { path = "../istmo/plugins/file-picker" }
-istmo-pen = { path = "../istmo/plugins/istmo-pen" }
-istmo-opener = { path = "../istmo/plugins/opener" }
-istmo-share = { path = "../istmo/plugins/share" }
 winit ={ git = "https://github.com/SergioRibera/winit", branch = "notein-native-input" }
 # Touch editing and soft keyboard work, on top of freya 0.5.0-rc.13 (main).
 freya = { git = "https://github.com/SergioRibera/freya", branch = "native-input-test" }
