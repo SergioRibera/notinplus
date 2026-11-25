@@ -80,6 +80,7 @@ let
       [
         "istmo-camera"
         "istmo-data-store"
+        "istmo-dnd"
         "istmo-file-picker"
         "istmo-opener"
         "istmo-pen"
