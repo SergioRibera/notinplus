@@ -3,12 +3,15 @@
 # besides the manifests, committed with `chore(release)`.
 #
 # - the Android versionCode (scripts/set-version-code.sh);
+# - istmo's Android and iOS runtime, matched to the istmo crates in
+#   Cargo.lock (scripts/sync-istmo-native.sh);
 # - nix/Cargo.nix, which pins every crate's version: CI fails a release
 #   whose Cargo.nix still names the previous one.
 set -eu
 
 here=$(dirname "$0")
 "$here/set-version-code.sh"
+"$here/sync-istmo-native.sh"
 
 root="${WORKSPACE_ROOT:-.}"
 if [ "${DRY_RUN:-false}" = true ]; then
