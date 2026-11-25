@@ -355,6 +355,7 @@ impl TrashUi {
         use freya::icons::lucide;
         let mut selecting = self.selecting;
         let chosen = self.picked.read().clone();
+        let room = Platform::get().current_window().root_size.read().width - 32.0;
         (*selecting.read() && !chosen.is_empty()).then(|| {
             let (to_restore, to_purge) = (chosen.clone(), chosen.clone());
             rect()
@@ -362,18 +363,21 @@ impl TrashUi {
                 .width(Size::fill())
                 .horizontal()
                 .main_align(Alignment::Center)
-                .child(SelectionBar::new([
-                    BarItem::Caption(tr!("trash-chosen-count", "count" => chosen.len()).into()),
-                    BarItem::Divider,
-                    BarItem::action(tr!("trash-restore"), lucide::undo_2(), move |()| {
-                        restore(to_restore.clone());
-                        selecting.set(false);
-                    }),
-                    BarItem::action(tr!("trash-purge"), lucide::trash_2(), move |()| {
-                        purge(to_purge.clone());
-                        selecting.set(false);
-                    }),
-                ]))
+                .child(
+                    SelectionBar::new([
+                        BarItem::Caption(tr!("trash-chosen-count", "count" => chosen.len()).into()),
+                        BarItem::Divider,
+                        BarItem::action(tr!("trash-restore"), lucide::undo_2(), move |()| {
+                            restore(to_restore.clone());
+                            selecting.set(false);
+                        }),
+                        BarItem::action(tr!("trash-purge"), lucide::trash_2(), move |()| {
+                            purge(to_purge.clone());
+                            selecting.set(false);
+                        }),
+                    ])
+                    .fit(room),
+                )
         })
     }
 }

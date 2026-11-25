@@ -180,6 +180,7 @@ impl Component for SelectionActions {
                 },
             ));
         }
-        SelectionBar::new(bar)
+        let room = Platform::get().current_window().root_size.read().width - 32.0;
+        SelectionBar::new(bar).fit(room)
     }
 }

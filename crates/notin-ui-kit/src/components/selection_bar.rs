@@ -1,6 +1,8 @@
 //! Floating (or docked) bar of actions over a selection.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use freya::prelude::*;
 
@@ -63,12 +65,40 @@ impl BarItem {
     }
 }
 
+/// How much of a floating bar shows, from roomiest to tightest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fit {
+    /// Icons and labels.
+    Labels,
+    /// Icons alone.
+    Icons,
+    /// Icons alone, no caption.
+    Bare,
+}
+
+impl Fit {
+    const ALL: [Self; 3] = [Self::Labels, Self::Icons, Self::Bare];
+}
+
+/// Room a docked action needs to show its label whole under the icon.
+const TILE_WITH_LABEL: f32 = 80.0;
+
+/// Widths a floating bar measured at each [`Fit`], for the items they
+/// were measured with.
+#[derive(Default)]
+struct Measured {
+    items: String,
+    widths: [Option<f32>; 3],
+}
+
 /// Inverse-surface action bar. Docked bars span the full width at the
 /// bottom (phones); floating bars hug their content.
 #[derive(Clone, PartialEq, Debug)]
 pub struct SelectionBar {
     items: Vec<BarItem>,
     docked: bool,
+    /// Width the bar may take; it drops labels, then its caption, to fit.
+    room: Option<f32>,
 }
 
 impl SelectionBar {
@@ -77,7 +107,17 @@ impl SelectionBar {
         Self {
             items: items.into_iter().collect(),
             docked: false,
+            room: None,
         }
+    }
+
+    /// Fit in `room` pixels: past it, actions show their icon alone (the
+    /// label stays for screen readers), then the caption goes. Docked
+    /// bars drop the labels under the icons once they would not fit whole.
+    #[must_use]
+    pub const fn fit(mut self, room: f32) -> Self {
+        self.room = Some(room);
+        self
     }
 
     #[must_use]
@@ -88,15 +128,16 @@ impl SelectionBar {
 }
 
 impl BarItem {
-    /// A labelled action as an icon over its label, for docked bars.
-    fn tile(&self, index: usize) -> Element {
+    /// A labelled action as an icon over its label, for docked bars; the
+    /// icon alone when `labels` is off.
+    fn tile(&self, index: usize, labels: bool) -> Element {
         let Self::Action {
             label: text_value,
             icon,
             on_press,
         } = self
         else {
-            return self.render(index);
+            return self.render(index, Fit::Labels);
         };
         let p = palette();
         let handler = on_press.clone();
@@ -108,23 +149,31 @@ impl BarItem {
             .cross_align(Alignment::Center)
             .spacing(4.0)
             .a11y_role(AccessibilityRole::Button)
+            .maybe(!labels, |r| {
+                r.a11y_alt(text_value.clone().unwrap_or_default())
+            })
             .on_tap(move |_| handler.call(()))
             .maybe_child(
                 icon.clone()
                     .map(|i| Icon::new(i).size(18.0).color(p.inv_text)),
             )
-            .maybe_child(text_value.clone().map(|t| {
-                label()
-                    .text(t)
-                    .font_size(text::META)
-                    .color(p.inv_text)
-                    .max_lines(1)
-            }))
+            .maybe_child(
+                text_value
+                    .clone()
+                    .filter(|_| labels || icon.is_none())
+                    .map(|t| {
+                        label()
+                            .text(t)
+                            .font_size(text::META)
+                            .color(p.inv_text)
+                            .max_lines(1)
+                    }),
+            )
             .into_element()
     }
 
     #[cfg_attr(feature = "sismo", sismo::function("kit::bar_item"))]
-    fn render(&self, index: usize) -> Element {
+    fn render(&self, index: usize, level: Fit) -> Element {
         let p = palette();
         match self {
             Self::Action {
@@ -133,10 +182,16 @@ impl BarItem {
                 on_press,
             } => {
                 let handler = on_press.clone();
+                // Icon alone once labels do not fit; an action without an
+                // icon keeps its label.
+                let labelled = level == Fit::Labels || icon.is_none();
                 rect()
                     .key(index)
                     .height(Size::px(40.0))
-                    .padding((0.0, 10.0))
+                    .padding((0.0, if labelled { 10.0 } else { 8.0 }))
+                    .maybe(!labelled, |r| {
+                        r.a11y_alt(text_value.clone().unwrap_or_default())
+                    })
                     .corner_radius(radius::SM)
                     .horizontal()
                     .center()
@@ -147,7 +202,7 @@ impl BarItem {
                         icon.clone()
                             .map(|i| Icon::new(i).size(16.0).color(p.inv_text)),
                     )
-                    .maybe_child(text_value.clone().map(|t| {
+                    .maybe_child(text_value.clone().filter(|_| labelled).map(|t| {
                         label()
                             .text(t)
                             .font_size(text::META)
@@ -188,6 +243,7 @@ impl BarItem {
                         .into_element()
                 }))
                 .into_element(),
+            Self::Caption(_) if level == Fit::Bare => rect().key(index).into_element(),
             Self::Caption(caption) => rect()
                 .key(index)
                 .padding((0.0, 10.0))
@@ -242,12 +298,17 @@ impl SelectionBar {
             .filter(|item| !labelled(item) && !matches!(item, BarItem::Divider));
         let (lead, trail): (Vec<_>, Vec<_>) =
             head.partition(|item| !matches!(item, BarItem::Action { .. }));
+        let count = self.items.iter().filter(labelled).count();
+        #[allow(clippy::cast_precision_loss, reason = "a handful of actions")]
+        let labels = self
+            .room
+            .is_none_or(|room| count == 0 || room / count as f32 >= TILE_WITH_LABEL);
         let actions: Vec<Element> = self
             .items
             .iter()
             .filter(labelled)
             .enumerate()
-            .map(|(index, item)| item.tile(index))
+            .map(|(index, item)| item.tile(index, labels))
             .collect();
         rect()
             .a11y_role(AccessibilityRole::Toolbar)
@@ -272,14 +333,14 @@ impl SelectionBar {
                     .children(
                         lead.iter()
                             .enumerate()
-                            .map(|(index, item)| item.render(index)),
+                            .map(|(index, item)| item.render(index, Fit::Labels)),
                     )
                     .child(rect().width(Size::flex(1.0)))
                     .children(
                         trail
                             .iter()
                             .enumerate()
-                            .map(|(index, item)| item.render(lead.len() + index)),
+                            .map(|(index, item)| item.render(lead.len() + index, Fit::Labels)),
                     ),
             )
             .maybe(!actions.is_empty(), |r| {
@@ -301,6 +362,29 @@ impl Component for SelectionBar {
         if self.docked {
             return self.docked_rows().into_element();
         }
+        // The bar measures itself at each fit as it shows it, and shows the
+        // roomiest one that fits: a width it has not measured yet is tried.
+        let measured = use_hook(|| Rc::new(RefCell::new(Measured::default())));
+        let mut retry = use_state(|| 0u32);
+        let _ = *retry.read();
+        let items = format!("{:?}", self.items);
+        if measured.borrow().items != items {
+            *measured.borrow_mut() = Measured {
+                items,
+                widths: [None; 3],
+            };
+        }
+        let room = self.room.unwrap_or(f32::INFINITY);
+        let fit = {
+            let widths = measured.borrow().widths;
+            Fit::ALL
+                .into_iter()
+                .zip(widths)
+                .find(|(_, width)| width.is_none_or(|width| width <= room))
+                .map_or(Fit::Bare, |(fit, _)| fit)
+        };
+        let sizes = Rc::clone(&measured);
+        let index = Fit::ALL.iter().position(|f| *f == fit).unwrap_or(2);
         rect()
             .a11y_role(AccessibilityRole::Toolbar)
             .maybe(self.docked, |r| {
@@ -320,10 +404,21 @@ impl Component for SelectionBar {
             .horizontal()
             .cross_align(Alignment::Center)
             .spacing(2.0)
+            .on_sized(move |e: Event<SizedEventData>| {
+                let width = e.area.width();
+                let mut sizes = sizes.borrow_mut();
+                if sizes.widths[index].is_none_or(|known| (known - width).abs() > 0.5) {
+                    sizes.widths[index] = Some(width);
+                    // Too wide: show the next fit.
+                    if width > room && index < 2 {
+                        *retry.write() += 1;
+                    }
+                }
+            })
             .children(
                 self.shown()
                     .enumerate()
-                    .map(|(index, item)| item.render(index)),
+                    .map(|(at, item)| item.render(at, fit)),
             )
             .into_element()
     }

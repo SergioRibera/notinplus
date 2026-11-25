@@ -163,6 +163,9 @@ impl Bar {
     }
 }
 
+/// Room left at the window's edges around a floating bar.
+const BAR_MARGIN: f32 = 32.0;
+
 impl Component for Bar {
     #[sismo::function("selection::bar_render")]
     fn render(&self) -> impl IntoElement {
@@ -174,7 +177,7 @@ impl Component for Bar {
                 .position(Position::new_absolute().left(0.0).bottom(insets.bottom))
                 .layer(Layer::Overlay)
                 .width(Size::px(size.width))
-                .child(bar.docked(true))
+                .child(bar.docked(true).fit(size.width))
                 .into_element();
         }
         if self.menu.sticky {
@@ -188,14 +191,18 @@ impl Component for Bar {
                 .width(Size::px(size.width))
                 .main_align(Alignment::Center)
                 .horizontal()
-                .child(rect().max_width(Size::px(STICKY_MAX_WIDTH)).child(bar))
+                .child(
+                    rect()
+                        .max_width(Size::px(STICKY_MAX_WIDTH))
+                        .child(bar.fit(STICKY_MAX_WIDTH.min(size.width - BAR_MARGIN))),
+                )
                 .into_element();
         }
         // The line the selection ends on, roughly: the bar floats over it,
         // or under it when the top of the window is too close.
         let (x, y) = self.menu.at;
         let line = Area::new((x, y - 8.0).into(), (1.0, 28.0).into());
-        notin_ui_kit::Floating::new(line, bar)
+        notin_ui_kit::Floating::new(line, bar.fit(size.width - BAR_MARGIN))
             .above()
             .centered()
             .into_element()

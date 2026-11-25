@@ -1001,7 +1001,7 @@ impl Component for LassoBar {
             selection,
             rect()
                 .on_sized(move |e: Event<SizedEventData>| mask.publish(e.area))
-                .child(SelectionBar::new(items)),
+                .child(SelectionBar::new(items).fit(pane.width() - 32.0)),
         )
         .above()
         .centered();
