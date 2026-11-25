@@ -8,6 +8,7 @@
 //!   paragraph, so a stanza stays one paragraph
 
 use crate::db::ChapterRow;
+use crate::import::layout::LineBreak;
 
 /// Logical sections of the chapter view, assembled from a loaded
 /// `ChapterRow`.
@@ -44,6 +45,9 @@ pub struct ParagraphSpan {
     pub text: String,
     /// The next verse of the paragraph starts on a line of its own.
     pub ends_line: bool,
+    /// The line breaks inside `text`, at the bytes of their `\n`: a line
+    /// of a poem, or a paragraph or stanza a verse runs across.
+    pub breaks: Vec<LineBreak>,
 }
 
 #[must_use]
@@ -75,10 +79,12 @@ pub fn plan_chapter(data: &ChapterRow) -> ChapterPlan {
         if let Some(previous) = current.last_mut() {
             previous.ends_line = v.line_start;
         }
+        let (text, breaks) = shown_text(&v.text, &v.line_breaks);
         current.push(ParagraphSpan {
             verse: v.verse,
-            text: shown_text(&v.text, &v.line_breaks),
+            text,
             ends_line: false,
+            breaks,
         });
     }
 
@@ -95,26 +101,25 @@ pub fn plan_chapter(data: &ChapterRow) -> ChapterPlan {
 
 /// `text` with the spaces at `breaks` turned into line breaks (a stanza
 /// inside a verse is one too: a paragraph cannot split a verse).
-fn shown_text(text: &str, breaks: &[crate::import::layout::LineBreak]) -> String {
-    if breaks.is_empty() {
-        return text.to_owned();
-    }
+fn shown_text(text: &str, breaks: &[LineBreak]) -> (String, Vec<LineBreak>) {
     let mut shown = text.to_owned();
+    let mut applied = Vec::with_capacity(breaks.len());
     for line in breaks {
         // Only a space that is still there: a stale layout never cuts a
         // word or a character.
         if shown.as_bytes().get(line.at) == Some(&b' ') {
             shown.replace_range(line.at..=line.at, "\n");
+            applied.push(*line);
         }
     }
-    shown
+    (shown, applied)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::{HeaderRow, VerseRow};
-    use crate::import::layout::{Break, LineBreak, lay_out};
+    use crate::import::layout::{Break, lay_out};
 
     fn verse(n: u16, pieces: &[&str], paragraph: bool, line: bool) -> VerseRow {
         let laid = lay_out(pieces.iter().copied());
@@ -198,7 +203,7 @@ mod tests {
             at: 2,
             kind: Break::Line,
         }];
-        assert_eq!(shown_text("abcdef", &breaks), "abcdef");
-        assert_eq!(shown_text("ab cdef", &breaks), "ab\ncdef");
+        assert_eq!(shown_text("abcdef", &breaks).0, "abcdef");
+        assert_eq!(shown_text("ab cdef", &breaks).0, "ab\ncdef");
     }
 }

@@ -22,6 +22,7 @@ use crate::state::{BibleBookmark, u32_to_rgba};
 
 use super::chapter::{Block, ChapterPlan, Heading, ParagraphSpan};
 use super::typography;
+use crate::import::layout::Break;
 
 /// Context the host installs so verse-level widgets can scroll the
 /// chapter viewport into focus when a chip-tap or TSK jump sets
@@ -404,6 +405,9 @@ struct ShownSpan {
     start: usize,
     text: String,
     units: Vec<Option<usize>>,
+    /// Its line breaks, by UTF-16 offset in the paragraph, and one after it
+    /// when the next verse starts a line.
+    breaks: Vec<(usize, Break)>,
 }
 
 /// `text` of span `index` with an indent before every wrap of `wraps`.
@@ -494,7 +498,22 @@ fn use_wraps(hang: bool, holder: &ParagraphHolder, (width, _): (f32, f32)) -> Wr
                     passes: current.passes + 1,
                 })
         } else {
-            None
+            // Out of passes: keep only indents still at the start of a
+            // line, so none is left as a gap in the middle of one. Only
+            // removing, this settles.
+            soft_wraps(holder, &shown.borrow()).and_then(|found| {
+                let kept: Vec<Wrap> = current
+                    .at
+                    .iter()
+                    .filter(|wrap| found.contains(wrap))
+                    .copied()
+                    .collect();
+                (kept != current.at).then_some(WrapState {
+                    width,
+                    at: kept,
+                    passes: current.passes,
+                })
+            })
         };
         if let Some(next) = next {
             let mut state = state;
@@ -504,11 +523,23 @@ fn use_wraps(hang: bool, holder: &ParagraphHolder, (width, _): (f32, f32)) -> Wr
     Wraps { hang, state, shown }
 }
 
-/// Lines of the laid-out paragraph that start because the text wrapped,
-/// not at a line break of the poem: the span and byte each starts at.
+/// Lines of the laid-out paragraph that start because a line of poetry
+/// wrapped: the span and byte each starts at. Not lines the poem breaks
+/// itself, nor wraps of prose (a line between paragraph breaks only,
+/// such as the verses before a quoted poem).
 fn soft_wraps(holder: &ParagraphHolder, shown: &[ShownSpan]) -> Option<Vec<Wrap>> {
     let inner = holder.0.borrow();
     let data = inner.as_ref()?;
+    let mut breaks: Vec<(usize, Break)> = shown
+        .iter()
+        .flat_map(|s| s.breaks.iter().copied())
+        .collect();
+    breaks.sort_unstable_by_key(|(at, _)| *at);
+    let poetry = |at: usize| {
+        let before = breaks.iter().rev().find(|(offset, _)| *offset < at);
+        let after = breaks.iter().find(|(offset, _)| *offset >= at);
+        matches!(before, Some((_, Break::Line))) || matches!(after, Some((_, Break::Line)))
+    };
     let mut wraps = Vec::new();
     for line in data.paragraph.get_line_metrics().iter().skip(1) {
         let at = line.start_index;
@@ -520,6 +551,9 @@ fn soft_wraps(holder: &ParagraphHolder, shown: &[ShownSpan]) -> Option<Vec<Wrap>
             // At a verse number or a marker: nothing to indent there.
             continue;
         };
+        if !poetry(at) {
+            continue;
+        }
         let unit = at - span.start;
         let before = span.text.encode_utf16().nth(unit - 1);
         // Only after a space: a line the poem breaks itself starts after
@@ -940,10 +974,22 @@ impl VerseParagraph {
             }
             let text_units = text.encode_utf16().count();
             let start = utf16_offset;
+            let mut breaks: Vec<(usize, Break)> = span
+                .breaks
+                .iter()
+                .filter_map(|line| {
+                    let unit = units.iter().position(|byte| *byte == Some(line.at))?;
+                    Some((start + unit, line.kind))
+                })
+                .collect();
+            if span.ends_line {
+                breaks.push((start + units.len(), Break::Line));
+            }
             shown.push(ShownSpan {
                 start,
                 text: text.clone(),
                 units,
+                breaks,
             });
             p = p.span(Span::new(text).font_size(font_size));
             utf16_offset += text_units;
@@ -1948,6 +1994,51 @@ mod snapshot {
                 .join("../../target/tmp")
                 .join(format!("{name}.png")),
         );
+    }
+
+    fn baptist() -> ChapterRow {
+        ChapterRow {
+            bible_id: "spa_rv1960".into(),
+            book_id: "mat".into(),
+            book_name: "Mateo".into(),
+            chapter: 3,
+            verses: vec![
+                verse(
+                    1,
+                    &["En aquellos días vino Juan el Bautista predicando en el desierto de Judea,"],
+                    true,
+                    false,
+                ),
+                verse(
+                    2,
+                    &["y diciendo: Arrepentíos, porque el reino de los cielos se ha acercado."],
+                    false,
+                    false,
+                ),
+                verse(
+                    3,
+                    &[
+                        "Pues éste es aquel de quien habló el profeta Isaías, cuando dijo:\n\nVoz del que clama en el desierto:\nPreparad el camino del Señor,\nEnderezad sus sendas.\n\n",
+                    ],
+                    false,
+                    false,
+                ),
+                verse(
+                    4,
+                    &[
+                        "Y Juan estaba vestido de pelo de camello, y tenía un cinto de cuero alrededor de sus lomos; y su comida era langostas y miel silvestre.",
+                    ],
+                    true,
+                    false,
+                ),
+            ],
+            headers: vec![header(1, "Predicación de Juan el Bautista", 2)],
+        }
+    }
+
+    #[test]
+    fn prose_around_a_quoted_poem_snapshot() {
+        render("bible_matthew_3", baptist);
     }
 
     #[test]
